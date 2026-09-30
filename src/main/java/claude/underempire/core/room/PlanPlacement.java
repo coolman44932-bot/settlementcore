@@ -35,6 +35,14 @@ public record PlanPlacement(Rooms.Room room, Rotation rotation, BlockPos origin,
         return new PlanPlacement(room, rot, origin, BoundingBox.fromCorners(a, b), door);
     }
 
+    /**
+     * A raised building aimed at the ground (docs/plans/surface-builder.md, section 1): the door sits on the course above
+     * {@code aimedGround}, on the template's x=0 face, and the building extends away along {@code extendsToward}.
+     */
+    public static PlanPlacement onGround(Rooms.Room room, BlockPos aimedGround, Direction extendsToward) {
+        return compute(room, aimedGround.above(), extendsToward);
+    }
+
     /** Template-local position to world position. */
     public BlockPos world(BlockPos local) {
         return origin.offset(local(local, rotation));
