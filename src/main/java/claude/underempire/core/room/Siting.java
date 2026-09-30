@@ -123,9 +123,15 @@ public final class Siting {
      *
      * @param margin   the margin the ramp was solved with (0: the land wasn't reshaped, only the pad)
      * @param kept     columns the ramp goes round
-     * @param steepest the steepest step left on the ground walked (FREE, the berm and landing, and the border)
+     * @param steepest the steepest step left on the ramp itself (a free column against a free one, the berm, the landing,
+     *                 and the border where the ramp meets the land level)
+     * @param bank     where the land is too steep to meet level (a {@code seamed} plan), the highest bank the ramp meets it
+     *                 with: the steepest step from the ramp to the border; 0 when it meets the land level all round
+     * @param seamed   the ramp meets the land with a bank somewhere (Reshape's third pass, at the widest margin): cut into the
+     *                 hill or built out over the slope, with a walk from the landing out to the land all the same
      */
-    public record Numbers(int margin, int cutColumns, int fillColumns, int cutBlocks, int fillBlocks, int kept, int steepest) {
+    public record Numbers(int margin, int cutColumns, int fillColumns, int cutBlocks, int fillBlocks, int kept, int steepest, int bank,
+                          boolean seamed) {
     }
 
     /**
@@ -423,7 +429,8 @@ public final class Siting {
             String land = reshaped ? "a margin of " + n.margin() + "; " : "the plinth, berm and landing only; ";
             return land + "cut " + n.cutColumns() + " columns (" + n.cutBlocks() + " blocks), filled " + n.fillColumns() + " ("
                     + n.fillBlocks() + "), " + n.kept() + " kept, steepest step " + n.steepest() + ", " + trees.length
-                    + " blocks of trees felled" + (goesRound.isEmpty() ? "" : "; the ramp goes round " + goesRound);
+                    + " blocks of trees felled" + (n.bank() > Reshape.MAX_STEP ? "; banked up to " + n.bank() + " where the land is too steep" : "")
+                    + (goesRound.isEmpty() ? "" : "; the ramp goes round " + goesRound);
         }
 
         @Override
@@ -631,7 +638,8 @@ public final class Siting {
             t.put("states", states);
             t.putLongArray("trees", trees);
             Numbers n = numbers;
-            t.putIntArray("numbers", new int[]{n.margin(), n.cutColumns(), n.fillColumns(), n.cutBlocks(), n.fillBlocks(), n.kept(), n.steepest()});
+            t.putIntArray("numbers", new int[]{n.margin(), n.cutColumns(), n.fillColumns(), n.cutBlocks(), n.fillBlocks(), n.kept(), n.steepest(),
+                    n.bank(), n.seamed() ? 1 : 0});
             t.putString("goes_round", goesRound);
             return t;
         }
@@ -661,7 +669,7 @@ public final class Siting {
             ListTag states = t.getList("states", Tag.TAG_COMPOUND);
             int[] nums = t.getIntArray("numbers");
             if (w < 1 || h < 1 || w > AREA_MAX || h > AREA_MAX || kinds.length != n || now.length != n || ground.length != n
-                    || top.length != n || look.length != n || states.size() % 3 != 0 || nums.length != 7) {
+                    || top.length != n || look.length != n || states.size() % 3 != 0 || (nums.length != 7 && nums.length != 9)) {
                 LOGGER.warn("Settlement Core: a saved site plan is broken ({}x{}, {} kinds): dropped", w, h, kinds.length);
                 return null;
             }
@@ -680,7 +688,8 @@ public final class Siting {
             }
             return new Plan(pl, template, t.getInt("x0"), t.getInt("z0"), w, h, floor, t.getBoolean("reshaped"), kinds.clone(),
                     heights(now, floor), heights(ground, floor), heights(top, floor), look.clone(), looks, t.getLongArray("trees"),
-                    new Numbers(nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6]), t.getString("goes_round"));
+                    new Numbers(nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6], nums.length > 7 ? nums[7] : 0,
+                            nums.length > 8 && nums[8] != 0), t.getString("goes_round"));
         }
 
         private static int[] heights(byte[] offsets, int floor) {
@@ -945,6 +954,7 @@ public final class Siting {
             int[] g;
             int[] now;
             int margin;
+            boolean seamed = false;
             if (!reshape) {
                 f = padFrame();
                 g = heights(f, extra);
@@ -956,7 +966,7 @@ public final class Siting {
             } else {
                 margin = Reshape.firstMargin(edgeGap());
                 Reshape.Result r;
-                for (int pass = 1; ; pass++) {
+                for (int pass = 1; ; ) {
                     while (true) {
                         f = Reshape.frame(pad, landing, side, margin);
                         g = heights(f, extra);
@@ -970,22 +980,30 @@ public final class Siting {
                         margin = Reshape.widen(margin);
                     }
                     Map<Long, Why> failing = spans(f, g, r.height());
-                    if (failing.isEmpty()) {
+                    Map<Long, Why> level = besideBuildings(f, g, r.height());
+                    if (failing.isEmpty() && level.isEmpty()) {
                         break;
                     }
-                    if (pass >= PASSES) {
-                        long k = failing.keySet().iterator().next();
-                        int x = (int) (k >> 32);
-                        int z = (int) k;
-                        throw refuse("The ground under the ramp is hollow or built on round " + x + " " + z + ": no ramp goes round it in "
-                                + PASSES + " tries", new BlockPos(x, col(x, z).foot, z));
+                    if (!failing.isEmpty()) {
+                        if (pass >= PASSES) {
+                            long k = failing.keySet().iterator().next();
+                            int x = (int) (k >> 32);
+                            int z = (int) k;
+                            throw refuse("The ground under the ramp is hollow or built on round " + x + " " + z + ": no ramp goes round it in "
+                                    + PASSES + " tries", new BlockPos(x, col(x, z).foot, z));
+                        }
+                        pass++;
                     }
+                    // (the columns kept beside a building don't count as a pass: they only ever come from the free columns
+                    // round its ring, so they run out)
                     extra.putAll(failing);
+                    level.forEach(extra::putIfAbsent);
                 }
                 now = r.height();
-                walk(f, now);
+                seamed = r.seamed();
+                walk(f, now, seamed);
             }
-            return finish(f, g, now, margin, trees, extra, reshape);
+            return finish(f, g, now, margin, trees, extra, reshape, seamed);
         }
 
         /** The pad and landing with a ring round them, for a plan that leaves the land alone. */
@@ -1293,6 +1311,35 @@ public final class Siting {
             return out;
         }
 
+        /**
+         * The free columns beside another building's ring (its cells and 1 round them, kept) that a solve leaves more than 1 off
+         * the ring's height: kept too, at their own, so the ramp meets the building level. Reshape's second pass sets kept
+         * columns aside, so a fill 2 columns out from a wall could stand several over the building's ground and bury its door
+         * (or a cut undercut it). Only columns the solve changes: the land as it was is the land's.
+         */
+        Map<Long, Why> besideBuildings(Reshape.Frame f, int[] g, int[] now) {
+            Map<Long, Why> out = new LinkedHashMap<>();
+            int w = f.w();
+            for (int i = 0; i < g.length; i++) {
+                if (f.kinds()[i] != Reshape.Kind.FREE || now[i] == g[i]) {
+                    continue;
+                }
+                int x = i % w;
+                int z = i / w;
+                for (int j : new int[]{x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, z > 0 ? i - w : -1, z < f.h() - 1 ? i + w : -1}) {
+                    if (j < 0 || Math.abs(now[i] - g[j]) <= Reshape.MAX_STEP) {
+                        continue;
+                    }
+                    Reshape.Kind k = f.kinds()[j];
+                    if ((k == Reshape.Kind.KEPT || k == Reshape.Kind.BORDER) && kept(col(f.x0() + j % w, f.z0() + j / w)) == Why.BUILDING) {
+                        out.put(column(f.x0() + x, f.z0() + z), Why.BUILDING);
+                        break;
+                    }
+                }
+            }
+            return out;
+        }
+
         @Nullable
         Why span(Col c, int now) {
             int g = c.foot;
@@ -1359,8 +1406,13 @@ public final class Siting {
             };
         }
 
-        /** A walk from the landing to the border, stepping at most 1 and never onto a kept column or a pond, or the site is refused. */
-        void walk(Reshape.Frame f, int[] a) {
+        /**
+         * A walk from the landing to the border, stepping at most 1 and never onto a kept column or a pond, or the site is
+         * refused. Where the ramp meets steep land with a bank ({@code seamed}), this is what decides: the ramp walks in itself,
+         * and a site with no walk out over it is too steep, named at the ramp's edge with the smallest step out to the land.
+         * Where the ramp meets the land level all round, only what it goes round can shut the walk in.
+         */
+        void walk(Reshape.Frame f, int[] a, boolean seamed) {
             int w = f.w();
             boolean[] seen = new boolean[a.length];
             ArrayDeque<Integer> q = new ArrayDeque<>();
@@ -1385,6 +1437,34 @@ public final class Siting {
                     q.add(j);
                 }
             }
+            if (seamed) {
+                // the walked column at the ramp's edge with the smallest step out to the land (the first found, row by row)
+                int best = -1;
+                int bestStep = Integer.MAX_VALUE;
+                int land = floor;
+                for (int i = 0; i < a.length; i++) {
+                    if (!seen[i]) {
+                        continue;
+                    }
+                    int x = i % w;
+                    int z = i / w;
+                    for (int j : new int[]{x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, z > 0 ? i - w : -1, z < f.h() - 1 ? i + w : -1}) {
+                        if (j >= 0 && f.kinds()[j] == Reshape.Kind.BORDER && walked(f, j) && Math.abs(a[j] - a[i]) < bestStep) {
+                            best = i;
+                            bestStep = Math.abs(a[j] - a[i]);
+                            land = a[j];
+                        }
+                    }
+                }
+                if (best >= 0) {
+                    int x = f.x0() + best % w;
+                    int z = f.z0() + best / w;
+                    int rise = land - floor;
+                    String how = rise >= 0 ? "rises " + rise + " above " : "falls " + (-rise) + " below ";
+                    throw refuse("The land " + how + whose + " floor at " + x + " " + z + ": too steep to ramp out of within "
+                            + Reshape.MARGIN_MAX + " blocks", new BlockPos(x, a[best], z));
+                }
+            }
             BlockPos out = new BlockPos(pl.door().getX() + 2 * outward(pl)[0], floor + 1, pl.door().getZ() + 2 * outward(pl)[1]);
             throw refuse("No walk leads from " + whose + " door out to the land from " + out.getX() + " " + out.getZ()
                     + ": what the ramp goes round shuts it in", out);
@@ -1392,7 +1472,7 @@ public final class Siting {
 
         // --- the answer ----------------------------------------------------------------------------------------------
 
-        Plan finish(Reshape.Frame f, int[] g, int[] now, int margin, long[] trees, Map<Long, Why> extra, boolean reshaped) {
+        Plan finish(Reshape.Frame f, int[] g, int[] now, int margin, long[] trees, Map<Long, Why> extra, boolean reshaped, boolean seamed) {
             int n = g.length;
             int w = f.w();
             byte[] kinds = new byte[n];
@@ -1467,6 +1547,7 @@ public final class Siting {
             int fillBlocks = 0;
             int kept = 0;
             int steepest = 0;
+            int bank = 0;
             for (int i = 0; i < n; i++) {
                 Reshape.Kind k = f.kinds()[i];
                 if (k == Reshape.Kind.KEPT) {
@@ -1483,11 +1564,16 @@ public final class Siting {
                 int z = i / w;
                 for (int j : new int[]{x < w - 1 ? i + 1 : -1, z < f.h() - 1 ? i + w : -1}) {
                     if (j >= 0 && (k == Reshape.Kind.FREE || f.kinds()[j] == Reshape.Kind.FREE) && walked(f, i) && walked(f, j)) {
-                        steepest = Math.max(steepest, Math.abs(now[i] - now[j]));
+                        int d = Math.abs(now[i] - now[j]);
+                        if (seamed && (k == Reshape.Kind.BORDER || f.kinds()[j] == Reshape.Kind.BORDER)) {
+                            bank = Math.max(bank, d);            // the ramp meeting steep land: a bank, not a step on it
+                        } else {
+                            steepest = Math.max(steepest, d);
+                        }
                     }
                 }
             }
-            Numbers numbers = new Numbers(margin, cutColumns, fillColumns, cutBlocks, fillBlocks, kept, steepest);
+            Numbers numbers = new Numbers(margin, cutColumns, fillColumns, cutBlocks, fillBlocks, kept, steepest, bank, seamed);
             return new Plan(pl, template, f.x0(), f.z0(), w, f.h(), floor, reshaped, kinds, now.clone(), g.clone(), top, look, looks, trees,
                     numbers, goesRound(f, extra));
         }

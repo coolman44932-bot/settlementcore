@@ -107,10 +107,15 @@ public class SitingGameTests {
         final List<RoomTemplates.Entry> template;
 
         Site(GameTestHelper h) {
+            this(h, UP);
+        }
+
+        /** A site whose floor is at +{@code up} over the plot (lower than +360 where the land must rise far over it). */
+        Site(GameTestHelper h, int up) {
             this.h = h;
             this.level = h.getLevel();
-            BlockPos c1 = h.absolutePos(new BlockPos(0, UP, 0));
-            BlockPos c2 = h.absolutePos(new BlockPos(43, UP, 43));
+            BlockPos c1 = h.absolutePos(new BlockPos(0, up, 0));
+            BlockPos c2 = h.absolutePos(new BlockPos(43, up, 43));
             px0 = Math.min(c1.getX(), c2.getX());
             pz0 = Math.min(c1.getZ(), c2.getZ());
             px1 = Math.max(c1.getX(), c2.getX());
@@ -314,6 +319,15 @@ public class SitingGameTests {
      * a pond, and not both on the border (that is the land as it was). Else how many, and the first.
      */
     private static String stepProblem(Site s, Plan p, int[] a) {
+        return stepProblem(s, p, a, true);
+    }
+
+    /**
+     * As {@link #stepProblem(Site, Plan, int[])}; with {@code seams} false the steps onto the border are left out too, so it
+     * checks the ramp in itself (a free column against a free one or the pad): where the ramp meets steep land with a bank,
+     * the bank is no step on it.
+     */
+    private static String stepProblem(Site s, Plan p, int[] a, boolean seams) {
         int w = p.width();
         int bad = 0;
         String first = null;
@@ -321,8 +335,13 @@ public class SitingGameTests {
             int x = i % w;
             int z = i / w;
             for (int j : new int[]{x < w - 1 ? i + 1 : -1, z < p.depth() - 1 ? i + w : -1}) {
-                if (j < 0 || boxed(s, p, i) || boxed(s, p, j) || !ground(p, i) || !ground(p, j)
-                        || kindAt(p, i) == Reshape.Kind.BORDER && kindAt(p, j) == Reshape.Kind.BORDER || Math.abs(a[i] - a[j]) <= 1) {
+                if (j < 0) {
+                    continue;
+                }
+                boolean border = kindAt(p, i) == Reshape.Kind.BORDER || kindAt(p, j) == Reshape.Kind.BORDER;
+                if (boxed(s, p, i) || boxed(s, p, j) || !ground(p, i) || !ground(p, j)
+                        || kindAt(p, i) == Reshape.Kind.BORDER && kindAt(p, j) == Reshape.Kind.BORDER || !seams && border
+                        || Math.abs(a[i] - a[j]) <= 1) {
                     continue;
                 }
                 bad++;
@@ -626,6 +645,114 @@ public class SitingGameTests {
     }
 
     /**
+     * The ramp meets another building level. The site stands 5 over the land, so the pad and the ramp are filled, and a
+     * stone-brick hut (2x3, 2 high) stands on the land 3 columns east of the berm, known to the settlement only through a
+     * fake Warren. Its ring (its columns and 1 round them) is kept; the fill between it and the pad can't come within 1 of
+     * both, so Reshape sets the kept columns aside and would heap the fill 2 or more over the hut's ground beside it. Siting
+     * keeps those columns too, at their own height: after the earthworks every column beside the ring is within 1 of it,
+     * and the hut and its ring are untouched. The ramp is walkable, and the plan says it goes round another building.
+     *
+     * <p>The control: Reshape's raw answer for the same area, with the columns the rule kept set free again, leaves a column
+     * beside the ring more than 1 off it: the rule is what keeps the hut from being buried.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void aRampMeetsAnotherBuildingLevel(GameTestHelper h) {
+        Site s = new Site(h);
+        int land = s.floor - 5;
+        s.lay((x, z) -> land);
+        LongOpenHashSet hut = new LongOpenHashSet();
+        for (int x = s.bx0 + 12; x <= s.bx0 + 13; x++) {
+            for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
+                for (int y = land + 1; y <= land + 2; y++) {
+                    s.set(x, y, z, Blocks.STONE_BRICKS.defaultBlockState());
+                    hut.add(BlockPos.asLong(x, y, z));
+                }
+            }
+        }
+        ColumnTest inHut = (x, z) -> x >= s.bx0 + 12 && x <= s.bx0 + 13 && z >= s.bz0 + 3 && z <= s.bz0 + 5;
+        ColumnTest inRing = (x, z) -> x >= s.bx0 + 11 && x <= s.bx0 + 14 && z >= s.bz0 + 2 && z <= s.bz0 + 6 && !inHut.test(x, z);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            Plan p = s.expectPlan(s.plan(warrenOf(hut), true), "the raised site by a hut");
+            int w = p.width();
+            int n = w * p.depth();
+            // the columns the rule kept: kept, beside the ring, neither the ring nor the hut
+            Reshape.Kind[] raw = new Reshape.Kind[n];
+            int[] ground = new int[n];
+            int ruled = 0;
+            for (int i = 0; i < n; i++) {
+                int x = p.x0() + i % w;
+                int z = p.z0() + i / w;
+                raw[i] = p.kind(x, z);
+                ground[i] = p.oldGround(x, z);
+                if (inRing.test(x, z)) {
+                    h.assertTrue(raw[i] == Reshape.Kind.KEPT || raw[i] == Reshape.Kind.BORDER, "the hut's ring column " + x + " " + z + " is " + raw[i]
+                            + dump(s, p, planned(p)));
+                } else if (raw[i] == Reshape.Kind.KEPT && !inHut.test(x, z) && besideRing(inRing, x, z)) {
+                    raw[i] = Reshape.Kind.FREE;
+                    ruled++;
+                }
+            }
+            h.assertTrue(ruled > 0, "no column beside the hut's ring was kept: the scene shows nothing of the rule" + dump(s, p, planned(p)));
+            int[] loose = Reshape.plan(w, p.depth(), ground, raw, null, p.floor(), p.numbers().margin()).height();
+            int worst = 0;
+            for (int i = 0; i < n; i++) {
+                int x = p.x0() + i % w;
+                int z = p.z0() + i / w;
+                if (raw[i] != Reshape.Kind.FREE) {
+                    continue;
+                }
+                for (Direction d : Direction.Plane.HORIZONTAL) {
+                    int rx = x + d.getStepX();
+                    int rz = z + d.getStepZ();
+                    if (inRing.test(rx, rz)) {
+                        worst = Math.max(worst, Math.abs(loose[i] - p.oldGround(rx, rz)));
+                    }
+                }
+            }
+            h.assertTrue(worst > 1, "Reshape's raw answer leaves every column beside the hut's ring within 1 of it (" + worst
+                    + "): the rule has nothing to keep" + dump(s, p, loose));
+            Map<Long, BlockState> kept = s.snapshot((x, z) -> inHut.test(x, z) || inRing.test(x, z));
+            p.applyNow(s.level);
+            s.stamp();
+            int[] a = s.heights(p);
+            String moved = s.changed(kept);
+            h.assertTrue(moved == null, "the hut or its ring: " + moved + dump(s, p, a));
+            for (int x = s.bx0 + 10; x <= s.bx0 + 15; x++) {
+                for (int z = s.bz0 + 1; z <= s.bz0 + 7; z++) {
+                    if (!inRing.test(x, z)) {
+                        continue;
+                    }
+                    for (Direction d : Direction.Plane.HORIZONTAL) {
+                        int nx = x + d.getStepX();
+                        int nz = z + d.getStepZ();
+                        if (inRing.test(nx, nz) || inHut.test(nx, nz) || s.inBox(nx, nz) || !p.inArea(nx, nz)) {
+                            continue;
+                        }
+                        int step = s.surface(nx, nz) - s.surface(x, z);
+                        h.assertTrue(Math.abs(step) <= 1, "the column " + nx + " " + nz + " beside the hut's ring stands " + step + " off it (at "
+                                + x + " " + z + ")" + dump(s, p, a));
+                    }
+                }
+            }
+            h.assertTrue(p.goesRound().contains("another building"), "the plan says the ramp goes round \"" + p.goesRound() + "\"");
+            expect(h, s, p, a, stepProblem(s, p, a));
+            expect(h, s, p, a, heightProblem(s, p, a));
+            expect(h, s, p, a, walkProblem(s, p, a));
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    private static boolean besideRing(ColumnTest ring, int x, int z) {
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            if (ring.test(x + d.getStepX(), z + d.getStepZ())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Section 9's test 3: a 3x3 pond, 1 deep, in the west margin of the sunken site, where the ramp from the landing cuts.
      * Its banks are never cut under its water: after the earthworks, and 40 ticks with every water block made to flow, each
      * is still a source and there is no water anywhere else in the area.
@@ -727,35 +854,101 @@ public class SitingGameTests {
     }
 
     /**
-     * Section 9's test 4: the land rises 3 a column east of the berm to a cliff top 16 over the floor, 6 from the box, and
-     * stays there: no margin up to 12 ramps it. The refusal names a spot east of the box's middle, says the land rises 16
-     * and is too steep, and nothing in the world is changed.
+     * Where the land is too steep to meet level, the ramp is cut into it. The land rises 3 a column east of the berm to 16
+     * over the floor, 6 from the box, and stays there: no margin up to 12 climbs that at 1 a column, so at the widest the
+     * ramp meets the rise with a bank (Reshape's seamed pass), and the site stands because a walk still leads from the
+     * landing out to the flat land west, north and south. Asserted: sited, seamed, at the widest margin, with the bank in
+     * its numbers and its printout; the ramp walkable in itself (a free column against a free one or the pad, at most 1) in
+     * the plan and in the finished world; every free column reached from the landing, and the walk out to the land; every
+     * worked column where the plan put it; the bank standing in the world by the rise; nothing outside the area, or on its
+     * border, touched.
      *
-     * <p>(Not a sheer cliff with flat land between: a site 6 flat columns from a cliff needs no ramp at all, and is sited.
-     * The margin starts from the land just outside the pad, section 9.)
-     *
-     * <p>The control: a hill rising 2 a column east of the berm to 6, tapering 1 a column to the north and south, is too
-     * steep at its first margin and is ramped at a wider one: the refusal is the land's steepness, and the widening works.
+     * <p>(Not a sheer cliff with flat land between: a site 6 flat columns from a cliff needs no ramp at all, and is sited
+     * level. The margin starts from the land just outside the pad, section 9.)
      */
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
-    public static void aSiteIsRefusedWhereTheLandIsTooSteep(GameTestHelper h) {
+    public static void aSiteOnASteepRiseIsCutIntoIt(GameTestHelper h) {
         Site s = new Site(h);
         s.lay(rise(s, 16));
         h.runAfterDelay(20, () -> s.guard(() -> {
+            Plan p = s.expectPlan(s.plan(true), "the land rising 3 a column to 16 east of the berm");
+            Siting.Numbers n = p.numbers();
+            h.assertTrue(n.seamed() && n.margin() == Reshape.MARGIN_MAX && n.bank() > Reshape.MAX_STEP,
+                    "the rise isn't met with a bank at the widest margin: " + p + dump(s, p, planned(p)));
+            h.assertTrue(p.describe().contains("banked up to " + n.bank() + " where the land is too steep"),
+                    "the printout doesn't report the bank: " + p.describe());
+            h.assertTrue(n.steepest() <= Reshape.MAX_STEP, "the plan's ramp has a step of " + n.steepest() + " on it" + dump(s, p, planned(p)));
+            int[] q = planned(p);
+            expect(h, s, p, q, stepProblem(s, p, q, false));
+            int w = p.width();
+            Map<Long, BlockState> outside = s.snapshot((x, z) -> x <= p.x0() || z <= p.z0() || x >= p.x0() + w - 1 || z >= p.z0() + p.depth() - 1);
+            p.applyNow(s.level);
+            s.stamp();
+            int[] a = s.heights(p);
+            expect(h, s, p, a, stepProblem(s, p, a, false));
+            expect(h, s, p, a, heightProblem(s, p, a));
+            expect(h, s, p, a, walkProblem(s, p, a));
+            String moved = s.changed(outside);
+            h.assertTrue(moved == null, "outside the area, or on its border: " + moved + dump(s, p, a));
+            int bank = 0;
+            for (int i = 0; i < a.length; i++) {
+                int x = i % w;
+                int z = i / w;
+                if (kindAt(p, i) != Reshape.Kind.FREE) {
+                    continue;
+                }
+                for (int j : new int[]{x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, z > 0 ? i - w : -1, z < p.depth() - 1 ? i + w : -1}) {
+                    if (j >= 0 && kindAt(p, j) == Reshape.Kind.BORDER) {
+                        bank = Math.max(bank, Math.abs(a[j] - a[i]));
+                    }
+                }
+            }
+            h.assertTrue(bank == n.bank(), "the bank cut into the rise stands " + bank + " in the world; the plan reported " + n.bank() + dump(s, p, a));
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * Section 9's test 4: a bowl, the land rising 3 a column on every side of the pad to 30 over the floor (10 out) and flat
+     * from there. At the widest margin the ramp can be cut into it, but it rises only 1 a column from the pad: at most about
+     * 24 at the area's corners, the furthest a walker gets in steps of 1 (a rim of 16 is climbed out of there, and sited). No
+     * walk leads from the landing out to the land: refused as too steep, naming a spot at the ramp's edge, by the border
+     * (the one with the smallest step out), and how high the land rises there; and nothing in the world is changed. The site
+     * sits at +330, so the rim is under the build limit.
+     *
+     * <p>The control: a hill rising 2 a column east of the berm to 6, tapering 1 a column to the north and south, is too
+     * steep at its first margin and is ramped level at a wider one, with no bank: the refusal is the land's steepness, and
+     * the widening works.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void aSiteIsRefusedWhereTheLandIsTooSteep(GameTestHelper h) {
+        Site s = new Site(h, UP - 30);
+        h.assertTrue(s.floor + BOWL_RIM < s.level.getMaxBuildHeight(), "the bowl's rim " + (s.floor + BOWL_RIM) + " is over the build limit");
+        s.lay(bowl(s));
+        h.runAfterDelay(20, () -> s.guard(() -> {
             Map<Long, BlockState> before = s.snapshot((x, z) -> true);
-            Refusal no = s.expectRefusal(s.plan(true), "the land rising to 16 from the berm");
-            h.assertTrue(no.why().contains("too steep") && no.why().contains(" at " + no.spot().getX() + " " + no.spot().getZ()),
+            Refusal no = s.expectRefusal(s.plan(true), "the bowl, the land rising 3 a column to " + BOWL_RIM + " all round");
+            h.assertTrue(no.why().contains("too steep to ramp out of") && no.why().contains(" at " + no.spot().getX() + " " + no.spot().getZ()),
                     "the refusal doesn't say it is too steep, or where: \"" + no.why() + "\"" + dumpLand(s, no.spot()));
-            h.assertTrue(no.why().contains("rises 16"), "the refusal doesn't say how high the land rises: \"" + no.why() + "\"");
-            h.assertTrue(no.spot().getX() > s.bx0 + 4 && no.spot().getX() <= s.bx1() + 1 + Reshape.MARGIN_MAX
-                            && no.spot().getZ() >= s.bz0 - 13 && no.spot().getZ() <= s.bz1() + 13,
-                    "the refusal's spot " + no.spot() + " isn't on the rising side, east of the box's middle at x " + (s.bx0 + 4) + dumpLand(s, no.spot()));
+            h.assertTrue(no.why().contains("rises " + BOWL_RIM), "the refusal doesn't say how high the land rises: \"" + no.why() + "\"");
+            // the widest area: the landing 2 out west, and a margin of 12 (and 2 more on the door's side)
+            int wx0 = s.bx0 - 2 - Reshape.MARGIN_MAX - Reshape.DOOR_EXTRA;
+            int wx1 = s.bx1() + 1 + Reshape.MARGIN_MAX;
+            int wz0 = s.bz0 - 1 - Reshape.MARGIN_MAX;
+            int wz1 = s.bz1() + 1 + Reshape.MARGIN_MAX;
+            int sx = no.spot().getX();
+            int sz = no.spot().getZ();
+            h.assertTrue(sx > wx0 && sx < wx1 && sz > wz0 && sz < wz1 && (sx == wx0 + 1 || sx == wx1 - 1 || sz == wz0 + 1 || sz == wz1 - 1),
+                    "the refusal's spot " + no.spot() + " isn't at the ramp's edge, beside the border of " + wx0 + " " + wz0 + " to " + wx1 + " " + wz1
+                            + dumpLand(s, no.spot()));
             String moved = s.changed(before);
             h.assertTrue(moved == null, "siting changed the world: " + moved);
             s.lay(hill(s));
             Plan p = s.expectPlan(s.plan(true), "the hill rising 2 a column to 6 east of the berm");
             h.assertTrue(p.numbers().margin() > Reshape.firstMargin(2), "the hill was ramped at its first margin " + p.numbers().margin()
                     + ": the widening shows nothing" + dump(s, p, s.heights(p)));
+            h.assertTrue(!p.numbers().seamed() && p.numbers().bank() == 0, "the hill is met with a bank: " + p + dump(s, p, planned(p)));
             p.applyNow(s.level);
             int[] a = s.heights(p);
             expect(h, s, p, a, stepProblem(s, p, a));
@@ -763,6 +956,27 @@ public class SitingGameTests {
             s.clear();
             h.succeed();
         }));
+    }
+
+    /** A plan's own heights over its area, row by row, as {@link Site#heights} reads the world's. */
+    private static int[] planned(Plan p) {
+        int[] a = new int[p.width() * p.depth()];
+        for (int i = 0; i < a.length; i++) {
+            a[i] = p.newHeight(p.x0() + i % p.width(), p.z0() + i / p.width());
+        }
+        return a;
+    }
+
+    /** The land rising 3 a column to 16 on every side of the pad, from the berm out. */
+    /** The bowl's rim over its floor: higher than a ramp of 1 a column climbs to the widest area's corners. */
+    private static final int BOWL_RIM = 30;
+
+    private static Land bowl(Site s) {
+        return (x, z) -> {
+            int dx = Math.max(0, Math.max(s.bx0 - 1 - x, x - (s.bx1() + 1)));
+            int dz = Math.max(0, Math.max(s.bz0 - 1 - z, z - (s.bz1() + 1)));
+            return s.floor + Math.min(BOWL_RIM, 3 * Math.max(dx, dz));
+        };
     }
 
     private static Land rise(Site s, int top) {

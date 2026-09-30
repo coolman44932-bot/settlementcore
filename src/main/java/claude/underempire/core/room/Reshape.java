@@ -120,10 +120,19 @@ public final class Reshape {
      * @param fillBlocks blocks laid on the tops of the filled ones
      * @param heldSteepest the steepest step between a FREE column and a KEPT or FLUID neighbour: how far a kept thing now
      *                   stands over (or under) the ramp beside it. Never a refusal: the ramp goes round it.
+     * @param seamSteepest the steepest step between a FREE column and the border ring: where the ramp meets the land
+     * @param seamed     the land is steeper than a walker climbs, so at the widest margin the ramp meets it with a bank (cut
+     *                   into it or built out over it) instead of level: {@code steepest} is then the ramp's own (a FREE
+     *                   column against a FREE or PAD one), and the caller must find a walk from the door out to the land
+     *                   (Siting#walk), refusing the site only where there is none
      */
     public record Result(int[] height, int margin, int steepest, int spotX, int spotZ,
-                         int cutColumns, int fillColumns, int cutBlocks, int fillBlocks, int heldSteepest) {
-        /** A step over {@link #MAX_STEP} is left between a FREE column and its neighbour: widen the margin. */
+                         int cutColumns, int fillColumns, int cutBlocks, int fillBlocks, int heldSteepest,
+                         int seamSteepest, boolean seamed) {
+        /**
+         * A step over {@link #MAX_STEP} is left on the ground walked (a FREE column against a FREE, PAD or, unless
+         * {@link #seamed}, BORDER neighbour): widen the margin.
+         */
         public boolean tooSteep() {
             return steepest > MAX_STEP;
         }
@@ -198,9 +207,10 @@ public final class Reshape {
     }
 
     /**
-     * Solves one margin. Held columns keep their heights; every FREE column comes out within {@link #MAX_STEP} of each
-     * 4-neighbour, FREE or held, wherever the held columns allow it, and never under its floor. Where they don't (the land
-     * rises too fast for this margin, or a held column stands over its neighbour's reach) the steps left are reported.
+     * Solves one margin. Held columns keep their heights; every FREE column comes out within {@link #MAX_STEP} of each FREE,
+     * PAD and BORDER 4-neighbour wherever the held columns allow it (a KEPT or FLUID one it goes round), and never under its
+     * floor. Where they don't (the land rises too fast for this margin, or a pond's banks hold the ramp up) the steps left
+     * are reported; at {@link #MARGIN_MAX} the land too steep to meet level is met with a bank ({@link Result#seamed}).
      *
      * @param ground the columns' current surface heights; for a FLUID column the surface of the fluid
      * @param kinds  what each column is
@@ -213,30 +223,47 @@ public final class Reshape {
         int[] lows = lows(w, h, ground, kinds, floors);
         double[] field = solved(w, h, ground, kinds, floorY);
         boolean[] held = held(kinds);
-        Result first = settle(w, h, ground, kinds, floorY, margin, lows, field, held, null);
+        Result first = settle(w, h, ground, kinds, floorY, margin, lows, field, held, null, false);
         if (!first.tooSteep()) {
             return first;
         }
         // A kept column (or a pond) the ramp can't come within 1 of: the clamp's pull toward it left a step on the ground
         // walked, and no margin fixes that (the post is where it is). Clamp again without them: the ramp goes round, and
-        // the kept thing stands on its own column, over or under it. Only a margin too narrow for the pad and the land
-        // is left too steep.
+        // the kept thing stands on its own column, over or under it. A margin too narrow for the pad and the land is left
+        // too steep, and so are a pond's banks where they hold the ramp up beside the pad (no bank is cut under its water).
         boolean[] aside = new boolean[kinds.length];
         boolean any = false;
         for (int i = 0; i < kinds.length; i++) {
             aside[i] = walkedRound(kinds[i]);
             any |= aside[i];
         }
-        if (!any) {
-            return first;
+        Result best = first;
+        if (any) {
+            Result second = settle(w, h, ground, kinds, floorY, margin, lows, field, held, aside, false);
+            best = second.steepest() < first.steepest() ? second : first;
         }
-        Result second = settle(w, h, ground, kinds, floorY, margin, lows, field, held, aside);
-        return second.steepest() < first.steepest() ? second : first;
+        if (!best.tooSteep() || margin < MARGIN_MAX) {
+            return best;                                      // too steep: the caller widens
+        }
+        // The widest margin, and still too steep: the land itself is steeper than a walker climbs (a hillside rising 2 a
+        // column, a cliff), and no ramp of 1 a column can meet it level all round. Set the border aside too: the ramp is
+        // walkable in itself, held to the land by the solve, and where the land is too steep to meet it meets it with a
+        // bank, cut into the hill or built out over the slope, as a terrace is. Whether a walk still leads out is the
+        // caller's to find (Siting#walk); only a site with none is too steep.
+        boolean[] banked = aside.clone();
+        for (int i = 0; i < kinds.length; i++) {
+            banked[i] |= kinds[i] == Kind.BORDER;
+        }
+        Result third = settle(w, h, ground, kinds, floorY, margin, lows, field, held, banked, true);
+        return third.steepest() < best.steepest() ? third : best;
     }
 
-    /** Rounds, clamps and levels the solved field; {@code aside} (null for none) are held columns the steps ignore. */
+    /**
+     * Rounds, clamps and levels the solved field; {@code aside} (null for none) are held columns the steps ignore, and
+     * {@code seamed} says the border is among them (the ramp's own steps are then what counts).
+     */
     private static Result settle(int w, int h, int[] ground, Kind[] kinds, int floorY, int margin, int[] lows,
-                                 double[] field, boolean[] held, boolean[] aside) {
+                                 double[] field, boolean[] held, boolean[] aside, boolean seamed) {
         int n = w * h;
         // round before clamping: the limit is a whole-block promise about blocks that get placed, and a clamped continuous
         // field can still round into a 2-block stair
@@ -249,8 +276,106 @@ public final class Reshape {
         for (int i = 0; i < n; i++) {
             out[i] = held[i] ? heldAt(kinds[i], ground[i], floorY) : (int) Math.max(lows[i], Math.round(rounded[i]));
         }
+        int[] raw = out.clone();
         levelSpecks(out, held, lows, w, h, aside);
-        return result(w, h, ground, kinds, out, margin);
+        Result r = result(w, h, ground, kinds, out, margin, seamed);
+        if (!r.tooSteep()) {
+            return r;
+        }
+        // The clamp is a heuristic: from some fields it settles on a staircase whose rows are out of step (a column between
+        // 7 and 10 takes the midpoint), and leaves a step of 2 where a walkable ramp exists. Repair exactly, and keep the
+        // repair only if it walks: where the held columns don't allow a ramp, the clamp's answer (and its spot) stands.
+        repair(raw, held, lows, w, h, aside);
+        levelSpecks(raw, held, lows, w, h, aside);
+        Result fixed = result(w, h, ground, kinds, raw, margin, seamed);
+        return fixed.steepest() < r.steepest() ? fixed : r;
+    }
+
+    /**
+     * Makes the free columns exactly walkable wherever the held ones allow it, moving as few as it can. Over the columns the
+     * steps count between (the free ones and the held ones not {@code aside}): each free column is bounded above by the
+     * highest a walker's ramp can climb from the held ones (their heights plus the steps to them) and below by the lowest it
+     * can come down to them, floors included. Put in those bounds, then lowered wherever it still stands more than 1 over a
+     * neighbour, it is within 1 of every neighbour; its bounds keep it on every floor and within 1 of the held columns.
+     * Where the bounds cross (land too steep for any ramp) the floor wins and the step stays, for the caller to report.
+     */
+    private static void repair(int[] a, boolean[] held, int[] lows, int w, int h, boolean[] aside) {
+        int n = a.length;
+        int[] up = new int[n];
+        int[] down = new int[n];
+        Arrays.fill(up, Integer.MAX_VALUE);
+        Arrays.fill(down, Integer.MIN_VALUE);
+        for (int i = 0; i < n; i++) {
+            if (aside != null && aside[i]) {
+                continue;
+            }
+            if (held[i]) {
+                up[i] = a[i];
+                down[i] = a[i];
+            } else if (lows[i] != NO_FLOOR) {
+                down[i] = lows[i];
+            }
+        }
+        // the bounds spread a step a column over the free columns: Bellman-Ford sweeps, forward and back in turn
+        for (boolean moved = true; moved; ) {
+            moved = false;
+            for (int pass = 0; pass < 2; pass++) {
+                for (int s = 0; s < n; s++) {
+                    int i = pass == 0 ? s : n - 1 - s;
+                    if (held[i] || (aside != null && aside[i])) {
+                        continue;
+                    }
+                    int x = i % w;
+                    int z = i / w;
+                    for (int k = 0; k < 4; k++) {
+                        int j = neighbour(i, x, z, w, h, k);
+                        if (j < 0 || (aside != null && aside[j])) {
+                            continue;
+                        }
+                        if (up[j] != Integer.MAX_VALUE && up[j] + MAX_STEP < up[i]) {
+                            up[i] = up[j] + MAX_STEP;
+                            moved = true;
+                        }
+                        if (down[j] != Integer.MIN_VALUE && down[j] - MAX_STEP > down[i]) {
+                            down[i] = down[j] - MAX_STEP;
+                            moved = true;
+                        }
+                    }
+                }
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            if (!held[i] && (aside == null || !aside[i])) {
+                a[i] = Math.max(Math.min(a[i], up[i]), down[i]);
+            }
+        }
+        // lowered where it stands over a neighbour: the largest walkable ground under what it was (never under its lower
+        // bound, which already walks)
+        for (boolean moved = true; moved; ) {
+            moved = false;
+            for (int pass = 0; pass < 2; pass++) {
+                for (int s = 0; s < n; s++) {
+                    int i = pass == 0 ? s : n - 1 - s;
+                    if (held[i] || (aside != null && aside[i])) {
+                        continue;
+                    }
+                    int x = i % w;
+                    int z = i / w;
+                    int cap = a[i];
+                    for (int k = 0; k < 4; k++) {
+                        int j = neighbour(i, x, z, w, h, k);
+                        if (j >= 0 && (aside == null || !aside[j])) {
+                            cap = Math.min(cap, a[j] + MAX_STEP);
+                        }
+                    }
+                    cap = Math.max(cap, down[i]);
+                    if (cap < a[i]) {
+                        a[i] = cap;
+                        moved = true;
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -603,9 +728,10 @@ public final class Reshape {
 
     // --- the answer --------------------------------------------------------------------------------------------------
 
-    private static Result result(int w, int h, int[] ground, Kind[] kinds, int[] out, int margin) {
+    private static Result result(int w, int h, int[] ground, Kind[] kinds, int[] out, int margin, boolean seamed) {
         int steepest = 0;
         int heldSteepest = 0;
+        int seamSteepest = 0;
         int spotX = -1;
         int spotZ = -1;
         for (int z = 0; z < h; z++) {
@@ -620,6 +746,12 @@ public final class Reshape {
                     if (walkedRound(kinds[i]) || walkedRound(kinds[j])) {
                         heldSteepest = Math.max(heldSteepest, d);
                         continue;
+                    }
+                    if (kinds[i] == Kind.BORDER || kinds[j] == Kind.BORDER) {
+                        seamSteepest = Math.max(seamSteepest, d);
+                        if (seamed) {
+                            continue;                        // a bank where the ramp meets steep land: the walk out decides
+                        }
                     }
                     if (d > steepest) {
                         steepest = d;
@@ -647,7 +779,8 @@ public final class Reshape {
                 fillBlocks += out[i] - ground[i];
             }
         }
-        return new Result(out, margin, steepest, spotX, spotZ, cutColumns, fillColumns, cutBlocks, fillBlocks, heldSteepest);
+        return new Result(out, margin, steepest, spotX, spotZ, cutColumns, fillColumns, cutBlocks, fillBlocks, heldSteepest,
+                seamSteepest, seamed);
     }
 
     /** A column the ramp goes round, not over: a player's thing, another building, a pond. */

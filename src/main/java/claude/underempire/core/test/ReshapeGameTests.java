@@ -136,6 +136,51 @@ public class ReshapeGameTests {
         return k == Kind.KEPT || k == Kind.FLUID;
     }
 
+    /** Null when the ramp is walkable in itself: every free column within 1 of its free and pad neighbours. */
+    private static String rampStepProblem(Scene s, int[] a) {
+        for (int z = 0; z < s.h(); z++) {
+            for (int x = 0; x < s.w(); x++) {
+                int i = s.at(x, z);
+                for (int j : new int[]{x < s.w() - 1 ? i + 1 : -1, z < s.h() - 1 ? i + s.w() : -1}) {
+                    if (j < 0) {
+                        continue;
+                    }
+                    Kind ki = s.kinds()[i];
+                    Kind kj = s.kinds()[j];
+                    boolean ramp = (ki == Kind.FREE && (kj == Kind.FREE || kj == Kind.PAD)) || (kj == Kind.FREE && ki == Kind.PAD);
+                    if (ramp && Math.abs(a[i] - a[j]) > 1) {
+                        return "a step of " + a[i] + " to " + a[j] + " in the ramp, between " + s.where(i) + " and " + s.where(j);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Null when a walker on {@code from} gets out to the land: over free and pad columns, steps of 1, onto a border cell. */
+    private static String walkOutProblem(Scene s, int[] a, int from) {
+        boolean[] seen = new boolean[a.length];
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        seen[from] = true;
+        queue.add(from);
+        while (!queue.isEmpty()) {
+            int i = queue.poll();
+            int x = i % s.w();
+            int z = i / s.w();
+            for (int j : new int[]{x > 0 ? i - 1 : -1, x < s.w() - 1 ? i + 1 : -1, z > 0 ? i - s.w() : -1, z < s.h() - 1 ? i + s.w() : -1}) {
+                if (j < 0 || seen[j] || Math.abs(a[i] - a[j]) > 1 || round(s.kinds()[j])) {
+                    continue;
+                }
+                if (s.kinds()[j] == Kind.BORDER) {
+                    return null;
+                }
+                seen[j] = true;
+                queue.add(j);
+            }
+        }
+        return "no walk from " + s.where(from) + " out to the land at the border";
+    }
+
     /**
      * Null when no free column is strictly under, or over, all four of its neighbours. A column held up by its own floor
      * (floors, if given) is the floor's doing and is let off.
@@ -360,37 +405,196 @@ public class ReshapeGameTests {
         return n;
     }
 
-    /**
-     * A cliff 16 high, 6 columns from the pad's edge: no margin can ramp it (16 up over at most 12 columns), so at the widest
-     * (12) it is reported too steep, with the margin used, a spot on the cliff's side that is a free column, and the
-     * steepest step. The caller's loop ends there: {@code widen} gives the same margin again.
-     */
-    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
-    public static void aCliffTooHighToRampIsReportedWithItsSpot(GameTestHelper h) {
+    /** A pad at 0 with flat land to the west and a cliff 16 high beginning 6 columns east of its edge. */
+    private static Scene cliff(int margin) {
         Rect pad = new Rect(100, 100, 108, 108);
-        int cliffX = pad.x1() + 7;                              // 6 columns of flat land, then 16 up
-        Frame f = Reshape.frame(pad, Reshape.MARGIN_MAX);
+        Frame f = Reshape.frame(pad, margin);
         Scene s = flat(f, 0);
         for (int gz = 0; gz < s.h(); gz++) {
             for (int gx = 0; gx < s.w(); gx++) {
-                if (f.x0() + gx >= cliffX) {
+                if (f.x0() + gx >= pad.x1() + 7) {
                     s.ground()[s.at(gx, gz)] = 16;
                 }
             }
         }
+        return s;
+    }
+
+    /**
+     * A cliff 16 high, 6 columns from the pad's edge. Short of the widest margin no ramp of 1 a column meets it: reported too
+     * steep, with a spot on the cliff's side that is a free column, so the caller widens. At the widest (12), where
+     * widening ends, the ramp is banked into the cliff instead of refused: walkable in itself, a walk leads out to the land
+     * (west, where it is flat), and the bank's height is reported. The first margin for a gap of 16 is the widest.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aCliffTooHighToRampIsBankedAtTheWidest(GameTestHelper h) {
         h.assertTrue(Reshape.firstMargin(16) == Reshape.MARGIN_MAX && Reshape.widen(Reshape.MARGIN_MAX) == Reshape.MARGIN_MAX,
                 "the first margin for a gap of 16 is " + Reshape.firstMargin(16) + ", and widening the widest gives " + Reshape.widen(Reshape.MARGIN_MAX));
+        Scene narrow = cliff(10);
+        Result n = narrow.plan(null, 10);
+        h.assertTrue(n.tooSteep() && !n.seamed() && n.steepest() >= 2, "short of the widest margin the cliff was not reported too steep (steepest "
+                + n.steepest() + ", banked " + n.seamed() + ")" + dump(narrow, n.height()));
+        h.assertTrue(n.spotX() >= 0 && n.spotZ() >= 0, "no spot for the too-steep ramp: " + n.spotX() + "," + n.spotZ());
+        int spot = narrow.at(n.spotX(), n.spotZ());
+        int spotX = narrow.f().x0() + n.spotX();
+        h.assertTrue(narrow.kinds()[spot] == Kind.FREE && spotX > 108 && spotX <= 115,
+                "the spot " + narrow.where(spot) + " (" + narrow.kinds()[spot] + ") isn't a free column on the cliff's side");
+        Scene s = cliff(Reshape.MARGIN_MAX);
         Result r = s.plan(null, Reshape.MARGIN_MAX);
         int[] a = r.height();
-        h.assertTrue(r.tooSteep() && r.steepest() >= 2, "a cliff of 16 in 12 columns was not reported too steep (steepest " + r.steepest() + ")");
-        h.assertTrue(r.margin() == Reshape.MARGIN_MAX, "the margin reported is " + r.margin());
-        h.assertTrue(r.spotX() >= 0 && r.spotZ() >= 0 && r.spotX() < s.w() && r.spotZ() < s.h(), "no spot in the area: " + r.spotX() + "," + r.spotZ());
-        int spot = s.at(r.spotX(), r.spotZ());
-        int spotX = f.x0() + r.spotX();
-        h.assertTrue(s.kinds()[spot] == Kind.FREE && spotX > pad.x1() && spotX <= cliffX,
-                "the spot " + s.where(spot) + " (" + s.kinds()[spot] + ") isn't a free column on the cliff's side, between the pad and x " + cliffX);
+        h.assertTrue(r.seamed() && !r.tooSteep() && r.margin() == Reshape.MARGIN_MAX && r.spotX() < 0,
+                "at the widest margin the cliff was not banked (banked " + r.seamed() + ", steepest " + r.steepest() + ")" + dump(s, a));
+        expect(h, s, a, rampStepProblem(s, a));
+        expect(h, s, a, walkOutProblem(s, a, s.at(16, 16)));
+        expect(h, s, a, heldProblem(s, a));
+        h.assertTrue(r.seamSteepest() >= 2, "the bank into the cliff is reported as " + r.seamSteepest() + ": the scene should leave one" + dump(s, a));
+        h.succeed();
+    }
+
+    /**
+     * A hillside rising 2 a column (steeper than anything walks) under a pad at its middle: no margin meets it level, and
+     * before the bank at the widest every such site was refused. At the widest it is terraced: the ramp is walkable in itself,
+     * cut into the hill on one side and built out on the other, and a walk leads out to the land along the slope.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aHillsideSteeperThanAWalkIsTerraced(GameTestHelper h) {
+        Scene narrow = hill(8);
+        h.assertTrue(narrow.plan(null, 8).tooSteep(), "a slope of 2 a column fitted a margin of 8: the scene shows nothing");
+        Scene s = hill(Reshape.MARGIN_MAX);
+        Result r = s.plan(null, Reshape.MARGIN_MAX);
+        int[] a = r.height();
+        h.assertTrue(r.seamed() && !r.tooSteep(), "the hillside was not terraced at the widest margin (banked " + r.seamed()
+                + ", steepest " + r.steepest() + ")" + dump(s, a));
+        expect(h, s, a, rampStepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, null));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, walkOutProblem(s, a, s.at(s.w() / 2, s.h() / 2)));
+        h.succeed();
+    }
+
+    /**
+     * The second pass (kept things set aside) still keeps a pond's banks: land at 6 round a pad cut to 0, a post by the pad
+     * that sends the plan to the second pass, and a pond of surface 6 across the margin. Every bank stays at the water.
+     * (The review of 2cce8c2: with no floors in the second pass, five banks came out under 6.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void theSecondPassStillKeepsThePondsBanks(GameTestHelper h) {
+        Scene s = flat(Reshape.frame(new Rect(0, 0, 8, 8), 12), 6);
+        s.kinds()[s.at(22, 16)] = Kind.KEPT;
+        for (int gz = 15; gz <= 17; gz++) {
+            for (int gx = 2; gx <= 4; gx++) {
+                s.kinds()[s.at(gx, gz)] = Kind.FLUID;
+            }
+        }
+        Result r = s.plan(null, 12);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep() && r.heldSteepest() >= 2, "the scene didn't take the second pass (too steep " + r.tooSteep()
+                + ", the post stands " + r.heldSteepest() + " over the ramp)" + dump(s, a));
+        int under = 0;
+        for (int gz = 15; gz <= 17; gz++) {
+            for (int gx = 2; gx <= 4; gx++) {
+                for (int[] d : new int[][]{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
+                    int i = s.at(gx + d[0], gz + d[1]);
+                    under += s.kinds()[i] == Kind.FREE && a[i] < 6 ? 1 : 0;
+                }
+            }
+        }
+        h.assertTrue(under == 0, under + " of the pond's banks are cut under its water in the second pass" + dump(s, a));
+        expect(h, s, a, walkedStepProblem(s, a));
+        h.succeed();
+    }
+
+    /**
+     * A pond is walked round as a kept thing is: a pad raised to 6 over land at 0, and a pond (surface 0) one column from its
+     * edge. The ramp can't come down to the water within a column, and no margin changes that: it goes round, and the step
+     * down to the pond is reported, not refused. (Before the second pass and the repair: too steep, 3. Either one now
+     * carries it, so this shows the behaviour, not which of them gives it.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aPondBesideARaisedPadIsWalkedRound(GameTestHelper h) {
+        Frame f = Reshape.frame(new Rect(0, 0, 8, 8), 10);
+        Scene s = new Scene(f, new int[f.w() * f.h()], 6);
+        for (int gz = 13; gz <= 15; gz++) {
+            for (int gx = 20; gx <= 22; gx++) {
+                s.kinds()[s.at(gx, gz)] = Kind.FLUID;
+            }
+        }
+        Result r = s.plan(null, 10);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep() && r.steepest() <= 1 && r.heldSteepest() >= 2, "the pond by the raised pad: too steep "
+                + r.tooSteep() + " (" + r.steepest() + "), it stands " + r.heldSteepest() + " under the ramp" + dump(s, a));
+        expect(h, s, a, walkedStepProblem(s, a));
         expect(h, s, a, heldProblem(s, a));
         h.succeed();
+    }
+
+    /**
+     * Beside a tall post the speck pass looks past the post as the clamp does: land 4 round a pad at 0, a post of 7 three
+     * columns from its edge. No free column is left a bump over all of its walked neighbours (the review of 2cce8c2: with
+     * the speck pass counting the post, the column east of it was kept a block over its three walked neighbours).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void noBumpIsLeftBesideATallPost(GameTestHelper h) {
+        Scene s = flat(Reshape.frame(new Rect(0, 0, 8, 8), 10), 4);
+        int post = s.at(21, 11);
+        s.kinds()[post] = Kind.KEPT;
+        s.ground()[post] = 7;
+        Result r = s.plan(null, 10);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep(), "the post made the ramp too steep (" + r.steepest() + ")" + dump(s, a));
+        for (int z = 1; z < s.h() - 1; z++) {
+            for (int x = 1; x < s.w() - 1; x++) {
+                int i = s.at(x, z);
+                if (s.kinds()[i] != Kind.FREE) {
+                    continue;
+                }
+                int over = 0;
+                int walkedNb = 0;
+                for (int j : new int[]{i - 1, i + 1, i - s.w(), i + s.w()}) {
+                    if (!round(s.kinds()[j])) {
+                        walkedNb++;
+                        over += a[i] > a[j] ? 1 : 0;
+                    }
+                }
+                h.assertTrue(walkedNb == 0 || over < walkedNb, "the column " + s.where(i) + " is " + a[i]
+                        + ", a bump over all " + walkedNb + " of its walked neighbours" + dump(s, a));
+            }
+        }
+        h.succeed();
+    }
+
+    /** A frame needs a ring and a ramp: a margin under 2 is refused, with or without a landing. */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aMarginUnderTwoIsRefused(GameTestHelper h) {
+        Rect pad = new Rect(0, 0, 8, 8);
+        for (int m : new int[]{0, 1}) {
+            boolean plain = false;
+            boolean landed = false;
+            try {
+                Reshape.frame(pad, m);
+            } catch (IllegalArgumentException e) {
+                plain = true;
+            }
+            try {
+                Reshape.frame(pad, new Rect(9, 3, 10, 5), Side.EAST, m);
+            } catch (IllegalArgumentException e) {
+                landed = true;
+            }
+            h.assertTrue(plain && landed, "a margin of " + m + " was taken (plain " + !plain + ", with a landing " + !landed + ")");
+        }
+        h.assertTrue(Reshape.frame(pad, 2).w() == 13, "a margin of 2 was refused or laid out wrong");
+        h.succeed();
+    }
+
+    /** A 9x9 pad at 0 on land rising 2 a column eastward, 0 at the pad's middle. */
+    private static Scene hill(int margin) {
+        Scene s = flat(Reshape.frame(new Rect(-4, -4, 4, 4), margin), 0);
+        for (int gz = 0; gz < s.h(); gz++) {
+            for (int gx = 0; gx < s.w(); gx++) {
+                s.ground()[s.at(gx, gz)] = 2 * (s.f().x0() + gx);
+            }
+        }
+        return s;
     }
 
     /** The same arrays give the same heights and counts, twice over and from copies; and the input isn't touched. */
