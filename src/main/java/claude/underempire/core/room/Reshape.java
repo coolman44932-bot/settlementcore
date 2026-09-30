@@ -246,15 +246,55 @@ public final class Reshape {
             return best;                                      // too steep: the caller widens
         }
         // The widest margin, and still too steep: the land itself is steeper than a walker climbs (a hillside rising 2 a
-        // column, a cliff), and no ramp of 1 a column can meet it level all round. Set the border aside too: the ramp is
-        // walkable in itself, held to the land by the solve, and where the land is too steep to meet it meets it with a
-        // bank, cut into the hill or built out over the slope, as a terrace is. Whether a walk still leads out is the
-        // caller's to find (Siting#walk); only a site with none is too steep.
+        // column, a cliff), and no ramp of 1 a column can meet it level all round. Here the ramp is the land wherever the
+        // land walks, and is cut or filled only where a walker from the pad couldn't manage it: it climbs into a hill 1 a
+        // column and comes down a falling slope the same way, and flat land beside the hill is left as it is. The border is
+        // not held: where the land already meets it walkably the ramp is that land and meets it level, and elsewhere the
+        // step at the border is the bank, cut into the hill or built out over the slope, as a terrace is. (A smooth field
+        // held to the whole ring, or to any part of the ring a ramp could reach, heaped the ramp up over the flat land to
+        // meet a high edge: the review of 81f1f2a.) Whether a walk still leads out is the caller's to find (Siting#walk);
+        // only a site with none is too steep.
         boolean[] banked = aside.clone();
         for (int i = 0; i < kinds.length; i++) {
             banked[i] |= kinds[i] == Kind.BORDER;
         }
-        Result third = settle(w, h, ground, kinds, floorY, margin, lows, field, held, banked, true);
+        int[] a = new int[kinds.length];
+        for (int z = 0; z < h; z++) {
+            for (int x = 0; x < w; x++) {
+                int i = z * w + x;
+                if (held[i]) {
+                    a[i] = heldAt(kinds[i], ground[i], floorY);
+                    continue;
+                }
+                // the land as it is, a pit of one column filled to a block under its lowest neighbour (so no crater is cut
+                // round it), never under its floor
+                int lowest = Integer.MAX_VALUE;
+                for (int k = 0; k < 4; k++) {
+                    int j = neighbour(i, x, z, w, h, k);
+                    if (j >= 0 && !banked[j]) {
+                        lowest = Math.min(lowest, held[j] ? heldAt(kinds[j], ground[j], floorY) : ground[j]);
+                    }
+                }
+                int land = lowest == Integer.MAX_VALUE ? ground[i] : Math.max(ground[i], lowest - MAX_STEP);
+                a[i] = lows[i] == NO_FLOOR ? land : Math.max(lows[i], land);
+            }
+        }
+        // Two walkable grounds from the land: the one cut to walk (every column lowered as little as it takes) and the one
+        // filled to walk (raised as little as it takes), both within a ramp's reach of the pad. Above the floor the cut one
+        // is taken (a hill is cut into), below it the filled one (a drop is built out over), and where they straddle the
+        // floor, the floor: flat land is neither. A walkable ground clamped between two walkable grounds walks.
+        int[][] reach = bounds(a, held, lows, w, h, banked);
+        int[] cut = a.clone();
+        int[] fill = a.clone();
+        clampInto(cut, held, banked, reach);
+        clampInto(fill, held, banked, reach);
+        relax(cut, held, w, h, banked, reach, true);
+        relax(fill, held, w, h, banked, reach, false);
+        for (int i = 0; i < a.length; i++) {
+            a[i] = held[i] || banked[i] ? a[i] : Math.min(Math.max(floorY, cut[i]), fill[i]);
+        }
+        levelSpecks(a, held, lows, w, h, banked);
+        Result third = result(w, h, ground, kinds, a, margin, true);
         return third.steepest() < best.steepest() ? third : best;
     }
 
@@ -300,6 +340,16 @@ public final class Reshape {
      * Where the bounds cross (land too steep for any ramp) the floor wins and the step stays, for the caller to report.
      */
     private static void repair(int[] a, boolean[] held, int[] lows, int w, int h, boolean[] aside) {
+        int[][] reach = bounds(a, held, lows, w, h, aside);
+        clampInto(a, held, aside, reach);
+        relax(a, held, w, h, aside, reach, true);
+    }
+
+    /**
+     * Each free column's bounds, {up, down}: the highest and lowest a walker's ramp reaches from the held columns not
+     * {@code aside} (their heights plus or minus the steps to them), floors included in the lowest.
+     */
+    private static int[][] bounds(int[] a, boolean[] held, int[] lows, int w, int h, boolean[] aside) {
         int n = a.length;
         int[] up = new int[n];
         int[] down = new int[n];
@@ -344,13 +394,55 @@ public final class Reshape {
                 }
             }
         }
-        for (int i = 0; i < n; i++) {
+        return new int[][]{up, down};
+    }
+
+    /** Each free column put within its bounds (where they cross, the lower one wins: a floor is never cut under). */
+    private static void clampInto(int[] a, boolean[] held, boolean[] aside, int[][] reach) {
+        for (int i = 0; i < a.length; i++) {
             if (!held[i] && (aside == null || !aside[i])) {
-                a[i] = Math.max(Math.min(a[i], up[i]), down[i]);
+                a[i] = Math.max(Math.min(a[i], reach[0][i]), reach[1][i]);
             }
         }
-        // lowered where it stands over a neighbour: the largest walkable ground under what it was (never under its lower
-        // bound, which already walks)
+    }
+
+    /**
+     * Makes the free columns walkable by moving them one way only: {@code lower}, each column is lowered wherever it stands
+     * more than 1 over a neighbour (the largest walkable ground under what it was, never under its lower bound, which already
+     * walks); else each is raised wherever it stands more than 1 under one (the smallest over it, never over its upper bound).
+     */
+    private static void relax(int[] a, boolean[] held, int w, int h, boolean[] aside, int[][] reach, boolean lower) {
+        int n = a.length;
+        int[] up = reach[0];
+        int[] down = reach[1];
+        if (!lower) {
+            for (boolean moved = true; moved; ) {
+                moved = false;
+                for (int pass = 0; pass < 2; pass++) {
+                    for (int s = 0; s < n; s++) {
+                        int i = pass == 0 ? s : n - 1 - s;
+                        if (held[i] || (aside != null && aside[i])) {
+                            continue;
+                        }
+                        int x = i % w;
+                        int z = i / w;
+                        int bed = a[i];
+                        for (int k = 0; k < 4; k++) {
+                            int j = neighbour(i, x, z, w, h, k);
+                            if (j >= 0 && (aside == null || !aside[j])) {
+                                bed = Math.max(bed, a[j] - MAX_STEP);
+                            }
+                        }
+                        bed = Math.min(bed, up[i]);
+                        if (bed > a[i]) {
+                            a[i] = bed;
+                            moved = true;
+                        }
+                    }
+                }
+            }
+            return;
+        }
         for (boolean moved = true; moved; ) {
             moved = false;
             for (int pass = 0; pass < 2; pass++) {
@@ -446,9 +538,13 @@ public final class Reshape {
 
     /** The harmonic field between the held heights, blurred with the held columns kept (terraform.ts, planTerrain). */
     private static double[] solved(int w, int h, int[] ground, Kind[] kinds, int floorY) {
+        return solved(w, h, ground, kinds, floorY, held(kinds));
+    }
+
+    /** As {@link #solved(int, int, int[], Kind[], int)}, holding only the {@code frozen} columns in the solve. */
+    private static double[] solved(int w, int h, int[] ground, Kind[] kinds, int floorY, boolean[] frozen) {
         int n = w * h;
         double[] field = new double[n];
-        boolean[] frozen = held(kinds);
         for (int i = 0; i < n; i++) {
             field[i] = heldAt(kinds[i], ground[i], floorY);
             if (!frozen[i]) {

@@ -15,11 +15,16 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.SectionPos;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.Tag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
@@ -861,7 +866,9 @@ public class SitingGameTests {
      * its numbers and its printout; the ramp walkable in itself (a free column against a free one or the pad, at most 1) in
      * the plan and in the finished world; every free column reached from the landing, and the walk out to the land; every
      * worked column where the plan put it; the bank standing in the world by the rise; nothing outside the area, or on its
-     * border, touched.
+     * border, touched. And the level sides are met level ({@link #levelSideProblem}): the bank is only where the land is
+     * steep, and the ramp doesn't rise over the flat land beside the hill (the review of 81f1f2a: with the whole ring set
+     * aside, it stood 5 over the flat land by the level ring).
      *
      * <p>(Not a sheer cliff with flat land between: a site 6 flat columns from a cliff needs no ramp at all, and is sited
      * level. The margin starts from the land just outside the pad, section 9.)
@@ -880,12 +887,14 @@ public class SitingGameTests {
             h.assertTrue(n.steepest() <= Reshape.MAX_STEP, "the plan's ramp has a step of " + n.steepest() + " on it" + dump(s, p, planned(p)));
             int[] q = planned(p);
             expect(h, s, p, q, stepProblem(s, p, q, false));
+            expect(h, s, p, q, levelSideProblem(p, q));
             int w = p.width();
             Map<Long, BlockState> outside = s.snapshot((x, z) -> x <= p.x0() || z <= p.z0() || x >= p.x0() + w - 1 || z >= p.z0() + p.depth() - 1);
             p.applyNow(s.level);
             s.stamp();
             int[] a = s.heights(p);
             expect(h, s, p, a, stepProblem(s, p, a, false));
+            expect(h, s, p, a, levelSideProblem(p, a));
             expect(h, s, p, a, heightProblem(s, p, a));
             expect(h, s, p, a, walkProblem(s, p, a));
             String moved = s.changed(outside);
@@ -958,6 +967,67 @@ public class SitingGameTests {
         }));
     }
 
+    /**
+     * Null when the ramp meets the level land at the floor level: (a) every free column beside a border cell whose land is
+     * within 1 of both its ring neighbours' and of the floor steps at most 1 onto it; (b) no free column whose land was at
+     * the floor, within 3 columns of such a border cell, is raised more than 1. A level ring high over the floor (the top of
+     * the steep rise, 16 up and 11 walked columns from the pad) is left out: no ramp of 1 a column reaches it, and it is
+     * banked.
+     */
+    private static String levelSideProblem(Plan p, int[] a) {
+        int w = p.width();
+        int d = p.depth();
+        List<Integer> level = new ArrayList<>();
+        for (int j = 0; j < a.length; j++) {
+            int x = j % w;
+            int z = j / w;
+            if (!(x == 0 || z == 0 || x == w - 1 || z == d - 1)) {
+                continue;
+            }
+            int land = p.oldGround(p.x0() + x, p.z0() + z);
+            if (Math.abs(land - p.floor()) > 1) {
+                continue;
+            }
+            int ring = 0;
+            boolean flat = true;
+            for (int k : new int[]{x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, z > 0 ? j - w : -1, z < d - 1 ? j + w : -1}) {
+                if (k < 0) {
+                    continue;
+                }
+                int kx = k % w;
+                int kz = k / w;
+                if (kx == 0 || kz == 0 || kx == w - 1 || kz == d - 1) {
+                    ring++;
+                    flat &= Math.abs(p.oldGround(p.x0() + kx, p.z0() + kz) - land) <= 1;
+                }
+            }
+            if (ring < 2 || !flat) {
+                continue;
+            }
+            level.add(j);
+            for (int i : new int[]{x > 0 ? j - 1 : -1, x < w - 1 ? j + 1 : -1, z > 0 ? j - w : -1, z < d - 1 ? j + w : -1}) {
+                if (i >= 0 && kindAt(p, i) == Reshape.Kind.FREE && Math.abs(a[i] - a[j]) > 1) {
+                    return "(a) the free column " + where(p, i) + " stands " + (a[i] - p.floor()) + ", beside the level border " + where(p, j) + " at "
+                            + (a[j] - p.floor());
+                }
+            }
+        }
+        for (int i = 0; i < a.length; i++) {
+            int x = p.x0() + i % w;
+            int z = p.z0() + i / w;
+            if (kindAt(p, i) != Reshape.Kind.FREE || p.oldGround(x, z) != p.floor() || a[i] - p.oldGround(x, z) <= 1) {
+                continue;
+            }
+            for (int j : level) {
+                if (Math.max(Math.abs(i % w - j % w), Math.abs(i / w - j / w)) <= 3) {
+                    return "(b) the free column " + where(p, i) + ", level land at the floor, is raised " + (a[i] - p.oldGround(x, z))
+                            + " within 3 of the level border " + where(p, j);
+                }
+            }
+        }
+        return level.isEmpty() ? "no border cell is level at the floor: the scene shows nothing of the level sides" : null;
+    }
+
     /** A plan's own heights over its area, row by row, as {@link Site#heights} reads the world's. */
     private static int[] planned(Plan p) {
         int[] a = new int[p.width() * p.depth()];
@@ -967,10 +1037,10 @@ public class SitingGameTests {
         return a;
     }
 
-    /** The land rising 3 a column to 16 on every side of the pad, from the berm out. */
     /** The bowl's rim over its floor: higher than a ramp of 1 a column climbs to the widest area's corners. */
     private static final int BOWL_RIM = 30;
 
+    /** The land rising 3 a column to {@link #BOWL_RIM} on every side of the pad, from the berm out. */
     private static Land bowl(Site s) {
         return (x, z) -> {
             int dx = Math.max(0, Math.max(s.bx0 - 1 - x, x - (s.bx1() + 1)));
@@ -1036,7 +1106,8 @@ public class SitingGameTests {
     /**
      * A plan saved and loaded back (through the bytes a save file holds) gives the same earthworks, in the same order, and
      * the same numbers; and again after the ground is gone, since a loaded plan reads nothing from the world (its load takes
-     * no level at all).
+     * no level at all). A look whose block is gone (a removed mod's: it reads back as air) is loaded as the plain one, so no
+     * earthwork that laid a block lays air instead.
      */
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
     public static void aSavedPlanRebuildsTheSameEarthworks(GameTestHelper h) {
@@ -1058,8 +1129,38 @@ public class SitingGameTests {
             h.assertTrue(again != null && again.earthworks().equals(want), "with the ground gone, the loaded plan's earthworks differ: "
                     + (again == null ? "it didn't load" : firstDifference(want, again.earthworks())));
             h.assertTrue(saved.sizeInBytes() < 64 * 1024, "the saved plan is " + saved.sizeInBytes() + " bytes");
+            CompoundTag gone = saved.copy();
+            CompoundTag rock = new CompoundTag();
+            rock.putString("Name", "removedmod:rock");
+            gone.getList("states", Tag.TAG_COMPOUND).set(0, rock);   // the first look's top block
+            Plan plain = Plan.load(gone, s.pl, s.template);
+            h.assertTrue(plain != null && plain.earthworks().size() == want.size(), "the plan with a block gone didn't load as it was: " + plain);
+            for (int k = 0; k < want.size(); k++) {
+                Earthwork e = plain.earthworks().get(k);
+                h.assertTrue(want.get(k).state().isAir() || !e.state().isAir(), "with its block gone, task " + k + " lays air: " + e + " (was "
+                        + want.get(k).state() + ")");
+            }
             h.succeed();
         }));
+    }
+
+    /** How many bytes a tag takes in a save file: as written, or compressed as a chunk's or a level's data is. */
+    private static int written(CompoundTag t, boolean compressed) {
+        try {
+            ByteArrayOutputStream out = new ByteArrayOutputStream();
+            if (compressed) {
+                NbtIo.writeCompressed(t, out);
+            } else {
+                NbtIo.write(t, new java.io.DataOutputStream(out));
+            }
+            return out.size();
+        } catch (IOException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static int written(CompoundTag t) {
+        return written(t, false);
     }
 
     private static CompoundTag roundTrip(CompoundTag t) {
@@ -1083,8 +1184,10 @@ public class SitingGameTests {
 
     /**
      * A small tree on the pad (a trunk of 4 in the box, 21 leaves) is felled in the clearing: every one of its cells is a
-     * clearing task setting air, no later phase touches them, and once put down none is left. A tree of more than 256
-     * blocks (a trunk of 8 in a 7x7 crown 6 high) refuses the site, naming it.
+     * clearing task setting air, no later phase touches them, and once put down none is left. A log set by hand in the
+     * box's air after the plan is no tree of the plan's, and is left standing. A pile of 5 logs with no leaves on the pad is
+     * someone's, not a tree: the site is refused, naming it; in the margin such a pile keeps its column, as the player's
+     * blocks it is. A tree of more than 256 blocks (a trunk of 8 in a 7x7 crown 6 high) refuses the site, naming it.
      */
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
     public static void aTreeOnThePadIsFelledOrRefused(GameTestHelper h) {
@@ -1107,11 +1210,40 @@ public class SitingGameTests {
                 h.assertTrue(e.phase() == Phase.CLEARING || !small.contains(e.pos()), "the tree's cell " + e.pos() + " is worked again, in " + e.phase());
             }
             h.assertTrue(p.trees().length == small.size(), "the plan fells " + p.trees().length + " blocks of tree, not the " + small.size() + " there are");
+            BlockPos hand = new BlockPos(s.bx0 + 1, s.floor + 3, s.bz0 + 1);
+            h.assertTrue(clearing.containsKey(hand.asLong()) && !small.contains(hand), "the cell " + hand + " isn't a cell of the box's air the clearing sets");
+            s.set(hand.getX(), hand.getY(), hand.getZ(), Blocks.OAK_LOG.defaultBlockState());
             p.applyNow(s.level);
             for (BlockPos c : small) {
                 BlockState now = s.level.getBlockState(c);
                 h.assertTrue(!now.is(net.minecraft.tags.BlockTags.LOGS) && !(now.getBlock() instanceof LeavesBlock), "the tree is still at " + c + ": " + now);
             }
+            h.assertTrue(s.level.getBlockState(hand).is(Blocks.OAK_LOG), "the log set by hand at " + hand + " after the plan was cleared: "
+                    + s.level.getBlockState(hand));
+            // a pile of logs with no leaves, on the pad: someone's
+            s.lay((x, z) -> s.floor);
+            List<BlockPos> pile = List.of(new BlockPos(s.bx0 + 2, s.floor + 1, s.bz0 + 6), new BlockPos(s.bx0 + 3, s.floor + 1, s.bz0 + 6),
+                    new BlockPos(s.bx0 + 4, s.floor + 1, s.bz0 + 6), new BlockPos(s.bx0 + 3, s.floor + 2, s.bz0 + 6), new BlockPos(s.bx0 + 3, s.floor + 1, s.bz0 + 7));
+            for (BlockPos c : pile) {
+                s.set(c.getX(), c.getY(), c.getZ(), Blocks.OAK_LOG.defaultBlockState());
+            }
+            Refusal logs = s.expectRefusal(s.plan(true), "the site with a pile of 5 logs on it");
+            h.assertTrue(logs.why().contains("no leaves") && pile.contains(logs.spot())
+                            && logs.why().contains(logs.spot().getX() + " " + logs.spot().getY() + " " + logs.spot().getZ()),
+                    "the refusal doesn't name the pile: \"" + logs.why() + "\" at " + logs.spot());
+            // the same kind of pile in the margin keeps its columns, and is the player's blocks, not a tree
+            s.lay((x, z) -> s.floor);
+            List<BlockPos> heap = List.of(new BlockPos(s.bx1() + 2, s.floor + 1, s.bz0 + 4), new BlockPos(s.bx1() + 3, s.floor + 1, s.bz0 + 4),
+                    new BlockPos(s.bx1() + 2, s.floor + 2, s.bz0 + 4));
+            for (BlockPos c : heap) {
+                s.set(c.getX(), c.getY(), c.getZ(), Blocks.OAK_LOG.defaultBlockState());
+            }
+            Plan m = s.expectPlan(s.plan(true), "the site with a pile of logs in the margin");
+            for (BlockPos c : heap) {
+                h.assertTrue(m.kind(c.getX(), c.getZ()) == Reshape.Kind.KEPT, "the pile's column " + c.getX() + " " + c.getZ() + " is " + m.kind(c.getX(), c.getZ()));
+            }
+            h.assertTrue(m.goesRound().contains("of your blocks") && !m.goesRound().contains("tree"),
+                    "the ramp goes round \"" + m.goesRound() + "\": a pile of logs is the player's blocks");
             s.lay((x, z) -> s.floor);
             List<BlockPos> big = tree(s, s.bx0 + 4, s.floor + 1, s.bz0 + 4, 8, 3, 6);
             h.assertTrue(big.size() > Siting.TREE_MAX, "the big tree is only " + big.size() + " blocks");
@@ -1120,6 +1252,247 @@ public class SitingGameTests {
             s.clear();
             h.succeed();
         }));
+    }
+
+    /**
+     * Water in the wall beside a cut berm is walled before the cut opens it (section 9). The site sits 3 under the land, so
+     * the berm is cut 3; in the wall east of it a pocket of 2 water sources runs 2 into the ground, 2 over the floor. The
+     * plan walls the cell facing the cut (one seal, of the wall's own dirt, in the plinth phase, before any of the berm's
+     * cut), and a saved plan rebuilds it. After the earthworks, and 40 ticks with the pocket made to flow, there is no water
+     * but the pocket's back cell, so the floor is dry.
+     *
+     * <p>Two controls: the seal taken out by hand lets the water pour down the cut onto the floor, and the check sees it;
+     * and lava in the same place refuses the site, naming it.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void aWaterPocketBesideACutBermIsWalled(GameTestHelper h) {
+        Site s = new Site(h);
+        int land = s.floor + 3;
+        BlockPos face = new BlockPos(s.bx1() + 2, s.floor + 2, s.bz0 + 4);     // in the wall, beside the berm at bx1 + 1
+        BlockPos back = face.east();
+        s.lay((x, z) -> land);
+        s.set(face.getX(), face.getY(), face.getZ(), Blocks.WATER.defaultBlockState());
+        s.set(back.getX(), back.getY(), back.getZ(), Blocks.WATER.defaultBlockState());
+        LongOpenHashSet pocket = new LongOpenHashSet(new long[]{back.asLong()});
+        h.startSequence()
+                .thenExecuteAfter(20, () -> s.guard(() -> {
+                    Plan p = s.expectPlan(s.plan(true), "the sunken site with water in the wall beside its berm");
+                    h.assertTrue(p.seals().length == 1 && p.seals()[0] == face.asLong(), "the plan walls " + Arrays.toString(Arrays.stream(p.seals())
+                            .mapToObj(BlockPos::of).toArray()) + ", not the pocket's cell facing the cut, " + face);
+                    int seal = -1;
+                    int firstCut = Integer.MAX_VALUE;
+                    List<Earthwork> works = p.earthworks();
+                    for (int k = 0; k < works.size(); k++) {
+                        Earthwork e = works.get(k);
+                        if (e.pos().equals(face)) {
+                            h.assertTrue(e.phase() == Phase.PLINTH && e.state().is(Blocks.DIRT), "the seal is " + e);
+                            seal = k;
+                        }
+                        if (e.phase() == Phase.PAD) {
+                            firstCut = Math.min(firstCut, k);
+                        }
+                    }
+                    h.assertTrue(seal >= 0 && seal < firstCut, "the seal (task " + seal + ") isn't laid before the berm's cut (task " + firstCut + ")");
+                    Plan again = Plan.load(roundTrip(p.save()), s.pl, s.template);
+                    h.assertTrue(again != null && again.earthworks().equals(works), "the saved plan rebuilds other earthworks: "
+                            + (again == null ? "it didn't load" : firstDifference(works, again.earthworks())));
+                    p.applyNow(s.level);
+                    s.stamp();
+                    int[] a = s.heights(p);
+                    expect(h, s, p, a, heightProblem(s, p, a));
+                    expect(h, s, p, a, walkProblem(s, p, a));
+                    h.assertTrue(s.level.getBlockState(face).is(Blocks.DIRT), "the pocket's face is " + s.level.getBlockState(face));
+                    s.level.scheduleTick(back, Fluids.WATER, 1);
+                }))
+                .thenExecuteAfter(40, () -> s.guard(() -> {
+                    String wet = waterProblem(s, pocket, s.bx0 - 16, s.bz0 - 13, s.bx1() + 13, s.bz1() + 13);
+                    h.assertTrue(wet == null, wet + dumpLand(s, face));
+                    // the control: the wall taken out by hand
+                    s.set(face.getX(), face.getY(), face.getZ(), Blocks.AIR.defaultBlockState());
+                    s.level.scheduleTick(back, Fluids.WATER, 1);
+                }))
+                .thenExecuteAfter(40, () -> s.guard(() -> {
+                    boolean floorWet = false;
+                    for (int x = s.bx1() - 1; x <= s.bx1() + 1; x++) {
+                        for (int z = face.getZ() - 1; z <= face.getZ() + 1; z++) {
+                            floorWet |= !s.level.getFluidState(new BlockPos(x, s.floor + 1, z)).isEmpty();
+                        }
+                    }
+                    h.assertTrue(floorWet && waterProblem(s, pocket, s.bx0 - 16, s.bz0 - 13, s.bx1() + 13, s.bz1() + 13) != null,
+                            "with the seal taken out, no water reached the floor: the check shows nothing" + dumpLand(s, face));
+                    // lava in the wall refuses the site
+                    s.lay((x, z) -> land);
+                    s.set(face.getX(), face.getY(), face.getZ(), Blocks.LAVA.defaultBlockState());
+                    Refusal no = s.expectRefusal(s.plan(true), "the sunken site with lava in the wall beside its berm");
+                    h.assertTrue(no.spot().equals(face) && no.why().startsWith("Lava at " + face.getX() + " " + face.getY() + " " + face.getZ()),
+                            "the refusal doesn't name the lava at " + face + ": \"" + no.why() + "\" at " + no.spot());
+                    s.clear();
+                }))
+                .thenSucceed();
+    }
+
+    /**
+     * The pad's own refusals, each naming its spot: water 3 deep in the box (WATER_MAX is 2); lava on the ground in the box;
+     * a pond standing 2 over the floor beside the berm (its bank would be cut); a cave 1 and 2 under the box's ground; and
+     * another building (a fake settlement's, the ground's own cells) beside the berm.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void thePadsRefusalsNameTheirSpots(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            BlockState water = Blocks.WATER.defaultBlockState();
+            // water 3 deep
+            s.lay((x, z) -> s.floor);
+            for (int x = s.bx0 + 3; x <= s.bx0 + 5; x++) {
+                for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
+                    for (int y = s.floor - 2; y <= s.floor; y++) {
+                        s.set(x, y, z, water);
+                    }
+                }
+            }
+            refusedAt(h, s, s.plan(true), "a pool 3 deep in the box", "3 deep", new BlockPos(s.bx0 + 3, s.floor, s.bz0 + 3));
+            // lava
+            s.lay((x, z) -> s.floor);
+            s.set(s.bx0 + 4, s.floor, s.bz0 + 4, Blocks.LAVA.defaultBlockState());
+            refusedAt(h, s, s.plan(true), "lava in the box", "Lava at", new BlockPos(s.bx0 + 4, s.floor, s.bz0 + 4));
+            // a pond over the floor beside the berm
+            s.lay((x, z) -> s.floor + 2);
+            for (int x = s.bx1() + 2; x <= s.bx1() + 3; x++) {
+                for (int z = s.bz0 + 4; z <= s.bz0 + 5; z++) {
+                    s.set(x, s.floor + 2, z, water);
+                }
+            }
+            refusedAt(h, s, s.plan(true), "a pond 2 over the floor beside the berm", "stands 2 above", new BlockPos(s.bx1() + 2, s.floor + 2, s.bz0 + 4));
+            // a cave under the box's ground
+            s.lay((x, z) -> s.floor);
+            for (int x = s.bx0 + 3; x <= s.bx0 + 5; x++) {
+                for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
+                    s.set(x, s.floor - 2, z, Blocks.AIR.defaultBlockState());
+                    s.set(x, s.floor - 1, z, Blocks.AIR.defaultBlockState());
+                }
+            }
+            refusedAt(h, s, s.plan(true), "a cave under the box", "hollow", new BlockPos(s.bx0 + 3, s.floor - 2, s.bz0 + 3));
+            // another building beside the berm
+            s.lay((x, z) -> s.floor);
+            LongOpenHashSet room = new LongOpenHashSet();
+            for (int x = s.bx1() + 2; x <= s.bx1() + 3; x++) {
+                for (int z = s.bz0 + 4; z <= s.bz0 + 5; z++) {
+                    room.add(BlockPos.asLong(x, s.floor - 1, z));
+                    room.add(BlockPos.asLong(x, s.floor, z));
+                }
+            }
+            Refusal no = s.expectRefusal(s.plan(warrenOf(room), true), "another building beside the berm");
+            BlockPos q = no.spot();
+            boolean near = false;
+            for (long c : room) {
+                BlockPos r = BlockPos.of(c);
+                near |= Math.abs(r.getX() - q.getX()) <= 1 && Math.abs(r.getY() - q.getY()) <= 1 && Math.abs(r.getZ() - q.getZ()) <= 1;
+            }
+            h.assertTrue(no.why().startsWith("Another building is too near at " + q.getX() + " " + q.getY() + " " + q.getZ()) && near
+                    && q.getX() == s.bx1() + 1, "the refusal doesn't name the berm's cell beside the building: \"" + no.why() + "\" at " + q);
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /** The site was refused, saying {@code words}, at {@code spot}, and naming it. */
+    private static void refusedAt(GameTestHelper h, Site s, Siting.Result r, String scene, String words, BlockPos spot) {
+        Refusal no = s.expectRefusal(r, scene);
+        h.assertTrue(no.why().contains(words) && no.spot().equals(spot) && no.why().contains(spot.getX() + " ") && no.why().contains(" " + spot.getZ()),
+                scene + ": the refusal is \"" + no.why() + "\" at " + no.spot() + ", not \"" + words + "\" at " + spot + dumpLand(s, no.spot()));
+    }
+
+    /**
+     * A site on land that isn't loaded (4096 blocks east of the plot) is refused as not loaded, naming a column of it, and
+     * siting loads nothing: the chunk is still not there afterwards.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "siting")
+    public static void aSiteOnLandNotLoadedIsRefused(GameTestHelper h) {
+        Site s = new Site(h);
+        PlanPlacement far = PlanPlacement.onGround(platform(), new BlockPos(s.bx0 + 4096, s.floor, s.bz0 + 4), Direction.EAST);
+        int cx = SectionPos.blockToSectionCoord(far.box().minX());
+        int cz = SectionPos.blockToSectionCoord(far.box().minZ());
+        h.assertTrue(!s.level.hasChunk(cx, cz), "the land 4096 east of the plot is loaded: the test shows nothing");
+        Refusal no = s.expectRefusal(Siting.plan(s.level, far, RoomShoring.Warren.alone(), true), "a site 4096 east of the plot");
+        int sx = SectionPos.blockToSectionCoord(no.spot().getX());
+        int sz = SectionPos.blockToSectionCoord(no.spot().getZ());
+        h.assertTrue(no.why().contains("not loaded") && no.why().contains(no.spot().getX() + " " + no.spot().getZ()) && far.box().intersects(
+                no.spot().getX(), no.spot().getZ(), no.spot().getX(), no.spot().getZ()), "the refusal is \"" + no.why() + "\" at " + no.spot());
+        h.assertTrue(!s.level.hasChunk(cx, cz) && !s.level.hasChunk(sx, sz), "siting loaded the chunk it was refused for");
+        h.succeed();
+    }
+
+    /**
+     * The biggest plan saved (the widest area, 64 by 64 columns, every column's heights and looks different, the most looks
+     * a plan keeps, 256 blocks of trees and 64 seals) stays under 64 KB, and loads back the same. Made from a tag (Plan.load),
+     * since the test building's widest real area is 38 by 35.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "siting")
+    public static void theWidestSavedPlanStaysSmall(GameTestHelper h) {
+        Site s = new Site(h);
+        int w = Siting.AREA_MAX;
+        int n = w * w;
+        byte[] kinds = new byte[n];
+        byte[] now = new byte[n];
+        byte[] ground = new byte[n];
+        byte[] top = new byte[n];
+        byte[] look = new byte[n];
+        for (int i = 0; i < n; i++) {
+            kinds[i] = (byte) (i % Reshape.Kind.values().length);
+            now[i] = (byte) (i % 201 - 100);
+            ground[i] = (byte) (i * 7 % 201 - 100);
+            top[i] = (byte) (i * 13 % 201 - 100);
+            look[i] = (byte) ((i % 2 == 0 ? 1 : -1) * (i % 126 + 1));
+        }
+        ListTag states = new ListTag();
+        for (net.minecraft.world.level.block.Block b : BuiltInRegistries.BLOCK) {
+            if (states.size() >= 126 * 3) {
+                break;
+            }
+            if (!b.defaultBlockState().isAir()) {
+                states.add(NbtUtils.writeBlockState(b.defaultBlockState()));
+            }
+        }
+        long[] trees = new long[Siting.TREE_MAX];
+        for (int k = 0; k < trees.length; k++) {
+            trees[k] = BlockPos.asLong(s.bx0 + k % 9, s.floor + 1 + k / 81, s.bz0 + k / 9 % 9);
+        }
+        long[] seals = new long[64];
+        byte[] sealLooks = new byte[64];
+        for (int k = 0; k < seals.length; k++) {
+            seals[k] = BlockPos.asLong(s.bx0 - 3 - k, s.floor + 2, s.bz0);
+            sealLooks[k] = (byte) (k + 1);
+        }
+        CompoundTag t = new CompoundTag();
+        t.putInt("x0", s.bx0 - 27);
+        t.putInt("z0", s.bz0 - 27);
+        t.putInt("w", w);
+        t.putInt("h", w);
+        t.putInt("floor", s.floor);
+        t.putBoolean("reshaped", true);
+        t.putByteArray("kind", kinds);
+        t.putByteArray("new", now);
+        t.putByteArray("ground", ground);
+        t.putByteArray("top", top);
+        t.putByteArray("look", look);
+        t.put("states", states);
+        t.putLongArray("trees", trees);
+        t.putLongArray("seals", seals);
+        t.putByteArray("seal_looks", sealLooks);
+        t.putIntArray("numbers", new int[]{12, 1000, 1000, 5000, 5000, 200, 1, 5, 1});
+        t.putString("goes_round", "126 of your blocks, 12 trees, 3 other buildings, 2 caves and 9 ponds");
+        Plan p = Plan.load(t, s.pl, s.template);
+        h.assertTrue(p != null && p.width() == w && p.depth() == w, "the widest plan didn't load: " + p);
+        CompoundTag saved = p.save();
+        int bytes = written(saved);
+        h.assertTrue(bytes < 64 * 1024, "the widest plan saves as " + bytes + " bytes (" + written(saved, true) + " compressed)");
+        Plan back = Plan.load(roundTrip(saved), s.pl, s.template);
+        h.assertTrue(back != null && back.numbers().equals(p.numbers()) && Arrays.equals(back.trees(), p.trees()) && Arrays.equals(back.seals(), p.seals())
+                        && back.newHeight(p.x0() + 63, p.z0() + 63) == p.newHeight(p.x0() + 63, p.z0() + 63)
+                        && back.look(p.x0() + 5, p.z0() + 7).equals(p.look(p.x0() + 5, p.z0() + 7)),
+                "the widest plan doesn't load back the same: " + back);
+        h.succeed();
     }
 
     /**

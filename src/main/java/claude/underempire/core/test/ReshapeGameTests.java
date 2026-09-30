@@ -157,6 +157,38 @@ public class ReshapeGameTests {
         return null;
     }
 
+    /**
+     * Null when the bank pass left level land alone and moved the slope one way only: every free column whose land is at
+     * the floor, as are its four neighbours' (flat land, not the foot of the slope), is unchanged; every free column above
+     * the floor is only ever cut (a hill is cut into, never heaped up), and every one below it only ever filled.
+     */
+    private static String bankProblem(Scene s, int[] a) {
+        int floor = s.floorY();
+        for (int z = 1; z < s.h() - 1; z++) {
+            for (int x = 1; x < s.w() - 1; x++) {
+                int i = s.at(x, z);
+                if (s.kinds()[i] != Kind.FREE) {
+                    continue;
+                }
+                int g = s.ground()[i];
+                boolean flat = g == floor;
+                for (int j : new int[]{i - 1, i + 1, i - s.w(), i + s.w()}) {
+                    flat &= s.ground()[j] == floor;
+                }
+                if (flat && a[i] != g) {
+                    return "flat land at " + s.where(i) + " was moved from " + g + " to " + a[i];
+                }
+                if (g > floor && a[i] > g) {
+                    return "the hill at " + s.where(i) + " was heaped up from " + g + " to " + a[i];
+                }
+                if (g < floor && a[i] < g) {
+                    return "the drop at " + s.where(i) + " was dug down from " + g + " to " + a[i];
+                }
+            }
+        }
+        return null;
+    }
+
     /** Null when a walker on {@code from} gets out to the land: over free and pad columns, steps of 1, onto a border cell. */
     private static String walkOutProblem(Scene s, int[] a, int from) {
         boolean[] seen = new boolean[a.length];
@@ -447,7 +479,73 @@ public class ReshapeGameTests {
         expect(h, s, a, rampStepProblem(s, a));
         expect(h, s, a, walkOutProblem(s, a, s.at(16, 16)));
         expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, bankProblem(s, a));
         h.assertTrue(r.seamSteepest() >= 2, "the bank into the cliff is reported as " + r.seamSteepest() + ": the scene should leave one" + dump(s, a));
+        h.succeed();
+    }
+
+    /**
+     * The land falling away 3 a column east of a pad on flat ground: at the widest margin it is built out over, an embankment
+     * coming down 1 a column from the pad (filled, never dug), and the flat land beside it is left alone. (A ramp that only
+     * cut dug a trench down through the flat land toward the drop; one held to the whole border heaped the ramp over the
+     * flat land beside a hill: the review of 81f1f2a.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aDropIsBuiltOutOverAndFlatLandLeftAlone(GameTestHelper h) {
+        Frame f = Reshape.frame(new Rect(0, 0, 10, 10), new Rect(-2, 4, -1, 6), Side.WEST, Reshape.MARGIN_MAX);
+        Scene s = flat(f, 0);
+        for (int gz = 0; gz < s.h(); gz++) {
+            for (int gx = 0; gx < s.w(); gx++) {
+                s.ground()[s.at(gx, gz)] = -Math.max(0, Math.min(40, 3 * (f.x0() + gx - 11)));
+            }
+        }
+        Result r = s.plan(null, Reshape.MARGIN_MAX);
+        int[] a = r.height();
+        h.assertTrue(r.seamed() && !r.tooSteep(), "the drop was not built out over (banked " + r.seamed() + ", too steep " + r.tooSteep() + ")" + dump(s, a));
+        expect(h, s, a, rampStepProblem(s, a));
+        expect(h, s, a, bankProblem(s, a));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, walkOutProblem(s, a, s.at(s.w() / 2, s.h() / 2)));
+        int filled = 0;
+        for (int i = 0; i < a.length; i++) {
+            filled += s.kinds()[i] == Kind.FREE && a[i] > s.ground()[i] ? 1 : 0;
+        }
+        h.assertTrue(filled > 0 && r.fillBlocks() > 0, "nothing was filled: the scene shows no embankment" + dump(s, a));
+        h.succeed();
+    }
+
+    /**
+     * Flat land beside a rise to 16 east of the pad: the rise is cut into a ramp of 1 a column from the pad, and the flat
+     * land north and south of it, and the level border round it, are left alone: every free column beside a border column at
+     * the floor is at the floor. (The review of 81f1f2a: the ramp stood 5 over flat land beside the level border.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aRiseIsCutIntoAndTheFlatBesideItLeftLevel(GameTestHelper h) {
+        Frame f = Reshape.frame(new Rect(0, 0, 10, 10), new Rect(-2, 4, -1, 6), Side.WEST, Reshape.MARGIN_MAX);
+        Scene s = flat(f, 0);
+        for (int gz = 0; gz < s.h(); gz++) {
+            for (int gx = 0; gx < s.w(); gx++) {
+                s.ground()[s.at(gx, gz)] = Math.max(0, Math.min(16, 3 * (f.x0() + gx - 11)));
+            }
+        }
+        Result r = s.plan(null, Reshape.MARGIN_MAX);
+        int[] a = r.height();
+        h.assertTrue(r.seamed() && !r.tooSteep(), "the rise was not cut into (banked " + r.seamed() + ", too steep " + r.tooSteep() + ")" + dump(s, a));
+        expect(h, s, a, rampStepProblem(s, a));
+        expect(h, s, a, bankProblem(s, a));
+        for (int z = 0; z < s.h(); z++) {
+            for (int x = 0; x < s.w(); x++) {
+                int b = s.at(x, z);
+                if (s.kinds()[b] != Kind.BORDER || s.ground()[b] != 0) {
+                    continue;
+                }
+                for (int j : new int[]{x > 0 ? b - 1 : -1, x < s.w() - 1 ? b + 1 : -1, z > 0 ? b - s.w() : -1, z < s.h() - 1 ? b + s.w() : -1}) {
+                    if (j >= 0 && s.kinds()[j] == Kind.FREE) {
+                        h.assertTrue(Math.abs(a[j]) <= 1, "beside the level border at " + s.where(b) + " the ramp stands " + a[j] + dump(s, a));
+                    }
+                }
+            }
+        }
         h.succeed();
     }
 

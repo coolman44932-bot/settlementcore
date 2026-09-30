@@ -72,9 +72,12 @@ public final class Siting {
     /** How far from the floor a worked column may be (its heights are saved as bytes). */
     private static final int OFFSET_MAX = 120;
     private static final int NO = Integer.MIN_VALUE;
-    /** A look for a column when nothing in the area has one of its own. */
     /** The most looks a plan keeps (saved as a byte per column, the plain one included). */
     private static final int LOOKS_MAX = 126;
+    /**
+     * A look for a column when nothing in the area has one of its own, and for a saved look whose blocks are gone (a removed
+     * mod's: they read back as air, and air is never laid as ground).
+     */
     private static final Look PLAIN = new Look(Blocks.GRASS_BLOCK.defaultBlockState(), Blocks.DIRT.defaultBlockState(),
             Blocks.STONE.defaultBlockState());
 
@@ -183,10 +186,12 @@ public final class Siting {
         return DigJob.natural(s) || cover(s) || log(s) || wildLeaf(s) || s.is(BlockTags.ICE) || s.is(Blocks.SNOW_BLOCK);
     }
 
-    /** What an earthwork may take out when it is done: the ground, its cover, water; a felled tree only in the clearing. */
-    public static boolean mayReplace(BlockState s, Phase phase) {
-        return DigJob.natural(s) || cover(s) || s.is(Blocks.SNOW_BLOCK) || s.is(BlockTags.ICE)
-                || phase == Phase.CLEARING && (log(s) || wildLeaf(s));
+    /**
+     * What an earthwork may take out when it is done: the ground, its cover, water and ice. A felled tree's logs and leaves
+     * only at the plan's own tree cells ({@link Plan#mayReplace}): a log anywhere else is a player's.
+     */
+    public static boolean mayReplace(BlockState s) {
+        return DigJob.natural(s) || cover(s) || s.is(Blocks.SNOW_BLOCK) || s.is(BlockTags.ICE);
     }
 
     /** A block a column's look may be made of: plain ground, no ore, nothing that bites or hatches. */
@@ -297,14 +302,17 @@ public final class Siting {
         private final byte[] look;
         private final List<Look> looks;
         private final long[] trees;
+        /** Water beside a cut of the pad, walled before the cut opens it (packed BlockPos), and each one's look + 1 (its soil). */
+        private final long[] seals;
+        private final byte[] sealLooks;
         private final Numbers numbers;
         private final String goesRound;
         @Nullable
         private List<Earthwork> earthworks;
 
         private Plan(PlanPlacement pl, List<RoomTemplates.Entry> template, int x0, int z0, int w, int h, int floor, boolean reshaped,
-                     byte[] kinds, int[] now, int[] ground, int[] top, byte[] look, List<Look> looks, long[] trees, Numbers numbers,
-                     String goesRound) {
+                     byte[] kinds, int[] now, int[] ground, int[] top, byte[] look, List<Look> looks, long[] trees, long[] seals,
+                     byte[] sealLooks, Numbers numbers, String goesRound) {
             this.pl = pl;
             this.template = template;
             this.x0 = x0;
@@ -320,6 +328,8 @@ public final class Siting {
             this.look = look;
             this.looks = looks;
             this.trees = trees;
+            this.seals = seals;
+            this.sealLooks = sealLooks;
             this.numbers = numbers;
             this.goesRound = goesRound;
         }
@@ -368,6 +378,20 @@ public final class Siting {
         /** The pad's trees, felled in the clearing (packed BlockPos). */
         public long[] trees() {
             return trees.clone();
+        }
+
+        /** The water beside a cut of the pad that the plinth phase walls up first, with the soil beside it (packed BlockPos). */
+        public long[] seals() {
+            return seals.clone();
+        }
+
+        /**
+         * Whether the earthwork at {@code pos} may take out {@code s} now: the ground, its cover, water or ice; a log or a
+         * tree's own leaf only where the plan fells a tree ({@link #trees}). Anything else was put there since (a player's
+         * log in the box's air is left standing, as a settler would leave it).
+         */
+        public boolean mayReplace(BlockPos pos, BlockState s) {
+            return Siting.mayReplace(s) || (log(s) || wildLeaf(s)) && Arrays.binarySearch(trees, pos.asLong()) >= 0;
         }
 
         /** The door's landing (part of the pad). */
@@ -494,7 +518,7 @@ public final class Siting {
             for (BlockPos p : clear) {
                 out.add(new Earthwork(p, air, Phase.CLEARING, 0));
             }
-            // the plinth, under each whole block of the ground layer
+            // the plinth, under each whole block of the ground layer; and the water beside the pad's cuts, walled
             Map<Long, BlockState> layer = groundLayer(pl, template);
             List<Earthwork> plinth = new ArrayList<>();
             for (int i = 0; i < kinds.length; i++) {
@@ -507,6 +531,11 @@ public final class Siting {
                 for (int y = ground[i] + 1; y < floor; y++) {
                     plinth.add(new Earthwork(new BlockPos(x, y, z), s, Phase.PLINTH, 0));
                 }
+            }
+            for (int k = 0; k < seals.length; k++) {
+                int v = sealLooks[k];
+                Look l = v == 0 ? PLAIN : looks.get(Math.abs(v) - 1);
+                plinth.add(new Earthwork(BlockPos.of(seals[k]), l.soil(), Phase.PLINTH, 0));   // walled before the cut opens it
             }
             int lowest = plinth.stream().mapToInt(e -> e.pos().getY()).min().orElse(0);
             plinth.sort(Comparator.<Earthwork>comparingInt(e -> e.pos().getY()).thenComparingInt(e -> e.pos().getZ()).thenComparingInt(e -> e.pos().getX()));
@@ -599,7 +628,7 @@ public final class Siting {
                     ours.add(p.asLong());
                     continue;
                 }
-                if (!ours.contains(p.asLong()) && (!mayReplace(cur, e.phase()) || level.getBlockEntity(p) != null)) {
+                if (!ours.contains(p.asLong()) && (!mayReplace(p, cur) || level.getBlockEntity(p) != null)) {
                     continue;
                 }
                 DigJob.place(level, new DigJob.Task(p, e.state(), null));
@@ -637,6 +666,10 @@ public final class Siting {
             }
             t.put("states", states);
             t.putLongArray("trees", trees);
+            if (seals.length > 0) {
+                t.putLongArray("seals", seals);
+                t.putByteArray("seal_looks", sealLooks.clone());
+            }
             Numbers n = numbers;
             t.putIntArray("numbers", new int[]{n.margin(), n.cutColumns(), n.fillColumns(), n.cutBlocks(), n.fillBlocks(), n.kept(), n.steepest(),
                     n.bank(), n.seamed() ? 1 : 0});
@@ -676,9 +709,25 @@ public final class Siting {
             List<Look> looks = new ArrayList<>();
             var blocks = BuiltInRegistries.BLOCK.asLookup();
             for (int k = 0; k < states.size(); k += 3) {
-                looks.add(new Look(NbtUtils.readBlockState(blocks, states.getCompound(k)), NbtUtils.readBlockState(blocks, states.getCompound(k + 1)),
-                        NbtUtils.readBlockState(blocks, states.getCompound(k + 2))));
+                Look l = new Look(NbtUtils.readBlockState(blocks, states.getCompound(k)), NbtUtils.readBlockState(blocks, states.getCompound(k + 1)),
+                        NbtUtils.readBlockState(blocks, states.getCompound(k + 2)));
+                // a block that is gone (its mod removed) reads back as air: never lay air as ground
+                looks.add(l.top().isAir() || l.soil().isAir() || l.deep().isAir() ? PLAIN : l);
             }
+            long[] seals = t.getLongArray("seals");
+            byte[] sealLooks = t.getByteArray("seal_looks");
+            if (sealLooks.length != seals.length) {
+                seals = new long[0];
+                sealLooks = new byte[0];
+            }
+            for (byte v : sealLooks) {
+                if (Math.abs(v) > looks.size()) {
+                    LOGGER.warn("Settlement Core: a saved site plan has a broken seal: dropped");
+                    return null;
+                }
+            }
+            long[] trees = t.getLongArray("trees");
+            Arrays.sort(trees);
             int floor = t.getInt("floor");
             for (int i = 0; i < n; i++) {
                 if (kinds[i] < 0 || kinds[i] >= Reshape.Kind.values().length || Math.abs(look[i]) > looks.size()) {
@@ -687,7 +736,7 @@ public final class Siting {
                 }
             }
             return new Plan(pl, template, t.getInt("x0"), t.getInt("z0"), w, h, floor, t.getBoolean("reshaped"), kinds.clone(),
-                    heights(now, floor), heights(ground, floor), heights(top, floor), look.clone(), looks, t.getLongArray("trees"),
+                    heights(now, floor), heights(ground, floor), heights(top, floor), look.clone(), looks, trees, seals, sealLooks.clone(),
                     new Numbers(nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6], nums.length > 7 ? nums[7] : 0,
                             nums.length > 8 && nums[8] != 0), t.getString("goes_round"));
         }
@@ -773,6 +822,9 @@ public final class Siting {
         final List<RoomTemplates.Entry> template;
         final Map<Long, BlockState> layer;
         final Long2ObjectOpenHashMap<Col> cols = new Long2ObjectOpenHashMap<>();
+        /** Water beside the pad's cuts, to wall up with the soil beside it ({@link #sealPockets}), in the order found. */
+        final it.unimi.dsi.fastutil.longs.LongArrayList seals = new it.unimi.dsi.fastutil.longs.LongArrayList();
+        final List<Look> sealLooks = new ArrayList<>();
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         LongSet buildings = new LongOpenHashSet();
 
@@ -908,7 +960,7 @@ public final class Siting {
                 c.judged = true;
                 if (!c.fluid() && c.occupied()) {
                     byte t = c.thingType.getByte(c.thingType.size() - 1);
-                    c.why = t == LOG || t == LEAF ? Why.TREE : t == WATER ? Why.WATER : Why.BLOCK;
+                    c.why = t == LEAF || t == LOG && c.thingType.contains(LEAF) ? Why.TREE : t == WATER ? Why.WATER : Why.BLOCK;
                 } else {
                     int hi = c.fluid() ? c.fluidTop : c.coverTop;
                     for (int y = c.foot - 2; y <= hi + 1 && c.why == null; y++) {
@@ -949,6 +1001,7 @@ public final class Siting {
                     widest.z0() + widest.h()), box);
             long[] trees = sitePad();
             besidePad();
+            sealPockets();
             Map<Long, Why> extra = new LinkedHashMap<>();
             Reshape.Frame f;
             int[] g;
@@ -980,8 +1033,8 @@ public final class Siting {
                         margin = Reshape.widen(margin);
                     }
                     Map<Long, Why> failing = spans(f, g, r.height());
-                    Map<Long, Why> level = besideBuildings(f, g, r.height());
-                    if (failing.isEmpty() && level.isEmpty()) {
+                    Map<Long, Why> levelled = besideBuildings(f, g, r.height());
+                    if (failing.isEmpty() && levelled.isEmpty()) {
                         break;
                     }
                     if (!failing.isEmpty()) {
@@ -997,7 +1050,7 @@ public final class Siting {
                     // (the columns kept beside a building don't count as a pass: they only ever come from the free columns
                     // round its ring, so they run out)
                     extra.putAll(failing);
-                    level.forEach(extra::putIfAbsent);
+                    levelled.forEach(extra::putIfAbsent);
                 }
                 now = r.height();
                 seamed = r.seamed();
@@ -1182,6 +1235,56 @@ public final class Siting {
         }
 
         /**
+         * Water in the wall beside a cut of the berm or landing (between the floor and the old ground, in a 4-neighbour
+         * column off the pad) would pour onto the site as the cut opens it: each such cell is walled with that column's soil in
+         * the plinth phase, before the cut (section 9: "walled with the column's soil first"). The cells are saved with the
+         * plan. Lava there refuses the site. A player's waterlogged block there refuses it too: walling it would take it.
+         */
+        void sealPockets() {
+            LongOpenHashSet seen = new LongOpenHashSet();
+            for (int z = all.z0(); z <= all.z1(); z++) {
+                for (int x = all.x0(); x <= all.x1(); x++) {
+                    if (!inPad(x, z) || inBox(x, z)) {
+                        continue;
+                    }
+                    Col c = col(x, z);
+                    if (c.fluid() || c.foot <= floor) {
+                        continue;                                // not cut
+                    }
+                    for (Direction d : Direction.Plane.HORIZONTAL) {
+                        int nx = x + d.getStepX();
+                        int nz = z + d.getStepZ();
+                        if (inPad(nx, nz)) {
+                            continue;
+                        }
+                        Col n = col(nx, nz);
+                        for (int y = floor + 1; y <= c.foot; y++) {
+                            BlockState s = at(nx, y, nz);
+                            if (s.getFluidState().isEmpty()) {
+                                continue;
+                            }
+                            BlockPos q = new BlockPos(nx, y, nz);
+                            if (s.getFluidState().is(FluidTags.LAVA)) {
+                                throw refuse("Lava at " + nx + " " + y + " " + nz + ", beside " + whose + " site: the cut beside it would let it out", q);
+                            }
+                            if (!(s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock) && !cover(s)) {
+                                throw refuse("Water at " + nx + " " + y + " " + nz + " would pour onto " + whose + " site through the cut beside it", q);
+                            }
+                            if (seen.add(q.asLong())) {
+                                Look l = sample(n);
+                                if (l == null) {
+                                    l = sample(c);
+                                }
+                                seals.add(q.asLong());
+                                sealLooks.add(l == null ? PLAIN : l);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        /**
          * The pad's trees, felled in the clearing: from each log on the pad, the logs joined to it (26 round) and the leaves
          * that are theirs (reached through leaves no further than each leaf's own distance to a log, so a neighbour's canopy
          * stays); the pad's loose leaves too. Refused over TREE_MAX cells, when it grows into a tree rooted outside the pad,
@@ -1194,73 +1297,13 @@ public final class Siting {
             BlockPos first = logSeeds.isEmpty() ? leafSeeds.get(0) : logSeeds.get(0);
             String which = "The tree at " + first.getX() + " " + first.getY() + " " + first.getZ();
             LongOpenHashSet tree = new LongOpenHashSet();
-            List<BlockPos> logs = new ArrayList<>();
-            ArrayDeque<BlockPos> q = new ArrayDeque<>();
-            for (BlockPos s : logSeeds) {
-                if (tree.add(s.asLong())) {
-                    logs.add(s);
-                    q.add(s);
-                }
-            }
-            while (!q.isEmpty()) {
-                BlockPos p = q.poll();
-                for (int dx = -1; dx <= 1; dx++) {
-                    for (int dy = -1; dy <= 1; dy++) {
-                        for (int dz = -1; dz <= 1; dz++) {
-                            BlockPos n = p.offset(dx, dy, dz);
-                            if (tree.contains(n.asLong()) || level.isOutsideBuildHeight(n)) {
-                                continue;
-                            }
-                            loaded(n);
-                            if (!log(level.getBlockState(n))) {
-                                continue;
-                            }
-                            if (!inPad(n.getX(), n.getZ()) && ground(level.getBlockState(n.below()))) {
-                                throw refuse(which + " grows into another, rooted outside " + whose + " site at " + n.getX() + " " + n.getY() + " "
-                                        + n.getZ() + ": it can't be felled alone", n);
-                            }
-                            tree.add(n.asLong());
-                            logs.add(n);
-                            q.add(n);
-                            if (tree.size() > TREE_MAX) {
-                                throw tooBig(which, first);
-                            }
-                        }
-                    }
-                }
-            }
-            Long2IntOpenHashMap depth = new Long2IntOpenHashMap();
-            LongOpenHashSet seen = new LongOpenHashSet(tree);
-            ArrayDeque<BlockPos> lq = new ArrayDeque<>(logs);
-            for (BlockPos l : logs) {
-                depth.put(l.asLong(), 0);
-            }
-            while (!lq.isEmpty()) {
-                BlockPos p = lq.poll();
-                int d = depth.get(p.asLong());
-                if (d >= LeavesBlock.DECAY_DISTANCE) {
-                    continue;
-                }
-                for (Direction dir : Direction.values()) {
-                    BlockPos n = p.relative(dir);
-                    if (!seen.add(n.asLong()) || level.isOutsideBuildHeight(n)) {
-                        continue;
-                    }
-                    loaded(n);
-                    BlockState s = level.getBlockState(n);
-                    if (!wildLeaf(s) || d + 1 > s.getValue(LeavesBlock.DISTANCE)) {
-                        continue;                                // nearer another tree's logs: that tree's leaf
-                    }
-                    depth.put(n.asLong(), d + 1);
-                    tree.add(n.asLong());
-                    lq.add(n);
-                    if (tree.size() > TREE_MAX) {
-                        throw tooBig(which, first);
-                    }
+            for (BlockPos seed : logSeeds) {
+                if (!tree.contains(seed.asLong())) {
+                    fellOne(seed, tree);
                 }
             }
             for (BlockPos l : leafSeeds) {
-                tree.add(l.asLong());
+                tree.add(l.asLong());                            // the pad's own loose leaves
             }
             if (tree.size() > TREE_MAX) {
                 throw tooBig(which, first);
@@ -1282,6 +1325,84 @@ public final class Siting {
                 }
             }
             return out;
+        }
+
+        /**
+         * One tree, from a log on the pad, into {@code tree}: its logs (26 round) and the leaves that are its own (reached
+         * through leaves no further than each leaf's own distance to a log, so a neighbour's canopy stays). A tree with no
+         * leaf of its own is no tree: a player's pile of logs, a palisade, a beam, and the site is refused.
+         */
+        void fellOne(BlockPos seed, LongOpenHashSet tree) {
+            String which = "The tree at " + seed.getX() + " " + seed.getY() + " " + seed.getZ();
+            List<BlockPos> logs = new ArrayList<>();
+            ArrayDeque<BlockPos> q = new ArrayDeque<>();
+            tree.add(seed.asLong());
+            logs.add(seed);
+            q.add(seed);
+            while (!q.isEmpty()) {
+                BlockPos p = q.poll();
+                for (int dx = -1; dx <= 1; dx++) {
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dz = -1; dz <= 1; dz++) {
+                            BlockPos n = p.offset(dx, dy, dz);
+                            if (tree.contains(n.asLong()) || level.isOutsideBuildHeight(n)) {
+                                continue;
+                            }
+                            loaded(n);
+                            if (!log(level.getBlockState(n))) {
+                                continue;
+                            }
+                            if (!inPad(n.getX(), n.getZ()) && ground(level.getBlockState(n.below()))) {
+                                throw refuse(which + " grows into another, rooted outside " + whose + " site at " + n.getX() + " " + n.getY() + " "
+                                        + n.getZ() + ": it can't be felled alone", n);
+                            }
+                            tree.add(n.asLong());
+                            logs.add(n);
+                            q.add(n);
+                            if (tree.size() > TREE_MAX) {
+                                throw tooBig(which, seed);
+                            }
+                        }
+                    }
+                }
+            }
+            Long2IntOpenHashMap depth = new Long2IntOpenHashMap();
+            LongOpenHashSet seen = new LongOpenHashSet();
+            ArrayDeque<BlockPos> lq = new ArrayDeque<>(logs);
+            for (BlockPos l : logs) {
+                depth.put(l.asLong(), 0);
+                seen.add(l.asLong());
+            }
+            int leaves = 0;
+            while (!lq.isEmpty()) {
+                BlockPos p = lq.poll();
+                int d = depth.get(p.asLong());
+                if (d >= LeavesBlock.DECAY_DISTANCE) {
+                    continue;
+                }
+                for (Direction dir : Direction.values()) {
+                    BlockPos n = p.relative(dir);
+                    if (!seen.add(n.asLong()) || level.isOutsideBuildHeight(n)) {
+                        continue;
+                    }
+                    loaded(n);
+                    BlockState s = level.getBlockState(n);
+                    if (!wildLeaf(s) || d + 1 > s.getValue(LeavesBlock.DISTANCE)) {
+                        continue;                                // nearer another tree's logs: that tree's leaf
+                    }
+                    depth.put(n.asLong(), d + 1);
+                    leaves++;                                    // (a leaf another tree on the pad took first counts too)
+                    tree.add(n.asLong());
+                    lq.add(n);
+                    if (tree.size() > TREE_MAX) {
+                        throw tooBig(which, seed);
+                    }
+                }
+            }
+            if (leaves == 0) {
+                throw refuse("The logs at " + seed.getX() + " " + seed.getY() + " " + seed.getZ() + " have no leaves: they are someone's, not a tree,"
+                        + " and only trees are felled for " + the, seed);
+            }
         }
 
         Refused tooBig(String which, BlockPos first) {
@@ -1539,6 +1660,15 @@ public final class Siting {
                 int v = index.get(l) + 1;
                 look[i] = (byte) (borrowed[i] ? -v : v);
             }
+            byte[] sealLook = new byte[seals.size()];
+            for (int k = 0; k < sealLook.length; k++) {
+                Look l = sealLooks.get(k);
+                if (!index.containsKey(l) && index.size() >= LOOKS_MAX) {
+                    l = PLAIN;
+                }
+                index.putIfAbsent(l, index.size());
+                sealLook[k] = (byte) (index.get(l) + 1);
+            }
             List<Look> looks = new ArrayList<>(index.keySet());
             // the numbers
             int cutColumns = 0;
@@ -1575,7 +1705,7 @@ public final class Siting {
             }
             Numbers numbers = new Numbers(margin, cutColumns, fillColumns, cutBlocks, fillBlocks, kept, steepest, bank, seamed);
             return new Plan(pl, template, f.x0(), f.z0(), w, f.h(), floor, reshaped, kinds, now.clone(), g.clone(), top, look, looks, trees,
-                    numbers, goesRound(f, extra));
+                    seals.toLongArray(), sealLook, numbers, goesRound(f, extra));
         }
 
         /** A column's own look, or null: under water, or its top is no plain ground (an ore, a player's block). */
