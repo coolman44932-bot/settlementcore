@@ -1,0 +1,528 @@
+package claude.underempire.core.test;
+
+import claude.underempire.core.Core;
+import claude.underempire.core.room.Reshape;
+import claude.underempire.core.room.Reshape.Frame;
+import claude.underempire.core.room.Reshape.Kind;
+import claude.underempire.core.room.Reshape.Rect;
+import claude.underempire.core.room.Reshape.Result;
+import claude.underempire.core.room.Reshape.Side;
+import net.minecraft.gametest.framework.GameTest;
+import net.minecraft.gametest.framework.GameTestHelper;
+import net.neoforged.neoforge.gametest.GameTestHolder;
+import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
+
+import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Random;
+
+/**
+ * Reshape, the height solve of the surface builder (docs/plans/surface-builder.md, section 9), checked with no world: it is
+ * arrays in and arrays out, so these need no blocks, and run in the engine's own namespace with its copy of the plot
+ * (settlementcore:digsite). The template is only what a GameTest needs to start.
+ *
+ * <p>The checks are written here, on the answer alone, and not taken from Reshape: a check that came from the code it
+ * checks would pass whatever the code did. Each one is shown able to fail (the clamp's, in
+ * {@link #aKeptColumnIsUnchangedAndTheRampGoesRoundIt}, on the field before the clamp).
+ */
+@GameTestHolder(Core.MODID)
+@PrefixGameTestTemplate(false)
+public class ReshapeGameTests {
+
+    // --- the scenes --------------------------------------------------------------------------------------------------
+
+    /** A grid to reshape: its frame (with its kinds), the land as it is, and the floor the pad is held at. */
+    private record Scene(Frame f, int[] ground, int floorY) {
+        int w() {
+            return f.w();
+        }
+
+        int h() {
+            return f.h();
+        }
+
+        Kind[] kinds() {
+            return f.kinds();
+        }
+
+        int at(int gx, int gz) {
+            return gz * f.w() + gx;
+        }
+
+        Result plan(int[] floors, int margin) {
+            return Reshape.plan(w(), h(), ground, kinds(), floors, floorY, margin);
+        }
+
+        int[] beforeClamp(int[] floors) {
+            return Reshape.beforeClamp(w(), h(), ground, kinds(), floors, floorY);
+        }
+
+        String where(int i) {
+            return "(" + (f.x0() + i % w()) + "," + (f.z0() + i / w()) + ")";
+        }
+    }
+
+    private static Scene flat(Frame f, int y) {
+        int[] g = new int[f.w() * f.h()];
+        Arrays.fill(g, y);
+        return new Scene(f, g, 0);
+    }
+
+    /**
+     * A 9x9 pad at floor 0 in a 21x21 area (a margin of 6), away from the world's origin so that a mixed-up index shows. The
+     * margin has a dip of -3 and a hump of +4, and the land rises 5 at the east side, a block a column from the pad's edge.
+     * The pad's own ground is a knoll and a hole: it is held at the floor all the same.
+     */
+    private static Scene hillside() {
+        Scene s = flat(Reshape.frame(new Rect(-9, 40, -1, 48), 6), 0);
+        for (int gz = 0; gz < s.h(); gz++) {
+            for (int gx = 0; gx < s.w(); gx++) {
+                s.ground()[s.at(gx, gz)] = Math.max(0, Math.min(5, gx - 14));
+            }
+        }
+        s.ground()[s.at(3, 4)] = -3;
+        s.ground()[s.at(4, 15)] = 4;
+        s.ground()[s.at(10, 10)] = 2;
+        s.ground()[s.at(7, 7)] = -1;
+        return s;
+    }
+
+    // --- the checks, on the answer alone -----------------------------------------------------------------------------
+
+    /** Null when every pair of 4-neighbours with a free column in it is within 1; else how many aren't, and the first. */
+    private static String stepProblem(Scene s, int[] a) {
+        int bad = 0;
+        String first = null;
+        for (int z = 0; z < s.h(); z++) {
+            for (int x = 0; x < s.w(); x++) {
+                int i = s.at(x, z);
+                for (int j : new int[]{x < s.w() - 1 ? i + 1 : -1, z < s.h() - 1 ? i + s.w() : -1}) {
+                    if (j < 0 || (s.kinds()[i].held() && s.kinds()[j].held()) || Math.abs(a[i] - a[j]) <= 1) {
+                        continue;
+                    }
+                    bad++;
+                    if (first == null) {
+                        first = a[i] + " to " + a[j] + " between " + s.where(i) + " and " + s.where(j);
+                    }
+                }
+            }
+        }
+        return bad == 0 ? null : bad + " steps over 1 between free columns and their neighbours, the first " + first;
+    }
+
+    /**
+     * Null when no free column is strictly under, or over, all four of its neighbours. A column held up by its own floor
+     * (floors, if given) is the floor's doing and is let off.
+     */
+    private static String speckProblem(Scene s, int[] a, int[] floors) {
+        for (int z = 1; z < s.h() - 1; z++) {
+            for (int x = 1; x < s.w() - 1; x++) {
+                int i = s.at(x, z);
+                if (s.kinds()[i].held()) {
+                    continue;
+                }
+                int[] nb = {a[i - 1], a[i + 1], a[i - s.w()], a[i + s.w()]};
+                boolean under = true;
+                boolean over = true;
+                for (int n : nb) {
+                    under &= a[i] < n;
+                    over &= a[i] > n;
+                }
+                boolean floored = floors != null && a[i] == floors[i];
+                if (under || (over && !floored)) {
+                    return "the column " + s.where(i) + " is " + a[i] + ", " + (under ? "under" : "over") + " all of "
+                            + Arrays.toString(nb);
+                }
+            }
+        }
+        return null;
+    }
+
+    /** Null when the pad is at the floor and every other held column at its own height. */
+    private static String heldProblem(Scene s, int[] a) {
+        for (int i = 0; i < a.length; i++) {
+            Kind k = s.kinds()[i];
+            if (k == Kind.PAD && a[i] != s.floorY()) {
+                return "the pad column " + s.where(i) + " is " + a[i] + ", not the floor " + s.floorY();
+            }
+            if (k.held() && k != Kind.PAD && a[i] != s.ground()[i]) {
+                return "the " + k + " column " + s.where(i) + " is " + a[i] + ", not its own " + s.ground()[i];
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Null when a walker on cell {@code from} steps (up or down at most 1, over no KEPT column if {@code avoidKept}) to every
+     * free column, and to every border column that has a free neighbour (the ring's corners touch only the ring).
+     */
+    private static String walkProblem(Scene s, int[] a, int from, boolean avoidKept) {
+        boolean[] seen = new boolean[a.length];
+        ArrayDeque<Integer> queue = new ArrayDeque<>();
+        seen[from] = true;
+        queue.add(from);
+        while (!queue.isEmpty()) {
+            int i = queue.poll();
+            int x = i % s.w();
+            int z = i / s.w();
+            for (int j : new int[]{x > 0 ? i - 1 : -1, x < s.w() - 1 ? i + 1 : -1, z > 0 ? i - s.w() : -1, z < s.h() - 1 ? i + s.w() : -1}) {
+                if (j >= 0 && !seen[j] && Math.abs(a[i] - a[j]) <= 1 && !(avoidKept && s.kinds()[j] == Kind.KEPT)) {
+                    seen[j] = true;
+                    queue.add(j);
+                }
+            }
+        }
+        for (int i = 0; i < a.length; i++) {
+            int x = i % s.w();
+            int z = i / s.w();
+            boolean nextToFree = (x > 0 && !s.kinds()[i - 1].held()) || (x < s.w() - 1 && !s.kinds()[i + 1].held())
+                    || (z > 0 && !s.kinds()[i - s.w()].held()) || (z < s.h() - 1 && !s.kinds()[i + s.w()].held());
+            boolean mustReach = s.kinds()[i] == Kind.FREE || (s.kinds()[i] == Kind.BORDER && nextToFree);
+            if (mustReach && !seen[i]) {
+                return "no walk to the " + s.kinds()[i] + " column " + s.where(i) + " from " + s.where(from);
+            }
+        }
+        return null;
+    }
+
+    /** Null when the result's cut and fill counts are what the arrays say. */
+    private static String tallyProblem(Scene s, Result r) {
+        int cutColumns = 0;
+        int fillColumns = 0;
+        int cutBlocks = 0;
+        int fillBlocks = 0;
+        for (int i = 0; i < s.ground().length; i++) {
+            int d = r.height()[i] - s.ground()[i];
+            cutColumns += d < 0 ? 1 : 0;
+            fillColumns += d > 0 ? 1 : 0;
+            cutBlocks += Math.max(0, -d);
+            fillBlocks += Math.max(0, d);
+        }
+        int[] want = {cutColumns, fillColumns, cutBlocks, fillBlocks};
+        int[] got = {r.cutColumns(), r.fillColumns(), r.cutBlocks(), r.fillBlocks()};
+        return Arrays.equals(want, got) ? null : "cut and fill (columns, columns, blocks, blocks) are " + Arrays.toString(got)
+                + ", the arrays say " + Arrays.toString(want);
+    }
+
+    private static String dump(Scene s, int[] a) {
+        StringBuilder sb = new StringBuilder("\n(x " + s.f().x0() + ", z " + s.f().z0() + "; P pad, b border, K kept, ~ fluid)");
+        for (int z = 0; z < s.h(); z++) {
+            sb.append('\n');
+            for (int x = 0; x < s.w(); x++) {
+                int i = s.at(x, z);
+                char mark = switch (s.kinds()[i]) {
+                    case PAD -> 'P';
+                    case BORDER -> 'b';
+                    case KEPT -> 'K';
+                    case FLUID -> '~';
+                    default -> ' ';
+                };
+                sb.append(String.format(Locale.ROOT, "%3d%c", a[i], mark));
+            }
+        }
+        return sb.toString();
+    }
+
+    /** Fails with the problem and the area's heights, or passes when there is none. */
+    private static void expect(GameTestHelper h, Scene s, int[] a, String problem) {
+        h.assertTrue(problem == null, problem == null ? "" : problem + dump(s, a));
+    }
+
+    // --- the tests ---------------------------------------------------------------------------------------------------
+
+    /**
+     * The main case: land with a dip, a hump and a rise round a pad. The ramp is the field, not the old ground: the dip is
+     * filled and the hump cut, no free column is a pit or a bump, no step is over 1 between free columns and their
+     * neighbours, and a walker gets from the pad to every column. The pad (whatever its ground was) and the border are as
+     * they were held.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aReshapeIsWalkableAllRound(GameTestHelper h) {
+        Scene s = hillside();
+        Result r = s.plan(null, 6);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep() && r.steepest() <= 1 && r.margin() == 6 && r.spotX() < 0 && r.spotZ() < 0,
+                "reported too steep (" + r.steepest() + " at " + r.spotX() + "," + r.spotZ() + ") or the wrong margin " + r.margin() + dump(s, a));
+        expect(h, s, a, stepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, null));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, walkProblem(s, a, s.at(10, 10), false));
+        expect(h, s, a, tallyProblem(s, r));
+        h.assertTrue(a[s.at(3, 4)] > s.ground()[s.at(3, 4)] && a[s.at(4, 15)] < s.ground()[s.at(4, 15)],
+                "the dip is " + a[s.at(3, 4)] + " (was -3) and the hump " + a[s.at(4, 15)] + " (was 4): they should be filled and cut" + dump(s, a));
+        h.assertTrue(r.cutColumns() > 0 && r.fillColumns() > 0 && r.cutBlocks() >= r.cutColumns() && r.fillBlocks() >= r.fillColumns(),
+                "the cut and fill counts are empty: " + r);
+        h.succeed();
+    }
+
+    /**
+     * A player's posts in the ramp (KEPT columns, 3 and 2 up, the first 3 columns from the pad and 3 from the border):
+     * unchanged, and the ramp goes round them, walkable, in a cone that comes down 1 a column. Also the clamp's proof: on
+     * the field before the clamp the step check fails (the harmonic field is a bump of about 1 round a post of 3), so the
+     * check can fail, and it is the clamp that makes it pass.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aKeptColumnIsUnchangedAndTheRampGoesRoundIt(GameTestHelper h) {
+        Scene s = flat(Reshape.frame(new Rect(200, -30, 208, -22), 6), 0);
+        s.kinds()[s.at(17, 10)] = Kind.KEPT;
+        s.ground()[s.at(17, 10)] = 3;
+        s.kinds()[s.at(3, 12)] = Kind.KEPT;
+        s.ground()[s.at(3, 12)] = 2;
+        Result r = s.plan(null, 6);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep(), "the ramp round the posts is reported too steep (" + r.steepest() + " at " + r.spotX() + "," + r.spotZ() + ")" + dump(s, a));
+        h.assertTrue(a[s.at(17, 10)] == 3 && a[s.at(3, 12)] == 2, "a post moved" + dump(s, a));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, stepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, null));
+        expect(h, s, a, walkProblem(s, a, s.at(10, 10), true));
+        // without the clamp, the same check fails
+        int[] before = s.beforeClamp(null);
+        String unclamped = stepProblem(s, before);
+        h.assertTrue(unclamped != null, "the field before the clamp is already walkable: the scene shows nothing of the clamp" + dump(s, before));
+        h.succeed();
+    }
+
+    /**
+     * A 3x3 pond (surface 2) in a margin the ramp cuts down 2, to the pad: its banks (the 12 columns beside it) are never
+     * under its surface, the water's own columns are as they were, and the ramp is otherwise as walkable as ever. The same
+     * pond as plain kept columns (no banks to hold) is cut under its own water: the check can fail.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aPondKeepsItsBanks(GameTestHelper h) {
+        Scene s = pond(Kind.FLUID);
+        Result r = s.plan(null, 8);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep(), "the ramp by the pond is reported too steep (" + r.steepest() + " at " + r.spotX() + "," + r.spotZ() + ")" + dump(s, a));
+        h.assertTrue(banksUnder(s, a) == 0, banksUnder(s, a) + " banks are cut under the pond's surface" + dump(s, a));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, stepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, null));
+        expect(h, s, a, walkProblem(s, a, s.at(12, 12), false));
+        h.assertTrue(a[s.at(7, 12)] < 2, "the ramp isn't cut beside the pond at all: the scene shows nothing" + dump(s, a));
+        // the control: the same pond, as kept columns
+        Scene plain = pond(Kind.KEPT);
+        int[] b = plain.plan(null, 8).height();
+        h.assertTrue(banksUnder(plain, b) > 0, "with no banks to hold, no bank was cut under the water: the check can't fail" + dump(plain, b));
+        h.succeed();
+    }
+
+    /** A pad 8 columns in from the border, the land at 2 with a pond of 3x3 at grid (2..4, 11..13); the pad is held at 0. */
+    private static Scene pond(Kind kind) {
+        Scene s = flat(Reshape.frame(new Rect(50, 50, 58, 58), 8), 2);
+        for (int gz = 11; gz <= 13; gz++) {
+            for (int gx = 2; gx <= 4; gx++) {
+                s.kinds()[s.at(gx, gz)] = kind;
+            }
+        }
+        return s;
+    }
+
+    /** How many free columns beside the pond (4-neighbours of its cells) are lower than the water. */
+    private static int banksUnder(Scene s, int[] a) {
+        int n = 0;
+        for (int gz = 11; gz <= 13; gz++) {
+            for (int gx = 2; gx <= 4; gx++) {
+                for (int[] d : new int[][]{{-1, 0}, {1, 0}, {0, -1}, {0, 1}}) {
+                    int i = s.at(gx + d[0], gz + d[1]);
+                    if (s.kinds()[i] == Kind.FREE && a[i] < s.ground()[s.at(gx, gz)]) {
+                        n++;
+                    }
+                }
+            }
+        }
+        return n;
+    }
+
+    /**
+     * A cliff 16 high, 6 columns from the pad's edge: no margin can ramp it (16 up over at most 12 columns), so at the widest
+     * (12) it is reported too steep, with the margin used, a spot on the cliff's side that is a free column, and the
+     * steepest step. The caller's loop ends there: {@code widen} gives the same margin again.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aCliffTooHighToRampIsReportedWithItsSpot(GameTestHelper h) {
+        Rect pad = new Rect(100, 100, 108, 108);
+        int cliffX = pad.x1() + 7;                              // 6 columns of flat land, then 16 up
+        Frame f = Reshape.frame(pad, Reshape.MARGIN_MAX);
+        Scene s = flat(f, 0);
+        for (int gz = 0; gz < s.h(); gz++) {
+            for (int gx = 0; gx < s.w(); gx++) {
+                if (f.x0() + gx >= cliffX) {
+                    s.ground()[s.at(gx, gz)] = 16;
+                }
+            }
+        }
+        h.assertTrue(Reshape.firstMargin(16) == Reshape.MARGIN_MAX && Reshape.widen(Reshape.MARGIN_MAX) == Reshape.MARGIN_MAX,
+                "the first margin for a gap of 16 is " + Reshape.firstMargin(16) + ", and widening the widest gives " + Reshape.widen(Reshape.MARGIN_MAX));
+        Result r = s.plan(null, Reshape.MARGIN_MAX);
+        int[] a = r.height();
+        h.assertTrue(r.tooSteep() && r.steepest() >= 2, "a cliff of 16 in 12 columns was not reported too steep (steepest " + r.steepest() + ")");
+        h.assertTrue(r.margin() == Reshape.MARGIN_MAX, "the margin reported is " + r.margin());
+        h.assertTrue(r.spotX() >= 0 && r.spotZ() >= 0 && r.spotX() < s.w() && r.spotZ() < s.h(), "no spot in the area: " + r.spotX() + "," + r.spotZ());
+        int spot = s.at(r.spotX(), r.spotZ());
+        int spotX = f.x0() + r.spotX();
+        h.assertTrue(s.kinds()[spot] == Kind.FREE && spotX > pad.x1() && spotX <= cliffX,
+                "the spot " + s.where(spot) + " (" + s.kinds()[spot] + ") isn't a free column on the cliff's side, between the pad and x " + cliffX);
+        expect(h, s, a, heldProblem(s, a));
+        h.succeed();
+    }
+
+    /** The same arrays give the same heights and counts, twice over and from copies; and the input isn't touched. */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aReshapeIsDeterministic(GameTestHelper h) {
+        Scene s = hillside();
+        int[] ground = s.ground().clone();
+        Kind[] kinds = s.kinds().clone();
+        Result first = s.plan(null, 6);
+        Result second = s.plan(null, 6);
+        Result fresh = hillside().plan(null, 6);
+        h.assertTrue(Arrays.equals(first.height(), second.height()) && Arrays.equals(first.height(), fresh.height()),
+                "two runs on the same arrays gave different heights");
+        h.assertTrue(first.steepest() == second.steepest() && first.cutBlocks() == fresh.cutBlocks() && first.fillBlocks() == fresh.fillBlocks()
+                && first.spotX() == second.spotX() && first.spotZ() == second.spotZ(), "two runs gave different counts: " + first + " and " + second);
+        h.assertTrue(Arrays.equals(s.beforeClamp(null), hillside().beforeClamp(null)), "the field before the clamp differs between runs");
+        h.assertTrue(Arrays.equals(ground, s.ground()) && Arrays.equals(kinds, s.kinds()), "the input arrays were changed");
+        h.succeed();
+    }
+
+    /**
+     * Natural ground is rough: 3 heights, at random, round a pad. What the blur, the rounding and the clamp leave as
+     * 1-block pits and bumps beside the ring is levelled (these 5 scenes had 1 to 3 without it), and nothing else is
+     * disturbed: the ramp is still walkable and no step is over 1.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aRoughBorderLeavesNoPitsOrBumps(GameTestHelper h) {
+        for (long seed : new long[]{18, 59, 111, 182, 271}) {
+            Scene s = flat(Reshape.frame(new Rect(0, 0, 8, 8), 6), 0);
+            Random rnd = new Random(seed);
+            for (int i = 0; i < s.ground().length; i++) {
+                s.ground()[i] = rnd.nextInt(3) - 1;
+            }
+            Result r = s.plan(null, 6);
+            int[] a = r.height();
+            h.assertTrue(!r.tooSteep(), "seed " + seed + ": reported too steep (" + r.steepest() + ")" + dump(s, a));
+            expect(h, s, a, stepProblem(s, a));
+            expect(h, s, a, speckProblem(s, a, null));
+            expect(h, s, a, heldProblem(s, a));
+            expect(h, s, a, walkProblem(s, a, s.at(10, 10), false));
+        }
+        h.succeed();
+    }
+
+    /**
+     * A column's floor (a pond's bank): a line of columns in the margin that the ramp would cut under the land's 2 are held
+     * at 2, and the rest of the ramp is walkable round them. Without the floors they are cut: the check can fail.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aColumnsFloorIsNeverCutUnder(GameTestHelper h) {
+        Scene s = flat(Reshape.frame(new Rect(-40, -40, -32, -32), 6), 2);
+        int[] floors = new int[s.ground().length];
+        Arrays.fill(floors, Reshape.NO_FLOOR);
+        for (int gz = 5; gz <= 15; gz++) {
+            floors[s.at(3, gz)] = 2;
+        }
+        int[] a = s.plan(floors, 6).height();
+        for (int gz = 5; gz <= 15; gz++) {
+            h.assertTrue(a[s.at(3, gz)] >= 2, "the column " + s.where(s.at(3, gz)) + " is " + a[s.at(3, gz)] + ", under its floor 2" + dump(s, a));
+        }
+        expect(h, s, a, stepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, floors));
+        expect(h, s, a, walkProblem(s, a, s.at(10, 10), false));
+        int[] loose = s.plan(null, 6).height();
+        boolean cut = false;
+        for (int gz = 5; gz <= 15; gz++) {
+            cut |= loose[s.at(3, gz)] < 2;
+        }
+        h.assertTrue(cut, "with no floors the line was not cut either: the check can't fail" + dump(s, loose));
+        h.succeed();
+    }
+
+    /**
+     * The frame for a pad, its landing and a margin: the size (the margin on every side and 2 more on the door's), the ring,
+     * the pad and landing held, and the world's columns mapped to cells. A plan on it takes the landing to the floor and
+     * ramps out from it, walkable.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aFrameLaysOutPadLandingAndRing(GameTestHelper h) {
+        Rect pad = new Rect(10, 20, 18, 28);
+        Rect landing = new Rect(13, 29, 15, 30);                 // 3 wide and 2 out, on the south side
+        Frame f = Reshape.frame(pad, landing, Side.SOUTH, 5);
+        h.assertTrue(f.x0() == 5 && f.z0() == 15 && f.w() == 19 && f.h() == 23,
+                "the frame is " + f.w() + "x" + f.h() + " from " + f.x0() + "," + f.z0() + ", not 19x23 from 5,15");
+        int pads = 0;
+        int ring = 0;
+        int free = 0;
+        for (int gz = 0; gz < f.h(); gz++) {
+            for (int gx = 0; gx < f.w(); gx++) {
+                Kind k = f.kinds()[gz * f.w() + gx];
+                boolean onRing = gx == 0 || gz == 0 || gx == f.w() - 1 || gz == f.h() - 1;
+                h.assertTrue((k == Kind.BORDER) == onRing, "the column " + (f.x0() + gx) + "," + (f.z0() + gz) + " is " + k + ", ring or not " + onRing);
+                boolean inPad = k == Kind.PAD;
+                boolean shouldBe = inside(pad, f.x0() + gx, f.z0() + gz) || inside(landing, f.x0() + gx, f.z0() + gz);
+                h.assertTrue(inPad == shouldBe, "the column " + (f.x0() + gx) + "," + (f.z0() + gz) + " is " + k + ", in the pad or landing is " + shouldBe);
+                pads += inPad ? 1 : 0;
+                ring += k == Kind.BORDER ? 1 : 0;
+                free += k == Kind.FREE ? 1 : 0;
+            }
+        }
+        h.assertTrue(pads == 81 + 6 && ring == 2 * 19 + 2 * 21 && free == 19 * 23 - pads - ring,
+                "the frame has " + pads + " pad, " + ring + " ring and " + free + " free columns");
+        h.assertTrue(f.index(5, 15) == 0 && f.index(23, 37) == 19 * 23 - 1 && f.index(24, 37) == -1 && f.index(4, 15) == -1
+                        && f.index(5, 38) == -1 && f.index(10, 20) == 5 * 19 + 5,
+                "index maps the world's columns to the wrong cells");
+        h.assertTrue(Reshape.frame(pad, 5).h() == 19 && Reshape.frame(pad, 5).w() == 19, "with no landing the frame is not 19x19");
+        // the land falls away 2 along the door's side, and the pad is held level with the landing
+        Scene s = new Scene(f, new int[f.w() * f.h()], 0);
+        for (int gz = 0; gz < f.h(); gz++) {
+            Arrays.fill(s.ground(), gz * f.w(), (gz + 1) * f.w(), gz > 17 ? 2 : 0);
+        }
+        Result r = s.plan(null, 5);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep(), "the ramp from the landing is reported too steep (" + r.steepest() + " at " + r.spotX() + "," + r.spotZ() + ")" + dump(s, a));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, stepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, null));
+        expect(h, s, a, walkProblem(s, a, s.at(14 - f.x0(), 29 - f.z0()), false));
+        h.succeed();
+    }
+
+    private static boolean inside(Rect r, int x, int z) {
+        return x >= r.x0() && x <= r.x1() && z >= r.z0() && z <= r.z1();
+    }
+
+    /**
+     * The caller's loop: a pad sunk 5 below flat land, tried at the least margin, is too steep, and widened by 2 until it
+     * fits. What it ends on ramps 1 a column and reports the margin it was solved with; the first margin from a gap is the
+     * gap + 2, within the least and the most.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aTooNarrowMarginIsWidenedUntilItFits(GameTestHelper h) {
+        h.assertTrue(Reshape.firstMargin(0) == Reshape.MARGIN_MIN && Reshape.firstMargin(1) == Reshape.MARGIN_MIN
+                && Reshape.firstMargin(5) == 7 && Reshape.firstMargin(99) == Reshape.MARGIN_MAX && Reshape.widen(3) == 5 && Reshape.widen(11) == 12,
+                "firstMargin(0, 1, 5, 99) is " + Reshape.firstMargin(0) + ", " + Reshape.firstMargin(1) + ", " + Reshape.firstMargin(5) + ", "
+                        + Reshape.firstMargin(99) + " and widen(3, 11) " + Reshape.widen(3) + ", " + Reshape.widen(11));
+        int margin = Reshape.MARGIN_MIN;
+        int tries = 0;
+        Scene s;
+        Result r;
+        while (true) {
+            s = flat(Reshape.frame(new Rect(0, 0, 8, 8), margin), 5);
+            r = s.plan(null, margin);
+            tries++;
+            if (!r.tooSteep() || margin == Reshape.MARGIN_MAX) {
+                break;
+            }
+            margin = Reshape.widen(margin);
+        }
+        h.assertTrue(tries >= 2, "the least margin already fits a drop of 5: the scene shows nothing of the loop");
+        h.assertTrue(!r.tooSteep() && r.margin() == margin && margin >= 5 && margin <= Reshape.MARGIN_MAX,
+                "the loop ended at a margin of " + margin + " (reported " + r.margin() + "), too steep: " + r.tooSteep());
+        int[] a = r.height();
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, stepProblem(s, a));
+        expect(h, s, a, speckProblem(s, a, null));
+        expect(h, s, a, walkProblem(s, a, s.at(margin + 4, margin + 4), false));
+        h.succeed();
+    }
+}
