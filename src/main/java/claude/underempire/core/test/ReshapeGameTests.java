@@ -511,6 +511,55 @@ public class ReshapeGameTests {
             filled += s.kinds()[i] == Kind.FREE && a[i] > s.ground()[i] ? 1 : 0;
         }
         h.assertTrue(filled > 0 && r.fillBlocks() > 0, "nothing was filled: the scene shows no embankment" + dump(s, a));
+        // an embankment, not a platform: along the pad's middle row it comes down a block a column from the pad's east edge
+        // (a flat platform at the floor, walled 33 high at the border, passed every check above: the review of ae64922)
+        int row = s.at(0, s.h() / 2) / s.w();
+        for (int d = 2; 10 + d < f.x0() + s.w() - 1; d++) {                  // world x 10 + d, short of the border
+            int i = s.at(10 - f.x0() + d, row);
+            if (s.kinds()[i] == Kind.FREE) {
+                h.assertTrue(a[i] <= s.floorY() - d + 1, "the embankment stands " + a[i] + " " + d + " columns out from the pad, "
+                        + "not coming down: a platform, not a ramp" + dump(s, a));
+            }
+        }
+        h.succeed();
+    }
+
+    /**
+     * Flat land off the floor's height, beside a hill and beside a chasm. With the floor 5 over flat land and a hill rising 3 a
+     * column to 40 east, and the mirror (the floor 5 under it, a chasm falling to 40 under), the flat land more than its
+     * own gap to the floor from the pad and the slope is left as it is: every column moves only toward the floor, and only
+     * as far as it must to walk. (The review of ae64922: a smooth fill from the hill heaped some 140 far columns up to the
+     * floor, and the mirror dug them down.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void flatLandOffTheFloorIsLeftAloneBesideAHillOrAChasm(GameTestHelper h) {
+        for (int sign : new int[]{1, -1}) {
+            Frame f = Reshape.frame(new Rect(0, 0, 10, 10), new Rect(-2, 4, -1, 6), Side.WEST, Reshape.MARGIN_MAX);
+            Scene s = new Scene(f, new int[f.w() * f.h()], 5 * sign);
+            for (int gz = 0; gz < s.h(); gz++) {
+                for (int gx = 0; gx < s.w(); gx++) {
+                    s.ground()[s.at(gx, gz)] = sign * Math.min(40, 3 * Math.max(0, f.x0() + gx - 11));
+                }
+            }
+            Result r = s.plan(null, Reshape.MARGIN_MAX);
+            int[] a = r.height();
+            String which = sign > 0 ? "beside the hill (floor 5 over the flat)" : "beside the chasm (floor 5 under the flat)";
+            h.assertTrue(!r.tooSteep(), which + ": too steep (" + r.steepest() + ")" + dump(s, a));
+            expect(h, s, a, rampStepProblem(s, a));
+            int moved = 0;
+            String first = null;
+            for (int i = 0; i < a.length; i++) {
+                int x = f.x0() + i % s.w();
+                int z = f.z0() + i / s.w();
+                int fromPad = Math.max(0, Math.max(-x, x - 10)) + Math.max(0, Math.max(-z, z - 10));
+                int fromSlope = 11 - x;
+                if (s.kinds()[i] == Kind.FREE && s.ground()[i] == 0 && fromPad > 6 && fromSlope > 6 && a[i] != 0) {
+                    moved++;
+                    first = first == null ? s.where(i) + " to " + a[i] : first;
+                }
+            }
+            h.assertTrue(moved == 0, which + ": " + moved + " columns of far flat land were moved, the first " + first + dump(s, a));
+        }
         h.succeed();
     }
 

@@ -279,20 +279,39 @@ public final class Reshape {
                 a[i] = lows[i] == NO_FLOOR ? land : Math.max(lows[i], land);
             }
         }
-        // Two walkable grounds from the land: the one cut to walk (every column lowered as little as it takes) and the one
-        // filled to walk (raised as little as it takes), both within a ramp's reach of the pad. Above the floor the cut one
-        // is taken (a hill is cut into), below it the filled one (a drop is built out over), and where they straddle the
-        // floor, the floor: flat land is neither. A walkable ground clamped between two walkable grounds walks.
+        // Every column moves only toward the floor, never past it: land above it may be cut down as far as the floor and
+        // land below it filled up as far as the floor, within a ramp's reach of the pad and never under a column's floor.
+        // Among the walkable grounds that allows, the highest keeps the most of every hill and the lowest the most of every
+        // drop: the hills are taken from the one, the drops from the other, and land at the floor stays there. So nothing
+        // far away drags flat land up or down: a hill beside land under the floor is cut, and that land filled, only as far
+        // as they must to meet (the review of ae64922: a smooth fill from the hill heaped flat land 5 under the floor up to
+        // it over some 140 columns, and the mirror dug land over the floor down beside a chasm).
         int[][] reach = bounds(a, held, lows, w, h, banked);
-        int[] cut = a.clone();
-        int[] fill = a.clone();
-        clampInto(cut, held, banked, reach);
-        clampInto(fill, held, banked, reach);
-        relax(cut, held, w, h, banked, reach, true);
-        relax(fill, held, w, h, banked, reach, false);
-        for (int i = 0; i < a.length; i++) {
-            a[i] = held[i] || banked[i] ? a[i] : Math.min(Math.max(floorY, cut[i]), fill[i]);
+        int n = a.length;
+        int[] hi = new int[n];
+        int[] lo = new int[n];
+        for (int i = 0; i < n; i++) {
+            if (held[i] || banked[i]) {
+                hi[i] = a[i];
+                lo[i] = a[i];
+                continue;
+            }
+            lo[i] = Math.max(Math.min(a[i], floorY), reach[1][i]);
+            hi[i] = Math.max(lo[i], Math.min(Math.max(a[i], floorY), reach[0][i]));
         }
+        int[][] toward = {hi, lo};
+        int[] keepHills = hi.clone();
+        int[] keepDrops = lo.clone();
+        relax(keepHills, held, w, h, banked, toward, true);
+        relax(keepDrops, held, w, h, banked, toward, false);
+        for (int i = 0; i < n; i++) {
+            if (!held[i] && !banked[i]) {
+                a[i] = a[i] > floorY ? keepHills[i] : a[i] < floorY ? keepDrops[i] : floorY;
+            }
+        }
+        // where a hill meets a drop the two can stand 2 apart (floor + 1 against floor - 1): lowered to walk, never past
+        // the floor
+        relax(a, held, w, h, banked, toward, true);
         levelSpecks(a, held, lows, w, h, banked);
         Result third = result(w, h, ground, kinds, a, margin, true);
         return third.steepest() < best.steepest() ? third : best;
