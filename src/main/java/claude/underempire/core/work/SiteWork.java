@@ -53,8 +53,12 @@ public final class SiteWork extends RoomWork {
     public static final int TICKS_PER_BLOCK = 6;
     /** How many cells a second the site clears by itself. */
     public static final int CLEAR_PER_SECOND = 256;
-    /** No block done this long, with builders up and none holding a batch: the lowest open cell is heaved into place. */
-    public static final int STALL = 1200;
+    /**
+     * The site's seconds (counted only while it is worked: a site no one is near keeps no clock) with builders up, none holding
+     * a batch and no open cell to hand out: then its lowest open cell is heaved into place, so nothing stalls for good (a cell
+     * whose hold was broken under it, a cell set aside as out of reach with nothing else left).
+     */
+    public static final int DRY_SECONDS = 3;
 
     /** A builder's claim on the site: the chore for its {@code serial}th batch. */
     public record SiteClaim(UUID rat, int serial) {
@@ -63,8 +67,8 @@ public final class SiteWork extends RoomWork {
     private final RaiseJob job;
     private final Map<UUID, Integer> serials = new HashMap<>();
     private int serial;
-    private int lastDone = -1;
-    private long lastProgress;
+    /** Its worked seconds in a row with builders up and nothing to hand them. */
+    private int dry;
 
     public SiteWork(Settlement settlement, RaiseJob job) {
         super(settlement, new Building(job.roomId, job.placement().box(), job.door, job.facing), job.placement());
@@ -143,13 +147,13 @@ public final class SiteWork extends RoomWork {
             job.clear(level, CLEAR_PER_SECOND, new ArrayList<>());
         }
         job.heaveDue(level);
-        int done = job.finishedCount();
-        if (done != lastDone) {
-            lastDone = done;
-            lastProgress = now;
-        } else if (crewHere > 0 && job.working() && !job.anyOut() && now - lastProgress >= STALL) {
-            job.heaveFront(level);                               // nothing could be handed out for a minute: no stall
-            lastProgress = now;
+        if (crewHere > 0 && job.working() && !job.anyOut(now) && !job.anyClaimable(level)) {
+            if (++dry >= DRY_SECONDS) {
+                job.heaveFront(level);                           // nothing to hand out, and nobody at work: no stall
+                dry = 0;
+            }
+        } else {
+            dry = 0;
         }
     }
 

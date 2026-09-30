@@ -327,6 +327,7 @@ public class CrewGoal extends Goal {
                 }
                 BlockPos c = b.getCenter();
                 rat.getNavigation().moveTo(c.getX() + 0.5, w.building.standingY(), c.getZ() + 0.5, 1.0);   // back to its room's floor
+                rat.milled++;
                 return;
             }
             if (rat.isWorker() && rat.getRandom().nextInt(3) == 0) {
@@ -346,6 +347,7 @@ public class CrewGoal extends Goal {
                 BlockPos p = rat.blockPosition().offset(rat.getRandom().nextInt(11) - 5, rat.getRandom().nextInt(3) - 1, rat.getRandom().nextInt(11) - 5);
                 if (b.isInside(p) && SettlerMob.standable(rat.level(), p)) {
                     rat.getNavigation().moveTo(p.getX() + 0.5, p.getY(), p.getZ() + 0.5, 0.7);
+                    rat.milled++;
                     return;
                 }
             }

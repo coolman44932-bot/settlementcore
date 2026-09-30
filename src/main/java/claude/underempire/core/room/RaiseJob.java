@@ -53,7 +53,11 @@ import java.util.UUID;
  * A player's block met at work time is left standing: in the earthworks its whole column leaves them (it is not undercut or
  * buried); in the plinth or a course only that cell.
  *
- * <p>No stalls: a cell shelved {@value #HEAVE_AFTER} times (no builder could get to it) is heaved into place, and counted.
+ * <p>No stalls: a cell shelved {@value #HEAVE_AFTER} times (no builder could get to it) is heaved into place, and counted; and so
+ * is the lowest open cell when builders are up with nothing to hand them and none at work (SiteWork#second).
+ *
+ * <p>Hanging things in a course (a hanging lantern, a chain, vines: {@link #hangs}) are held by what is over them. A cell over the
+ * build height, or under the world, is done with nothing put (as a dig's is), and nothing ever loads a chunk to lay a cell.
  */
 public class RaiseJob extends DigJob {
 
@@ -546,26 +550,61 @@ public class RaiseJob extends DigJob {
 
     /**
      * Whether task {@code i} can go in now. A cut (air): from the top of its column (nothing solid over it), with a way out
-     * beside it; the clearing's, always. A block: something under it to hold it; in a course, where the site puts nothing
-     * under it (eaves), a sturdy face beside it instead (a course's cell over one still to be laid waits for it, never hangs
-     * off its neighbour); the pad's seals (walls against water) as they are.
+     * beside it; the clearing's, always. A block: {@link #held}; the pad's seals (walls against water) as they are.
      */
     private boolean ready(ServerLevel level, int i, Task t) {
         BlockPos p = t.pos();
         if (t.state().isAir()) {
             return i < clearEnd || open(level, p.above()) && wayOut(level, p);
         }
-        if (seal.get(i) || supported(level, p, false)) {
+        return seal.get(i) || held(level, p, t.state(), phase[i] == COURSE, openAt(fills, BlockPos.asLong(p.getX(), p.getY() - 1, p.getZ())));
+    }
+
+    /**
+     * Whether the block {@code s} put at {@code p} is held there: by something under it; or, in a building's course (never the
+     * earthworks), by what it hangs from when it is a hanging thing ({@link #hangs}: something solid over it), or else, where
+     * the site puts nothing under it ({@code underToCome} false: eaves), by a sturdy face beside it. A course's cell over one
+     * still to be laid waits for it, never hangs off its neighbour; a hanging lantern waits for its ceiling (the review of
+     * 51b59f8: every hanging cell waited out the stall).
+     */
+    public static boolean held(ServerLevel level, BlockPos p, BlockState s, boolean course, boolean underToCome) {
+        if (supported(level, p, false)) {
             return true;
         }
-        return phase[i] == COURSE && !openAt(fills, BlockPos.asLong(p.getX(), p.getY() - 1, p.getZ())) && supported(level, p, true);
+        if (!course) {
+            return false;
+        }
+        if (hangs(s)) {
+            BlockPos a = p.above();
+            return level.isLoaded(a) && !level.getBlockState(a).getCollisionShape(level, a).isEmpty();
+        }
+        return !underToCome && supported(level, p, true);
+    }
+
+    /**
+     * A thing that hangs from what is over it: a hanging lantern, a chain, vines (and the cave's, the weeping), hanging roots,
+     * a spore blossom, a hanging sign, a cobweb, a dripstone pointing down, a bell on the ceiling.
+     */
+    public static boolean hangs(BlockState s) {
+        net.minecraft.world.level.block.Block b = s.getBlock();
+        return s.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING)
+                && s.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING)
+                || b instanceof net.minecraft.world.level.block.ChainBlock || b instanceof net.minecraft.world.level.block.VineBlock
+                || b instanceof net.minecraft.world.level.block.CaveVines || b instanceof net.minecraft.world.level.block.WeepingVinesBlock
+                || b instanceof net.minecraft.world.level.block.WeepingVinesPlantBlock || b instanceof net.minecraft.world.level.block.HangingRootsBlock
+                || b instanceof net.minecraft.world.level.block.SporeBlossomBlock || b instanceof net.minecraft.world.level.block.CeilingHangingSignBlock
+                || b instanceof net.minecraft.world.level.block.WebBlock
+                || b instanceof net.minecraft.world.level.block.PointedDripstoneBlock
+                        && s.getValue(net.minecraft.world.level.block.PointedDripstoneBlock.TIP_DIRECTION) == Direction.DOWN
+                || b instanceof net.minecraft.world.level.block.BellBlock
+                        && s.getValue(net.minecraft.world.level.block.BellBlock.ATTACHMENT) == net.minecraft.world.level.block.state.properties.BellAttachType.CEILING;
     }
 
     /** Whether a block at {@code p} would have something under it (or, for {@code eaves}, a sturdy face beside it). */
     public static boolean supported(ServerLevel level, BlockPos p, boolean eaves) {
         BlockPos b = p.below();
-        if (level.isLoaded(b) && !level.getBlockState(b).getCollisionShape(level, b).isEmpty()) {
-            return true;
+        if (level.isOutsideBuildHeight(b) || level.isLoaded(b) && !level.getBlockState(b).getCollisionShape(level, b).isEmpty()) {
+            return true;                                         // (at the world's floor nothing falls further)
         }
         if (eaves) {
             for (Direction d : Direction.Plane.HORIZONTAL) {
@@ -579,7 +618,7 @@ public class RaiseJob extends DigJob {
     }
 
     private static boolean open(ServerLevel level, BlockPos p) {
-        return level.isLoaded(p) && level.getBlockState(p).getCollisionShape(level, p).isEmpty();
+        return level.isOutsideBuildHeight(p) || level.isLoaded(p) && level.getBlockState(p).getCollisionShape(level, p).isEmpty();
     }
 
     /** Some neighbour of a cut at {@code p} stands no more than a block over the new ground (the cell over it is open). */
@@ -623,6 +662,12 @@ public class RaiseJob extends DigJob {
 
     @Override
     protected boolean put(ServerLevel level, int i, Task t) {
+        if (level.isOutsideBuildHeight(t.pos())) {
+            return true;                                         // nothing goes there, ever: done
+        }
+        if (!level.isLoaded(t.pos())) {
+            return false;                                        // its chunk went since it was handed out: never loaded to lay it
+        }
         BlockState was = level.getBlockState(t.pos());
         if (was == t.state() && t.nbt() == null) {
             return true;                                         // so already
@@ -689,7 +734,7 @@ public class RaiseJob extends DigJob {
         return n;
     }
 
-    /** The lowest open cell heaved into place (the site has stalled: nothing could be handed out for a long while). */
+    /** The lowest open cell heaved into place (the site has stalled: builders up, none at work, nothing to hand them). */
     public boolean heaveFront(ServerLevel level) {
         ensureLoaded(level);
         int f = front();
@@ -701,6 +746,13 @@ public class RaiseJob extends DigJob {
             return false;
         }
         Task t = tasks().get(i);
+        if (level.isOutsideBuildHeight(t.pos())) {
+            markDone(i);                                         // nothing goes there, ever: done, not heaved
+            return false;
+        }
+        if (!level.isLoaded(t.pos())) {
+            return false;                                        // never a chunk loaded to heave a cell in
+        }
         if (!replaceable(level, t.pos(), level.getBlockState(t.pos()))) {
             spare(i);                                            // a player's block: left standing, not heaved over
             return false;
@@ -718,9 +770,51 @@ public class RaiseJob extends DigJob {
         return true;
     }
 
-    /** Whether any builder holds a batch. */
-    public boolean anyOut() {
-        return claimCount() > 0;
+    /** Whether any builder holds a batch at {@code now} (claims past their time let go first). */
+    public boolean anyOut(long now) {
+        return claimCount(now) > 0;
+    }
+
+    /**
+     * Whether any open cell could be handed out now (what {@link #claim} looks over): the site's stall rule asks this before it
+     * heaves (SiteWork#second). A cell the world already has as it should be counts: a claim would finish it.
+     */
+    public boolean anyClaimable(ServerLevel level) {
+        List<Task> ts = tasks();
+        if (ts == null) {
+            return false;
+        }
+        int end = Math.min(ts.size(), claimEnd());
+        for (int i = front(); i < end; i++) {
+            if (finished(i) || isClaimed(i)) {
+                continue;
+            }
+            Task t = ts.get(i);
+            if (level.isOutsideBuildHeight(t.pos())) {
+                return true;
+            }
+            if (!level.isLoaded(t.pos())) {
+                continue;
+            }
+            if (level.getBlockState(t.pos()) == t.state() && t.nbt() == null || claimable(level, i, t)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Whether the site still has a block to put in the cell {@code p}. */
+    public boolean fillsOpen(BlockPos p) {
+        return tasks() != null && openAt(fills, p.asLong());
+    }
+
+    /** Whether a batch someone holds has the cell {@code p} in it. */
+    public boolean heldAt(BlockPos p) {
+        if (tasks() == null) {
+            return false;
+        }
+        int i = fills.getOrDefault(p.asLong(), cuts.getOrDefault(p.asLong(), -1));
+        return i >= 0 && isClaimed(i);
     }
 
     // --- where a builder stands --------------------------------------------------------------------------------------

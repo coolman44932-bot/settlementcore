@@ -16,7 +16,10 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LanternBlock;
+import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
@@ -199,6 +202,121 @@ public class RaiseJobGameTests {
             s.clear();
             h.succeed();
         }));
+    }
+
+    /**
+     * Nobody is built into a raised building's courses, a player least of all (the review of 51b59f8: Clearance moved only
+     * mobs, and a player standing on a half-built step, in the next course's cell, was built into, feet then head). On flat
+     * ground the earthworks and the first course are laid by hand; then a mock player stands in a cell of the 2nd course (on
+     * the ground layer, in the first step's cell by the door) and the rest of the building is laid a cell at a time as a
+     * builder's swings lay it. After every block the player is not inside one; its cell is laid; and it was set down clear of
+     * it, on a floor it fits on.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aPlayerInTheNextCourseIsSetDownClear(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "flat ground");
+            RaiseJob job = new RaiseJob(SitingGameTests.PLATFORM, s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 2L);
+            BlockPos near = s.pl.door();
+            for (int round = 0; job.courseNow() < 1; round++) {
+                h.assertTrue(round < 2000 && !job.isDone(), "the first course never finished: " + job.state());
+                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                h.assertTrue(anchor != null, "nothing could be handed out before the second course: " + job.openReport(level, 8));
+                job.complete(level, builder);
+                near = anchor;
+            }
+            BlockPos cell = s.pl.world(new BlockPos(3, 1, 4));
+            BlockState want = null;
+            for (RoomTemplates.Entry e : s.template) {
+                if (e.local().equals(new BlockPos(3, 1, 4))) {
+                    want = e.state().rotate(s.pl.rotation());
+                }
+            }
+            h.assertTrue(want != null && !want.isAir() && job.fillsOpen(cell) && level.getBlockState(cell).isAir(),
+                    "the 2nd course's cell " + cell.toShortString() + " isn't an open cell of the site: " + level.getBlockState(cell));
+            ServerPlayer player = h.makeMockServerPlayerInLevel();
+            try {
+                player.teleportTo(cell.getX() + 0.5, cell.getY(), cell.getZ() + 0.5);
+                h.assertTrue(player.blockPosition().equals(cell), "the player stands at " + player.blockPosition().toShortString() + ", not in the cell "
+                        + cell.toShortString());
+                boolean setDown = false;
+                for (int round = 0; !job.isDone(); round++) {
+                    h.assertTrue(round < 2000, "the building never finished: " + job.state());
+                    BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                    h.assertTrue(anchor != null, "nothing could be handed out: " + job.openReport(level, 8));
+                    int n = job.batch(builder).size();
+                    for (int k = 0; k < n; k++) {
+                        for (DigJob.Crumb c : job.gnawSome(level, builder, (k + 0.5f) / n)) {
+                            h.assertTrue(!claude.underempire.core.room.Clearance.walledIn(level, player), "the player at "
+                                    + player.blockPosition().toShortString() + " is inside a block (" + level.getBlockState(player.blockPosition())
+                                    + ") once " + level.getBlockState(c.pos()) + " went in at " + c.pos().toShortString());
+                            setDown |= !player.blockPosition().equals(cell);
+                        }
+                    }
+                    job.complete(level, builder);
+                    near = anchor;
+                }
+                BlockPos at = player.blockPosition();
+                h.assertTrue(level.getBlockState(cell) == want, "the cell " + cell.toShortString() + " is " + level.getBlockState(cell) + ", not " + want);
+                h.assertTrue(setDown && !at.equals(cell) && level.getBlockState(at.below()).isFaceSturdy(level, at.below(), Direction.UP)
+                                && level.noCollision(player), "the player wasn't set down clear of the cell, on a floor it fits on: it is at "
+                        + at.toShortString() + " over " + level.getBlockState(at.below()));
+            } finally {
+                level.getServer().getPlayerList().remove(player);
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * Hanging things are held by what they hang from (the review of 51b59f8: a hanging lantern, a chain or vines under a
+     * ceiling waited out the whole stall, since a block was held only from under it or beside it). In the air over the plot,
+     * under a stone ceiling: a hanging lantern, a chain, vines and a cobweb are held; a standing lantern and a stone block are
+     * not (nothing under them, nothing beside); the earthworks hang nothing; with the ceiling gone the lantern isn't held;
+     * and a block with a sturdy face beside it is held as eaves, unless the site still has a block to put under it.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "raise")
+    public static void aHangingThingIsHeldFromAbove(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            BlockPos p = new BlockPos(s.px0 + 4, s.floor + 6, s.pz0 + 4);
+            s.set(p.getX(), p.getY() + 1, p.getZ(), Blocks.STONE.defaultBlockState());
+            BlockState hanging = Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, true);
+            BlockState standing = Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, false);
+            BlockState vine = Blocks.VINE.defaultBlockState().setValue(VineBlock.UP, true);
+            held(h, level, p, hanging, true, false, true, "a hanging lantern under stone");
+            held(h, level, p, Blocks.CHAIN.defaultBlockState(), true, false, true, "a chain under stone");
+            held(h, level, p, vine, true, false, true, "vines under stone");
+            held(h, level, p, Blocks.COBWEB.defaultBlockState(), true, false, true, "a cobweb under stone");
+            held(h, level, p, standing, true, false, false, "a standing lantern over air");
+            held(h, level, p, Blocks.STONE_BRICKS.defaultBlockState(), true, false, false, "stone bricks over air, nothing beside");
+            held(h, level, p, hanging, false, false, false, "a hanging lantern in the earthworks");
+            s.set(p.getX(), p.getY() + 1, p.getZ(), Blocks.AIR.defaultBlockState());
+            held(h, level, p, hanging, true, false, false, "a hanging lantern with its ceiling gone");
+            s.set(p.getX() + 1, p.getY(), p.getZ(), Blocks.STONE.defaultBlockState());
+            held(h, level, p, Blocks.STONE_BRICKS.defaultBlockState(), true, false, true, "stone bricks beside stone (eaves)");
+            held(h, level, p, Blocks.STONE_BRICKS.defaultBlockState(), true, true, false, "stone bricks beside stone, with a block still to go under");
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    private static void held(GameTestHelper h, ServerLevel level, BlockPos p, BlockState s, boolean course, boolean underToCome, boolean want,
+                             String scene) {
+        h.assertTrue(RaiseJob.held(level, p, s, course, underToCome) == want, scene + ": " + (want ? "not held" : "held") + " (" + s + " at "
+                + p.toShortString() + ", over " + level.getBlockState(p.below()) + ", under " + level.getBlockState(p.above()) + ")");
     }
 
     /**

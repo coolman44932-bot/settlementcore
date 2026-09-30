@@ -5,6 +5,7 @@ import net.minecraft.core.Direction;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.level.block.state.BlockState;
@@ -36,22 +37,28 @@ public final class Clearance {
     }
 
     /**
-     * {@code now} is about to go into the cell {@code pos}: the mobs whose bodies are in it are set down clear of it first.
-     * Only a block that suffocates (the same test as {@code Entity#isInWall}) into a cell that does not already: no body is in
-     * a solid cell, and a slab or a lamp is no wall. Returns how many were moved.
+     * {@code now} is about to go into the cell {@code pos}: whoever's body is in it (a mob, a player on a half-built step of a
+     * raised building, anything living that isn't riding or passing through walls) is set down clear of it first. Only a block
+     * that suffocates (the same test as {@code Entity#isInWall}) into a cell that does not already: no body is in a solid
+     * cell, and a slab or a lamp is no wall. Returns how many were moved.
      */
     public static int before(ServerLevel level, BlockPos pos, BlockState now) {
         if (!now.isSuffocating(level, pos) || level.getBlockState(pos).isSuffocating(level, pos)) {
             return 0;
         }
         AABB cell = new AABB(pos);
-        List<Mob> in = level.getEntitiesOfClass(Mob.class, cell, m -> m.isAlive() && !m.noPhysics && !m.isPassenger());
+        // every mob, as before (2026-09-29); and since the surface builder (the review of 51b59f8) a player too, and the rest of
+        // the living (an armour stand): a player standing in the next course's cell was built into, feet then head
+        List<LivingEntity> in = level.getEntitiesOfClass(LivingEntity.class, cell, m -> m.isAlive() && !m.noPhysics && !m.isPassenger()
+                && !m.isSpectator());
         int moved = 0;
-        for (Mob m : in) {
+        for (LivingEntity m : in) {
             Vec3 to = spot(level, m, pos, cell);
             if (to != null) {
                 m.teleportTo(to.x, to.y, to.z);
-                m.getNavigation().stop();
+                if (m instanceof Mob mob) {
+                    mob.getNavigation().stop();
+                }
                 m.setDeltaMovement(Vec3.ZERO);
                 moved++;
             }

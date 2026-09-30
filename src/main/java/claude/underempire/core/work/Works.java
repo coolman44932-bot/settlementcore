@@ -249,6 +249,7 @@ public final class Works {
                 if (w == null || w.crewFromHorde()) {
                     refund(e.getKey());
                 }
+                letGo(e.getValue(), e.getKey());                 // a site's builder: its batch goes back at once
                 it.remove();
             }
         }
@@ -604,9 +605,10 @@ public final class Works {
     /**
      * A raised building becomes one of the settlement's (surface-builder.md, section 2): its fences and stairs joined up, then
      * added walled (never walled up against the sky: the Heart's wallUpRooms walls any building added unwalled). The site is
-     * dropped and its key cleared from {@link #opened} and {@link #saved}, so the next {@link #sync} makes the room's own work
-     * at the same door and opens it (its {@code opened()} runs once, as any room's). The builders are keyed to that door, so
-     * they are the room's crew now; a room with no work sends them home.
+     * dropped and its key cleared from {@link #opened} and {@link #saved}, and the room's own work made at the same door, which
+     * the next second opens (its {@code opened()} runs once, as any room's). The builders are keyed to that door, so they are
+     * the room's crew now; a room with no work (none registered for its kind, or none made for it) sends them home, and each is
+     * taken back into the reserve when it gets there (#forget), once.
      */
     private void handOver(ServerLevel level, SiteWork s) {
         BlockPos key = s.key();
@@ -615,7 +617,10 @@ public final class Works {
         rooms.remove(key);
         opened.remove(key);
         saved.remove(Long.toString(key.asLong()));
-        if (RoomWorks.get(s.room().function()) == null) {
+        RoomWork next = make(heart, s.building);
+        if (next != null) {
+            rooms.put(key, next);
+        } else {
             for (SettlerMob r : crewOf(level, key)) {
                 r.goHome();
             }

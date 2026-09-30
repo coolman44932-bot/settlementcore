@@ -180,6 +180,10 @@ public class DigJob {
         int n = 0;
         for (int i = finished.nextClearBit(0); i < Math.min(end, tasks.size()) && n < max; i = finished.nextClearBit(i + 1)) {
             Task t = tasks.get(i);
+            if (level.isOutsideBuildHeight(t.pos())) {
+                finished.set(i);                                 // over the sky's limit or under the world: nothing to gnaw there, ever
+                continue;
+            }
             if (!level.isLoaded(t.pos())) {
                 break;
             }
@@ -324,8 +328,9 @@ public class DigJob {
         return c == null ? null : c.indices().clone();
     }
 
-    /** How many batches are out. */
-    protected final int claimCount() {
+    /** How many batches are out at {@code now} (the expired ones let go first). */
+    protected final int claimCount(long now) {
+        expire(now);
         return claims.size();
     }
 
@@ -455,6 +460,10 @@ public class DigJob {
                 continue;
             }
             Task t = tasks.get(i);
+            if (level.isOutsideBuildHeight(t.pos())) {
+                finished.set(i);                // over the sky's limit or under the world (a room planned near the top): no block
+                continue;                       // goes there, ever, and the dig must still finish (isLoaded is false there too)
+            }
             if (!level.isLoaded(t.pos())) {
                 continue;                       // never loaded for a look: a wide dig's far side waits for its chunk
             }
@@ -550,7 +559,10 @@ public class DigJob {
         }
         for (net.minecraft.core.Direction d : net.minecraft.core.Direction.values()) {
             BlockPos q = p.relative(d);
-            if (level.isLoaded(q) && level.getBlockState(q).getCollisionShape(level, q).isEmpty()) {   // a look never loads a chunk
+            // a look never loads a chunk; only a neighbour across a chunk's edge can be in one not loaded (the claim's loop asks
+            // this of hundreds of cells, so the lookup is spared for the rest)
+            boolean sameChunk = (q.getX() >> 4) == (p.getX() >> 4) && (q.getZ() >> 4) == (p.getZ() >> 4);
+            if ((sameChunk || level.isLoaded(q)) && level.getBlockState(q).getCollisionShape(level, q).isEmpty()) {
                 return true;
             }
         }

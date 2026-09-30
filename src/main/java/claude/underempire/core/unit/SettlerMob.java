@@ -58,6 +58,8 @@ public abstract class SettlerMob extends PathfinderMob {
     public String crewDoing = "";
     /** How often it has dug its way out of somewhere it was penned in (CrewGoal). */
     public int gnawedOut;
+    /** How often, with nothing to do, it has walked off about its room (CrewGoal.Idle: test reports; never on a site). */
+    public int milled;
 
     protected SettlerMob(EntityType<? extends SettlerMob> type, Level level) {
         super(type, level);
