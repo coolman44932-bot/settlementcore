@@ -646,13 +646,7 @@ public class MineWork extends RoomWork {
      * stopped for good at its short grass, 2026-09-29). Moss, clay and rooted dirt are ground already (DigJob#natural).
      */
     static boolean plant(BlockState s) {
-        return s.is(BlockTags.FLOWERS) || s.is(BlockTags.SMALL_FLOWERS) || s.is(BlockTags.TALL_FLOWERS) || s.is(BlockTags.SAPLINGS)
-                || s.is(BlockTags.CAVE_VINES) || s.is(Blocks.SHORT_GRASS) || s.is(Blocks.TALL_GRASS) || s.is(Blocks.FERN)
-                || s.is(Blocks.LARGE_FERN) || s.is(Blocks.DEAD_BUSH) || s.is(Blocks.BROWN_MUSHROOM) || s.is(Blocks.RED_MUSHROOM)
-                || s.is(Blocks.VINE) || s.is(Blocks.GLOW_LICHEN) || s.is(Blocks.HANGING_ROOTS) || s.is(Blocks.MOSS_CARPET)
-                || s.is(Blocks.SPORE_BLOSSOM) || s.is(Blocks.SMALL_DRIPLEAF) || s.is(Blocks.BIG_DRIPLEAF) || s.is(Blocks.BIG_DRIPLEAF_STEM)
-                || s.is(Blocks.AZALEA_LEAVES) || s.is(Blocks.FLOWERING_AZALEA_LEAVES) || s.is(Blocks.SEAGRASS) || s.is(Blocks.TALL_SEAGRASS)
-                || s.is(Blocks.KELP) || s.is(Blocks.KELP_PLANT);
+        return claude.underempire.core.room.DigJob.plant(s);     // the engine's cover (moved to DigJob for the raised buildings' earthworks)
     }
 
     /**

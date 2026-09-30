@@ -91,8 +91,20 @@ public final class Rooms {
      * its heart's chamber, the way down, the deep levels' pieces), the deep pieces, the rooms a way down opens off, and
      * how far one way down goes.
      */
-    public record Catalog(List<Room> plans, List<Room> others, List<Deep> deepPieces, Set<String> deepSources, int deepStep) {
+    /**
+     * A race's rooms: its plans (dug), the rooms it digs by itself, its deep levels' pieces, and its {@code raised} buildings,
+     * built upward on the surface by its settlers (docs/plans/surface-builder.md).
+     */
+    public record Catalog(List<Room> plans, List<Room> others, List<Deep> deepPieces, Set<String> deepSources, int deepStep,
+                          List<Room> raised) {
+        /** A race with no raised buildings (the generated RoomCatalog). */
+        public Catalog(List<Room> plans, List<Room> others, List<Deep> deepPieces, Set<String> deepSources, int deepStep) {
+            this(plans, others, deepPieces, deepSources, deepStep, List.of());
+        }
     }
+
+    private static final List<Room> RAISED = new ArrayList<>();
+    private static final org.slf4j.Logger LOG = com.mojang.logging.LogUtils.getLogger();
 
     private static final Map<String, Room> BY_ID = new LinkedHashMap<>();
     private static final List<Room> PLANS = new ArrayList<>();
@@ -114,14 +126,17 @@ public final class Rooms {
      */
     public static synchronized void register(String namespace, Catalog c) {
         NAMESPACES.add(namespace);
-        for (Room r : c.plans()) {
-            NAMESPACE.put(r.id(), namespace);
-        }
-        for (Room r : c.others()) {
-            NAMESPACE.put(r.id(), namespace);
-        }
-        for (Deep d : c.deepPieces()) {
-            NAMESPACE.put(d.id(), namespace);
+        List<String> ids = new ArrayList<>();
+        c.plans().forEach(r -> ids.add(r.id()));
+        c.others().forEach(r -> ids.add(r.id()));
+        c.raised().forEach(r -> ids.add(r.id()));
+        c.deepPieces().forEach(d -> ids.add(d.id()));
+        for (String id : ids) {
+            String before = NAMESPACE.put(id, namespace);
+            if (before != null && !before.equals(namespace)) {
+                LOG.warn("Settlement Core: the room id {} is {}'s and {}'s: room ids are global, prefix a race's own; {}'s wins", id,
+                        before, namespace, namespace);
+            }
         }
         for (Room r : c.plans()) {
             PLANS.removeIf(x -> x.id().equals(r.id()));
@@ -133,10 +148,27 @@ public final class Rooms {
             OTHERS.add(r);
             BY_ID.put(r.id(), r);
         }
+        for (Room r : c.raised()) {
+            RAISED.removeIf(x -> x.id().equals(r.id()));
+            RAISED.add(r);
+            BY_ID.put(r.id(), r);
+        }
         DEEP_PIECES.removeIf(d -> c.deepPieces().stream().anyMatch(n -> n.id().equals(d.id())));
         DEEP_PIECES.addAll(c.deepPieces());
         DEEP_SOURCES.addAll(c.deepSources());
-        deepStep = c.deepStep();
+        if (!c.deepPieces().isEmpty()) {
+            deepStep = c.deepStep();                             // a race with no deep levels leaves another's step alone
+        }
+    }
+
+    /** Every race's raised buildings (surface-builder.md), in registration order. */
+    public static synchronized List<Room> raised() {
+        return Collections.unmodifiableList(new ArrayList<>(RAISED));
+    }
+
+    /** Whether {@code id} is a raised building (built up on the surface), not a dug room. */
+    public static synchronized boolean isRaised(String id) {
+        return RAISED.stream().anyMatch(r -> r.id().equals(id));
     }
 
     /**

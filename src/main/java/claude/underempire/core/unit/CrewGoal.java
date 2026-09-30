@@ -149,6 +149,9 @@ public class CrewGoal extends Goal {
                             at.getZ() + 0.5, 3, 0.25, 0.2, 0.25, 0.03);
                     sl.playSound(null, at, state.getSoundType().getHitSound(), SoundSource.BLOCKS, 0.35f, 0.9f + rat.getRandom().nextFloat() * 0.2f);
                 }
+                if (chore.swing != null) {
+                    chore.swing.swing(sl, rat, Math.min(1f, (worked + 1) / (float) chore.work));   // the work lands bite by bite
+                }
             }
         }
         if (++worked >= chore.work) {

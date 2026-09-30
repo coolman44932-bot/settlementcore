@@ -23,6 +23,12 @@ public final class Chore {
         @Nullable Chore done(ServerLevel level, SettlerMob rat);
     }
 
+    /** One swing of the work, {@code fraction} of the way through it: a raised building's blocks go in bite by bite. */
+    @FunctionalInterface
+    public interface Swing {
+        void swing(ServerLevel level, SettlerMob rat, float fraction);
+    }
+
     /** What it squeaks if the Warlord asks (and what shows in test failures). */
     public final String what;
     public BlockPos at;
@@ -62,6 +68,14 @@ public final class Chore {
 
     public Chore standing(@Nullable BlockPos cell) {
         this.standAt = cell;
+        return this;
+    }
+
+    /** Called on each swing of the work (CrewGoal), before {@link Done#done} at its end. */
+    @Nullable public Swing swing;
+
+    public Chore swinging(@Nullable Swing s) {
+        this.swing = s;
         return this;
     }
 

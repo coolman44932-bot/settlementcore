@@ -117,6 +117,27 @@ public class DigJob {
     @Nullable private net.minecraft.world.level.levelgen.structure.BoundingBox alsoCut;
 
     /**
+     * Cover: what grows on or hangs from the ground (flowers, grass, ferns, saplings, vines, moss carpet, roots, dripleaf,
+     * azalea leaves, seagrass, kelp). A dig or a winze clears it; a raised building's earthworks clear it off every column
+     * they cut or fill (surface-builder.md, section 9). Moved from the Ore Mine's winze (work/MineWork), 2026-09-30.
+     */
+    public static boolean plant(BlockState s) {
+        return s.is(net.minecraft.tags.BlockTags.FLOWERS) || s.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS)
+                || s.is(net.minecraft.tags.BlockTags.TALL_FLOWERS) || s.is(net.minecraft.tags.BlockTags.SAPLINGS)
+                || s.is(net.minecraft.tags.BlockTags.CAVE_VINES) || s.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS)
+                || s.is(net.minecraft.world.level.block.Blocks.TALL_GRASS) || s.is(net.minecraft.world.level.block.Blocks.FERN)
+                || s.is(net.minecraft.world.level.block.Blocks.LARGE_FERN) || s.is(net.minecraft.world.level.block.Blocks.DEAD_BUSH)
+                || s.is(net.minecraft.world.level.block.Blocks.BROWN_MUSHROOM) || s.is(net.minecraft.world.level.block.Blocks.RED_MUSHROOM)
+                || s.is(net.minecraft.world.level.block.Blocks.VINE) || s.is(net.minecraft.world.level.block.Blocks.GLOW_LICHEN)
+                || s.is(net.minecraft.world.level.block.Blocks.HANGING_ROOTS) || s.is(net.minecraft.world.level.block.Blocks.MOSS_CARPET)
+                || s.is(net.minecraft.world.level.block.Blocks.SPORE_BLOSSOM) || s.is(net.minecraft.world.level.block.Blocks.SMALL_DRIPLEAF)
+                || s.is(net.minecraft.world.level.block.Blocks.BIG_DRIPLEAF) || s.is(net.minecraft.world.level.block.Blocks.BIG_DRIPLEAF_STEM)
+                || s.is(net.minecraft.world.level.block.Blocks.AZALEA_LEAVES) || s.is(net.minecraft.world.level.block.Blocks.FLOWERING_AZALEA_LEAVES)
+                || s.is(net.minecraft.world.level.block.Blocks.SEAGRASS) || s.is(net.minecraft.world.level.block.Blocks.TALL_SEAGRASS)
+                || s.is(net.minecraft.world.level.block.Blocks.KELP) || s.is(net.minecraft.world.level.block.Blocks.KELP_PLANT);
+    }
+
+    /**
      * The ground itself: stone and deepslate, dirt, sand and gravel, ores, clay, dripstone, calcite, the
      * cave's moss and vines and lichen, sculk, amethyst, and air and water and lava. Not cobblestone,
      * planks, bricks or anything else a player (or a dungeon) could have put there; nor blackstone, bone,
@@ -147,8 +168,17 @@ public class DigJob {
      */
     public int gnawInOrder(ServerLevel level, int max, List<BlockPos> sample) {
         ensureLoaded(level);
+        return gnawInOrder(level, max, sample, tasks.size());
+    }
+
+    /**
+     * {@link #gnawInOrder(ServerLevel, int, List)} over the tasks before {@code end} only: a job whose first phase the settlement
+     * does itself (a raised building's clearing) and whose later ones its settlers work.
+     */
+    protected int gnawInOrder(ServerLevel level, int max, List<BlockPos> sample, int end) {
+        ensureLoaded(level);
         int n = 0;
-        for (int i = finished.nextClearBit(0); i < tasks.size() && n < max; i = finished.nextClearBit(i + 1)) {
+        for (int i = finished.nextClearBit(0); i < Math.min(end, tasks.size()) && n < max; i = finished.nextClearBit(i + 1)) {
             Task t = tasks.get(i);
             if (!level.isLoaded(t.pos())) {
                 break;
@@ -183,18 +213,7 @@ public class DigJob {
             keepOut = keepOutSource == null ? new long[0] : keepOutSource.apply(level, pl);
         }
         it.unimi.dsi.fastutil.longs.LongOpenHashSet keep = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(keepOut);
-        BlockPos doorLocal = new BlockPos(pl.room().doorX(), pl.room().doorY(), pl.room().doorZ());
-        List<RoomTemplates.Entry> entries = new ArrayList<>(RoomTemplates.get(level, roomId));
-        entries.sort(Comparator.<RoomTemplates.Entry>comparingInt(e -> e.local().distManhattan(doorLocal))
-                .thenComparingInt(e -> -e.local().getY()));
-        tasks = new ArrayList<>(entries.size());
-        for (RoomTemplates.Entry e : entries) {
-            BlockPos w = pl.world(e.local());
-            if (keep.contains(w.asLong())) {
-                continue;                       // another room's open space: leave it, the rooms join here
-            }
-            tasks.add(new Task(w, e.state().rotate(pl.rotation()), e.nbt()));
-        }
+        tasks = buildTasks(level, pl, keep);
         for (Task t : tasks) {
             taskCells.add(t.pos().asLong());
         }
@@ -215,6 +234,55 @@ public class DigJob {
             walled = false;                     // what was done is not walled round: the room is, when it is finished
         }
         templatePrint = print;
+    }
+
+    /**
+     * The job's task list, in the order it is worked: rebuilt the same way on load, so the saved progress bits mean the same
+     * cells. A dug room is its template's cells, outward from the door ({@link #order}), less the keep-out's; a raised
+     * building (surface-builder.md) puts its earthworks and courses in its own order.
+     */
+    protected List<Task> buildTasks(ServerLevel level, PlanPlacement pl, it.unimi.dsi.fastutil.longs.LongSet keep) {
+        BlockPos doorLocal = new BlockPos(pl.room().doorX(), pl.room().doorY(), pl.room().doorZ());
+        List<RoomTemplates.Entry> entries = new ArrayList<>(RoomTemplates.get(level, roomId));
+        entries.sort(order(doorLocal));
+        List<Task> out = new ArrayList<>(entries.size());
+        for (RoomTemplates.Entry e : entries) {
+            BlockPos w = pl.world(e.local());
+            if (keep.contains(w.asLong())) {
+                continue;                       // another room's open space: leave it, the rooms join here
+            }
+            out.add(new Task(w, e.state().rotate(pl.rotation()), e.nbt()));
+        }
+        return out;
+    }
+
+    /** A dug room's order: outward from the door, top-down within a distance, so rats always dig from space they can stand in. */
+    protected Comparator<RoomTemplates.Entry> order(BlockPos doorLocal) {
+        return Comparator.<RoomTemplates.Entry>comparingInt(e -> e.local().distManhattan(doorLocal)).thenComparingInt(e -> -e.local().getY());
+    }
+
+    /** The tasks, once built ({@link #ensureLoaded}); null before. */
+    @Nullable
+    protected List<Task> tasks() {
+        return tasks;
+    }
+
+    /** Whether task {@code i} is done. */
+    protected boolean finished(int i) {
+        return finished.get(i);
+    }
+
+    /**
+     * Whether an open task may be handed out now. Every task of a dug room may; a raised building's cell only once there is
+     * something under it to hold it (surface-builder.md, section 2).
+     */
+    protected boolean claimable(ServerLevel level, int i, Task t) {
+        return true;
+    }
+
+    /** Added to a task's score as a batch's anchor (lower is sooner): a raised building's upper courses wait for the lower. */
+    protected double anchorBias(int i, Task t) {
+        return 0;
     }
 
     public boolean isDone() {
@@ -351,6 +419,9 @@ public class DigJob {
                 }
                 continue;
             }
+            if (!claimable(level, i, t)) {
+                continue;
+            }
             cand.add(i);
         }
         if (cand.isEmpty()) {
@@ -363,8 +434,9 @@ public class DigJob {
         int best = -1;
         double bestScore = Double.MAX_VALUE;
         for (int k = 0; k < cand.size(); k++) {
-            BlockPos p = tasks.get(cand.getInt(k)).pos();
-            double score = Math.sqrt(p.distSqr(near)) + k * 0.01 + (exposed(level, p) ? 0 : 4);
+            int ti = cand.getInt(k);
+            BlockPos p = tasks.get(ti).pos();
+            double score = Math.sqrt(p.distSqr(near)) + k * 0.01 + (exposed(level, p) ? 0 : 4) + anchorBias(ti, tasks.get(ti));
             for (BlockPos o : others) {
                 int d = o.distManhattan(p);
                 if (d <= CROWD) {
@@ -606,7 +678,16 @@ public class DigJob {
                 t.putIntArray("also_cut", new int[]{alsoCut.minX(), alsoCut.minY(), alsoCut.minZ(), alsoCut.maxX(), alsoCut.maxY(), alsoCut.maxZ()});
             }
         }
+        saveMore(t);
         return t;
+    }
+
+    /** A kind of job's own keys, beside a dig's (a raised building's earthworks); nothing for a dug room. */
+    protected void saveMore(CompoundTag t) {
+    }
+
+    /** Its own keys back ({@link #saveMore}), before the tasks are built. */
+    protected void loadMore(CompoundTag t) {
     }
 
     public static DigJob load(CompoundTag t) {

@@ -339,7 +339,7 @@ public final class Works {
         } else if (level.getGameTime() < lostAt.getOrDefault(w.key(), Long.MIN_VALUE / 2) + LOAN_AGAIN) {
             return;
         }
-        BlockPos at = standable(level, w);
+        BlockPos at = w.comeUpAt(level);                        // Works.standable for every room but a site (its landing)
         if (at == null) {
             return;
         }
