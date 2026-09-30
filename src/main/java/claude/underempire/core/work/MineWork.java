@@ -13,7 +13,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
-import net.minecraft.tags.BlockTags;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.item.ItemStack;
@@ -646,7 +645,7 @@ public class MineWork extends RoomWork {
      * stopped for good at its short grass, 2026-09-29). Moss, clay and rooted dirt are ground already (DigJob#natural).
      */
     static boolean plant(BlockState s) {
-        return claude.underempire.core.room.DigJob.plant(s);     // the engine's cover (moved to DigJob for the raised buildings' earthworks)
+        return DigJob.plant(s);     // the engine's cover (moved to DigJob for the raised buildings' earthworks)
     }
 
     /**

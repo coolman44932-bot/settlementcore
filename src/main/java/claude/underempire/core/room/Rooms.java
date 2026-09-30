@@ -87,13 +87,10 @@ public final class Rooms {
     }
 
     /**
-     * One race's rooms: the ones a plan can build ({@code plans}), the ones a settlement makes for itself ({@code others}:
-     * its heart's chamber, the way down, the deep levels' pieces), the deep pieces, the rooms a way down opens off, and
-     * how far one way down goes.
-     */
-    /**
-     * A race's rooms: its plans (dug), the rooms it digs by itself, its deep levels' pieces, and its {@code raised} buildings,
-     * built upward on the surface by its settlers (docs/plans/surface-builder.md).
+     * One race's rooms: the ones a plan can build ({@code plans}, dug), the ones a settlement makes for itself ({@code others}:
+     * its heart's chamber, the way down, the deep levels' pieces), the deep pieces, the rooms a way down opens off, how far
+     * one way down goes, and its {@code raised} buildings, built upward on the surface by its settlers
+     * (docs/plans/surface-builder.md).
      */
     public record Catalog(List<Room> plans, List<Room> others, List<Deep> deepPieces, Set<String> deepSources, int deepStep,
                           List<Room> raised) {

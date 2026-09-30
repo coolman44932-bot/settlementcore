@@ -686,29 +686,47 @@ public class DigJob {
     protected void saveMore(CompoundTag t) {
     }
 
-    /** Its own keys back ({@link #saveMore}), before the tasks are built. */
+    /** Its own keys back ({@link #saveMore}), before the tasks are built: called by {@link #readSaved}. */
     protected void loadMore(CompoundTag t) {
     }
 
     public static DigJob load(CompoundTag t) {
-        BlockPos door = NbtUtils.readBlockPos(t, "door").orElse(BlockPos.ZERO);
+        return new DigJob(t.getString("room"), savedDoor(t), savedFacing(t)).readSaved(t);
+    }
+
+    /** The door a saved job was dug from: a kind of job's own load makes itself with it ({@link #readSaved}). */
+    protected static BlockPos savedDoor(CompoundTag t) {
+        return NbtUtils.readBlockPos(t, "door").orElse(BlockPos.ZERO);
+    }
+
+    protected static Direction savedFacing(CompoundTag t) {
         Direction facing = Direction.byName(t.getString("facing"));
-        DigJob job = new DigJob(t.getString("room"), door, facing == null ? Direction.EAST : facing);
-        job.finished = BitSet.valueOf(t.getLongArray("finished"));
-        job.templatePrint = t.getInt("template");
-        job.walled = t.getBoolean("walled") || job.finished.isEmpty();   // begun before the shoring: walled up when finished
+        return facing == null ? Direction.EAST : facing;
+    }
+
+    /**
+     * A dig's keys back into this job, then its kind's own ({@link #loadMore}). A kind of job loads as
+     * {@code new RaiseJob(t.getString("room"), savedDoor(t), savedFacing(t)).readSaved(t)}.
+     */
+    protected final <J extends DigJob> J readSaved(CompoundTag t) {
+        finished = BitSet.valueOf(t.getLongArray("finished"));
+        templatePrint = t.getInt("template");
+        walled = t.getBoolean("walled") || finished.isEmpty();   // begun before the shoring: walled up when finished
         if (t.contains("keep_out")) {
-            job.keepOut = t.getLongArray("keep_out");
-        } else if (job.finished.cardinality() > 0) {
-            job.keepOut = new long[0];          // begun before keep-out existed: keep its task list as it was
+            keepOut = t.getLongArray("keep_out");
+        } else if (finished.cardinality() > 0) {
+            keepOut = new long[0];          // begun before keep-out existed: keep its task list as it was
         }
         if (t.getBoolean("unshored")) {
-            job.unshored();
+            unshored();
         }
         if (t.getBoolean("natural_only")) {
             int[] b = t.getIntArray("also_cut");
-            job.naturalOnly(b.length == 6 ? new net.minecraft.world.level.levelgen.structure.BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]) : null);
+            naturalOnly(b.length == 6 ? new net.minecraft.world.level.levelgen.structure.BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]) : null);
         }
-        return job;
+        loadMore(t);
+        @SuppressWarnings("unchecked")
+        J self = (J) this;
+        return self;
     }
 }

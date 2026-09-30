@@ -46,6 +46,8 @@ public final class Chore {
      * the first air above, a turn up the stair, where the rat stood for 400 ticks).
      */
     @Nullable public BlockPos standAt;
+    /** Called on each swing of the work (CrewGoal), before {@link Done#done} at its end. */
+    @Nullable public Swing swing;
 
     public Chore(String what, BlockPos at, double reach, int work, @Nullable Object claim, Done done) {
         this(what, at, reach, work, claim, null, done);
@@ -70,9 +72,6 @@ public final class Chore {
         this.standAt = cell;
         return this;
     }
-
-    /** Called on each swing of the work (CrewGoal), before {@link Done#done} at its end. */
-    @Nullable public Swing swing;
 
     public Chore swinging(@Nullable Swing s) {
         this.swing = s;
