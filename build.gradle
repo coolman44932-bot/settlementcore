@@ -60,3 +60,41 @@ jar {
         ])
     }
 }
+
+// The engine names no race's namespace: its data lives under settlementcore (and the shared minecraft, c and neoforge),
+// and neither its data nor its code names another mod's resource ("underempire:..."). A race adds to the engine's data
+// from its own jar instead (the Skaven's warren_stew in settlementcore:fare_feast). docs/plans/core-step2.md, C8.
+tasks.register('checkCoreNamespace') {
+    group = 'verification'
+    description = "Fails if Settlement Core's data or code names a race mod's namespace."
+    def res = file('src/main/resources')
+    def src = file('src/main/java')
+    inputs.dir(res)
+    inputs.dir(src)
+    doLast {
+        def shared = ['settlementcore', 'minecraft', 'c', 'neoforge'] as Set
+        def problems = []
+        ['data', 'assets'].each { top ->
+            def d = new File(res, top)
+            if (d.isDirectory()) {
+                d.eachDir { ns -> if (!shared.contains(ns.name)) { problems << "${top}/${ns.name}/" } }
+            }
+        }
+        res.eachFileRecurse { f ->
+            if (f.isFile() && (f.name.endsWith('.json') || f.name.endsWith('.mcmeta'))) {
+                (f.getText('UTF-8') =~ /"#?([a-z0-9_.-]+):[a-z0-9_\/.-]+"/).each { m ->
+                    if (!shared.contains(m[1])) { problems << "${f.name}: ${m[0]}" }
+                }
+            }
+        }
+        src.eachFileRecurse { f ->
+            if (f.name.endsWith('.java')) {
+                (f.getText('UTF-8') =~ /"(underempire|lustria)(:|")/).each { m -> problems << "${f.name}: ${m[0]}" }
+            }
+        }
+        if (!problems.isEmpty()) {
+            throw new GradleException("Settlement Core names a race's namespace:\n  " + problems.unique().join('\n  '))
+        }
+    }
+}
+tasks.named('compileJava') { dependsOn 'checkCoreNamespace' }
