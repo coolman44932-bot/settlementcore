@@ -306,7 +306,7 @@ public final class Reshape {
         relax(keepDrops, held, w, h, banked, toward, false);
         for (int i = 0; i < n; i++) {
             if (!held[i] && !banked[i]) {
-                a[i] = a[i] > floorY ? keepHills[i] : a[i] < floorY ? keepDrops[i] : floorY;
+                a[i] = a[i] > floorY ? keepHills[i] : a[i] < floorY ? keepDrops[i] : lo[i];   // at the floor, or a pond bank's floor over it
             }
         }
         // where a hill meets a drop the two can stand 2 apart (floor + 1 against floor - 1): lowered to walk, never past

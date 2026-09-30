@@ -582,6 +582,15 @@ public class ReshapeGameTests {
         h.assertTrue(r.seamed() && !r.tooSteep(), "the rise was not cut into (banked " + r.seamed() + ", too steep " + r.tooSteep() + ")" + dump(s, a));
         expect(h, s, a, rampStepProblem(s, a));
         expect(h, s, a, bankProblem(s, a));
+        // a ramp, not a platform: along the pad's middle row it climbs into the rise a block a column from the pad's edge, as
+        // high as the land lets it (a flat floor walled 16 high at the border passed the rest: the review of 86a064a)
+        int row = s.h() / 2;
+        for (int d = 1; 10 + d < f.x0() + s.w() - 1; d++) {
+            int i = s.at(10 - f.x0() + d, row);
+            int want = Math.min(s.ground()[i], d) - 1;
+            h.assertTrue(s.kinds()[i] != Kind.FREE || a[i] >= want, "the ramp stands " + a[i] + " " + d + " columns into the rise "
+                    + "(the land " + s.ground()[i] + "): it should climb to at least " + want + dump(s, a));
+        }
         for (int z = 0; z < s.h(); z++) {
             for (int x = 0; x < s.w(); x++) {
                 int b = s.at(x, z);
@@ -730,6 +739,52 @@ public class ReshapeGameTests {
             h.assertTrue(plain && landed, "a margin of " + m + " was taken (plain " + !plain + ", with a landing " + !landed + ")");
         }
         h.assertTrue(Reshape.frame(pad, 2).w() == 13, "a margin of 2 was refused or laid out wrong");
+        h.succeed();
+    }
+
+    /**
+     * A pond above the floor within the ramp's reach, at the widest margin (a steep hill far east sends the plan to the bank
+     * pass): a mound of 3 (and 4) round a 3x3 pond of that surface, on flat land at the floor, its banks 4 columns from the pad
+     * (a surface of 5 is out of a ramp's reach there, and rightly too steep). The land at the floor round the mound is held up
+     * by the banks' floors, a block a column, and the ramp walks. (The review of 86a064a: a column at the
+     * floor was given the floor, under its bank's floor, and the site was refused too steep; 93 of 2000 fuzzed sites.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aPondAboveTheFloorInTheBankPassStaysWalkable(GameTestHelper h) {
+        for (int surface : new int[]{3, 4}) {
+            Frame f = Reshape.frame(new Rect(0, 0, 9, 9), new Rect(-2, 4, -1, 6), Side.WEST, Reshape.MARGIN_MAX);
+            Scene s = flat(f, 0);
+            for (int i = 0; i < s.ground().length; i++) {
+                int x = f.x0() + i % s.w();
+                int z = f.z0() + i / s.w();
+                s.ground()[i] = Math.min(40, 3 * Math.max(0, x - 14));
+                int off = Math.max(Math.abs(x - 3), Math.abs(z + 6));
+                if (off <= 3) {
+                    s.ground()[i] = surface;
+                }
+                if (off <= 1 && s.kinds()[i] == Kind.FREE) {
+                    s.kinds()[i] = Kind.FLUID;
+                }
+            }
+            Result r = s.plan(null, Reshape.MARGIN_MAX);
+            int[] a = r.height();
+            h.assertTrue(!r.tooSteep() && r.steepest() <= 1, "a pond of " + surface + " by the ramp in the bank pass: too steep "
+                    + r.tooSteep() + " (" + r.steepest() + ")" + dump(s, a));
+            expect(h, s, a, rampStepProblem(s, a));
+            expect(h, s, a, heldProblem(s, a));
+            for (int i = 0; i < a.length; i++) {
+                int x = i % s.w();
+                int z = i / s.w();
+                if (s.kinds()[i] != Kind.FLUID) {
+                    continue;
+                }
+                for (int j : new int[]{x > 0 ? i - 1 : -1, x < s.w() - 1 ? i + 1 : -1, z > 0 ? i - s.w() : -1, z < s.h() - 1 ? i + s.w() : -1}) {
+                    if (j >= 0 && s.kinds()[j] == Kind.FREE) {
+                        h.assertTrue(a[j] >= surface, "a bank of the pond of " + surface + " is cut to " + a[j] + dump(s, a));
+                    }
+                }
+            }
+        }
         h.succeed();
     }
 
