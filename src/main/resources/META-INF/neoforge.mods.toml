@@ -1,0 +1,34 @@
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "MIT"
+
+[[mods]]
+    modId = "settlementcore"
+    version = "${version}"
+    displayName = "Settlement Core"
+    authors = "built with Claude"
+    description = """
+The settlement engine under the Under-Empire and the races to come: rooms dug from plans, their crews and
+work, the haul and the hoard, larders and fare, a settlement that defends itself, and crowds drawn fast.
+It adds nothing by itself: a race mod builds on it."""
+
+[[dependencies.settlementcore]]
+    modId = "neoforge"
+    type = "required"
+    versionRange = "[21.1,)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.settlementcore]]
+    modId = "minecraft"
+    type = "required"
+    versionRange = "[1.21.1,1.22)"
+    ordering = "NONE"
+    side = "BOTH"
+
+[[dependencies.settlementcore]]
+    modId = "geckolib"
+    type = "required"
+    versionRange = "[4.9,5)"
+    ordering = "NONE"
+    side = "BOTH"

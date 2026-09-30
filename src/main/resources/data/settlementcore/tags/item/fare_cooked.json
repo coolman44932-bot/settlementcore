@@ -1,0 +1,22 @@
+{
+  "values": [
+    {
+      "id": "#c:foods/cooked_meat",
+      "required": false
+    },
+    {
+      "id": "#c:foods/cooked_fish",
+      "required": false
+    },
+    {
+      "id": "#c:foods/bread",
+      "required": false
+    },
+    {
+      "id": "#c:foods/cookie",
+      "required": false
+    },
+    "minecraft:baked_potato",
+    "minecraft:dried_kelp"
+  ]
+}

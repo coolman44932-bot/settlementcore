@@ -1,0 +1,320 @@
+package claude.underempire.core.settlement;
+
+import claude.underempire.core.room.PlanPlacement;
+import claude.underempire.core.defence.Muster;
+import claude.underempire.core.food.Fare;
+import claude.underempire.core.room.RoomShoring;
+import claude.underempire.core.room.Rooms;
+import claude.underempire.core.unit.SettlerMob;
+import claude.underempire.core.work.Works;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import net.minecraft.ChatFormatting;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityDimensions;
+import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Pose;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.minecraft.world.phys.Vec3;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.UUID;
+
+/**
+ * A race's settlement, as the engine sees it: the block entity at its heart that owns its rooms, its people, its stores and
+ * its reserve (Under-Empire: the Warren Heart). Everything the engine does to a settlement goes through here.
+ *
+ * <p>The words are the engine's, not a race's: its <b>people</b> are the settlers up and about as mobs; its <b>reserve</b> is
+ * the rest, kept as counts (Under-Empire's horde), split into <b>workers</b> and <b>soldiers</b> (slaves and clanrats); its
+ * <b>currency</b> is what it counts wealth and pays for things in (warpstone shards).
+ */
+public interface Settlement extends RoomShoring.Warren {
+
+    /** How far round the heart itself counts as the settlement (with its rooms and digs). */
+    int HEART_REACH = 16;
+    /** Stacks of spoils kept at the heart at most. */
+    int MAX_SPOIL_STACKS = 216;
+
+    // ------------------------------------------------------------------ the block entity itself
+
+    BlockPos getBlockPos();
+
+    @Nullable
+    Level getLevel();
+
+    void setChanged();
+
+    /** Broken or unloaded: no longer the settlement's heart. */
+    boolean isRemoved();
+
+    // ------------------------------------------------------------------ digging
+
+    /** Cells of a new dig at {@code pl} it must leave alone (the settlement's other rooms, where they meet it: core/room/RoomStacking). */
+    long[] keepOutCells(ServerLevel level, PlanPlacement pl);
+
+    /** A dig cut {@code was} at {@code pos} (with its block entity, if it had one): ores and containers become the settlement's spoils. */
+    void takeSpoils(ServerLevel level, BlockPos pos, net.minecraft.world.level.block.state.BlockState was,
+                    @Nullable net.minecraft.world.level.block.entity.BlockEntity be);
+
+    // ------------------------------------------------------------------ who it belongs to
+
+    @Nullable
+    UUID owner();
+
+    @Nullable
+    ServerPlayer ownerPlayer();
+
+    /** Tell the owner, if they are about. */
+    void tellOwner(String msg, ChatFormatting color);
+
+    /** Its name, as its owner gave it. */
+    String settlementName();
+
+    // ------------------------------------------------------------------ its rooms
+
+    List<Building> buildings();
+
+    void addBuilding(Building b, boolean walled);
+
+    boolean has(Rooms.Function f);
+
+    int count(Rooms.Function f);
+
+    /** Whether {@code p} is in the settlement: near its heart, or in or beside any of its rooms or digs. */
+    boolean inSettlement(BlockPos p);
+
+    /** The boxes of everything it has dug and is digging. */
+    List<BoundingBox> settlementBoxes();
+
+    /** What part of the settlement {@code p} is in, for the ledger ("the Clan Hoard", "the tunnels"). */
+    String placeOf(BlockPos p);
+
+    /** Whether {@code bed} is in one of its dens (core/work/Den). */
+    boolean inDen(BlockPos bed);
+
+    /** The owner slept in the den: {@code seconds} of the settlement's life at once. */
+    void passNight(ServerLevel level, int seconds, List<Component> report);
+
+    Works works();
+
+    /**
+     * How fast its rooms work, a multiple of their own pace: their crews' swings and chores (SettlerMob#tempo is a race's to
+     * scale), each room's own clock (Works), and a night's work. A race's favoured ground may work faster.
+     */
+    default float workPace() {
+        return 1f;
+    }
+
+    Muster muster();
+
+    Fare fare();
+
+    // ------------------------------------------------------------------ its stores
+
+    /** What its digs turned up, kept at the heart. */
+    List<ItemStack> spoils();
+
+    void addSpoil(ItemStack st);
+
+    /** A haul logged: {@code n} of {@code item} from one place to another (core/ledger/HaulLog). */
+    void log(String from, String to, @Nullable Item item, long n);
+
+    /** The stores the ledger knows of, as block positions. */
+    LongOpenHashSet ledgerStores();
+
+    void setLedgerStores(LongOpenHashSet stores);
+
+    // ------------------------------------------------------------------ food
+
+    /** All the food the settlement has: its ration and what its larder's containers hold (core/food/Larder). */
+    int food();
+
+    /** Food points a thing of this nutrition is worth to the stores. */
+    int foodValue(int nutrition);
+
+    /** Food points straight into the ration (eaten before anything in the containers). */
+    void addFood(int n, int grade, String from);
+
+    /** The larder: real food in real containers (core/food/Larder). */
+    claude.underempire.core.food.Larder larderStores();
+
+    /** Whether every container in this room is the larder (a Skaven Heart Chamber); elsewhere only those named Larder. */
+    default boolean larderRoom(Building b) {
+        return false;
+    }
+
+    /**
+     * Food into the larder's containers. The haul log gets the things on the road to where they went ("Cook-Pits -> Clan
+     * Hoard"), and their worth in food on the road into the larder (its balance). Returns how many of the stack went in;
+     * the stack is left as it was.
+     */
+    default int stockLarder(ServerLevel level, ItemStack s, String from) {
+        int each = foodValue(Fare.nutrition(s));
+        Item item = s.getItem();
+        ItemStack rest = larderStores().put(level, s.copy(), (room, n) -> log(from, room.isEmpty() ? claude.underempire.core.food.Larder.NAME : room, item, n));
+        int in = s.getCount() - rest.getCount();
+        if (in > 0) {
+            log(from, claude.underempire.core.ledger.HaulLog.LARDER, null, (long) in * each);
+        }
+        return in;
+    }
+
+    // ------------------------------------------------------------------ currency
+
+    int currency();
+
+    void addCurrency(int n, String from);
+
+    /** Whether it had {@code n} to spend (on {@code on}, for the ledger). */
+    boolean spendCurrency(int n, String on);
+
+    /** One unit of its currency as an item (a warpstone shard). */
+    Item currencyItem();
+
+    /** Its currency's block, worth nine (a block of warpstone). */
+    Item currencyBlock();
+
+    /** Its currency refined, if it refines it (refined warpstone), or null. */
+    @Nullable
+    Item refinedCurrency();
+
+    // ------------------------------------------------------------------ what its people have done
+
+    /** A deed of the settlement's rooms that its race may keep count of (the Skaven: which Great Clans rise). */
+    enum Deed {
+        /** A block of currency ore pressed at the Forge. */
+        REFINED,
+        /** A beast born in the pens. */
+        BRED
+    }
+
+    /** {@code n} more of a deed; a race that keeps no count ignores it. */
+    default void tally(Deed deed, int n) {
+    }
+
+    // ------------------------------------------------------------------ its people and its reserve
+
+    /** Its settlers up and about, loaded. */
+    List<? extends SettlerMob> loadedPeople();
+
+    boolean hasPerson(UUID id);
+
+    int peopleCount();
+
+    /** How many settlers can be up at once. */
+    int peopleCap();
+
+    /** The reserve, workers and soldiers together. */
+    int reserve();
+
+    int reserveWorkers();
+
+    int reserveSoldiers();
+
+    void addToReserve(int workers, int soldiers);
+
+    /** One out of the reserve (a soldier, or a worker), if there is one. */
+    boolean takeFromReserve(boolean soldier);
+
+    /** One up out of the reserve at {@code at}, as a mob; {@code teem}: one of the teeming, never saved. */
+    @Nullable
+    SettlerMob riseFromReserve(ServerLevel level, BlockPos at, boolean soldier, boolean teem);
+
+    /** What its workers are (slaves). */
+    EntityType<? extends SettlerMob> workerType();
+
+    /** What its soldiers are (clanrats). */
+    EntityType<? extends SettlerMob> soldierType();
+
+    // ------------------------------------------------------------------ helpers
+
+    /** A room's display name by id (the id itself if no race has it). */
+    static String roomName(String room) {
+        Rooms.Room r = Rooms.get(room);
+        return r == null ? room : r.displayName();
+    }
+
+    /**
+     * "the Heart Chamber", but "the Deep Warrens" once: some rooms' names carry their own "the" ("beneath the the Deep
+     * Warrens" was seen live, 2026-09-27).
+     */
+    static String theRoom(String room) {
+        return the(roomName(room));
+    }
+
+    /** "the " before a name, unless it has one. */
+    static String the(String name) {
+        return name.regionMatches(true, 0, "the ", 0, 4) ? name : "the " + name;
+    }
+
+    /** A cell two high with a solid floor near {@code near} (rings out to 4), or the cell above {@code near}. */
+    static BlockPos findStandable(ServerLevel level, BlockPos near) {
+        for (int r = 1; r < 5; r++) {
+            List<BlockPos> ring = new ArrayList<>();
+            for (int dy = -2; dy <= 2; dy++) {
+                for (int dx = -r; dx <= r; dx++) {
+                    for (int dz = -r; dz <= r; dz++) {
+                        BlockPos p = near.offset(dx, dy, dz);
+                        if (level.getBlockState(p).isAir() && level.getBlockState(p.above()).isAir()
+                                && level.getBlockState(p.below()).isSolidRender(level, p.below())) {
+                            ring.add(p);
+                        }
+                    }
+                }
+            }
+            if (!ring.isEmpty()) {
+                return ring.get(level.random.nextInt(ring.size()));
+            }
+        }
+        return near.above();
+    }
+
+    /** Where {@code mob} comes up in room {@code b}, as near its middle as it can: {@link #standIn(ServerLevel, Building, Entity, BlockPos)}. */
+    static BlockPos standIn(ServerLevel level, Building b, Entity mob) {
+        return standIn(level, b, mob, b.box().getCenter());
+    }
+
+    /**
+     * Where {@code mob} comes up in room {@code b}, as near {@code near}'s column as it can (a Rat Ogre climbs out of the
+     * Fleshpits by their vat): on the room's floor ({@link Building#standingY}), where the whole of it fits (a Rat Ogre is
+     * wider and taller than the cell two high {@link #findStandable} asks for) over a floor that holds it; one of the nearest
+     * such cells at random, so those raised there scatter. The floor first: the Breeding Pens' feeding heap stands three high
+     * in their middle, and their litter came up on its shoulders, two over the floor. Only a room with no room anywhere on its
+     * floor sends it to {@link #findStandable} round {@code near}.
+     */
+    static BlockPos standIn(ServerLevel level, Building b, Entity mob, BlockPos near) {
+        BoundingBox box = b.box();
+        BlockPos mid = new BlockPos(near.getX(), b.standingY(), near.getZ());
+        EntityDimensions size = mob.getDimensions(Pose.STANDING);
+        int reach = Math.max(Math.max(mid.getX() - box.minX(), box.maxX() - mid.getX()), Math.max(mid.getZ() - box.minZ(), box.maxZ() - mid.getZ()));
+        for (int r = 1; r <= reach; r++) {
+            List<BlockPos> ring = new ArrayList<>();
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (r > 1 && Math.abs(dx) < r && Math.abs(dz) < r) {
+                        continue;                                // the cells inside were looked at on the rings before
+                    }
+                    BlockPos p = mid.offset(dx, 0, dz);
+                    if (box.isInside(p) && level.getBlockState(p).isAir() && level.getBlockState(p.above()).isAir()
+                            && level.getBlockState(p.below()).isFaceSturdy(level, p.below(), Direction.UP)
+                            && level.noCollision(mob, size.makeBoundingBox(Vec3.atBottomCenterOf(p)))) {
+                        ring.add(p);
+                    }
+                }
+            }
+            if (!ring.isEmpty()) {
+                return ring.get(level.random.nextInt(ring.size()));
+            }
+        }
+        return findStandable(level, mid);
+    }
+}

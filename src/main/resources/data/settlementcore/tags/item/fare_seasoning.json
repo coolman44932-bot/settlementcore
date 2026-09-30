@@ -1,0 +1,24 @@
+{
+  "values": [
+    {
+      "id": "#c:salt",
+      "required": false
+    },
+    {
+      "id": "#c:spices",
+      "required": false
+    },
+    {
+      "id": "#c:condiments",
+      "required": false
+    },
+    {
+      "id": "#c:cookingoil",
+      "required": false
+    },
+    {
+      "id": "#c:vinegar",
+      "required": false
+    }
+  ]
+}

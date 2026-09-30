@@ -1,0 +1,62 @@
+plugins {
+    id 'java'
+    // the version comes from the root project's plugins block (a second one here is an error)
+    id 'net.neoforged.moddev'
+}
+
+// Settlement Core, the settlement engine every race mod builds on (docs/plans/core-step2.md). It has no runs of its own:
+// the root project's runs load it beside the Under-Empire (the root's neoForge { mods { settlementcore } }).
+version = '0.1.0'
+group = 'claude.underempire'
+base { archivesName = 'settlementcore' }
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(21)
+}
+
+repositories {
+    mavenCentral()
+    maven {
+        name = 'GeckoLib'
+        url = 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/'
+        content { includeGroup 'software.bernie.geckolib' }
+    }
+}
+
+dependencies {
+    // GeckoLib: the crowd renderer (core/client) draws every race's units through it
+    implementation "software.bernie.geckolib:geckolib-neoforge-1.21.1:${geckolib_version}"
+}
+
+neoForge {
+    version = '21.1.248'
+    parchment {
+        minecraftVersion = project.parchment_minecraft_version
+        mappingsVersion = project.parchment_mappings_version
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+    options.release = 21
+    options.compilerArgs += ['-Xmaxerrs', '2000']
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    def props = [version: project.version]
+    inputs.properties props
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand props
+    }
+}
+
+jar {
+    manifest {
+        attributes([
+                'Specification-Title'     : 'Settlement Core',
+                'Specification-Version'   : project.version,
+                'Implementation-Title'    : 'Settlement Core',
+                'Implementation-Version'  : project.version
+        ])
+    }
+}

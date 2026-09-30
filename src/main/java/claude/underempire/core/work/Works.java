@@ -1,0 +1,916 @@
+package claude.underempire.core.work;
+
+import claude.underempire.core.unit.SettlerMob;
+import claude.underempire.core.settlement.Settlement;
+import claude.underempire.core.settlement.Building;
+import claude.underempire.core.room.Rooms;
+import claude.underempire.core.CoreConfig;
+import claude.underempire.core.room.PlanPlacement;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.component.DataComponents;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.NbtUtils;
+import net.minecraft.nbt.Tag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.MobSpawnType;
+import net.minecraft.world.food.FoodProperties;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.Items;
+import net.minecraft.world.item.crafting.RecipeType;
+import net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import org.jetbrains.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * The warren at work (user, 2026-09-25: "we need some survival friendly stuff, so furnace chambers, a
+ * mine, and what else?"): every work room the clan has dug (Furnace Chambers, Ore Mine, Clan Hoard,
+ * Slave Fields, Warlock's Workshop, Fungus Grove, Beast Pens) and the crews that run them. The Heart
+ * keeps one of these and ticks it.
+ *
+ * <p><b>Crews.</b> A room's crew are slaves out of the horde (the Workshop's Warlock Engineer is
+ * Skryre's loan), real rats who come up out of the room's floor while the room is loaded and go back
+ * into the tunnels when it is not; like the teeming horde they are never saved, and whatever the Heart
+ * cannot find again is back in the horde. A killed one is gone. With no slaves in the horde a room goes
+ * unworked.
+ *
+ * <p><b>The haul.</b> Every few seconds the horde carries each room's work on through the tunnels
+ * ({@link #haul}): the mine's ore to the Furnace Chambers' Ore Bin (coal to the Fuel Bin), the smelt, the
+ * timber and the stone to the Hoard, the food into the larder's containers (core/food/Larder: the Heart
+ * Chamber's Larder barrels, then the Hoard; the Beast Pens' fodder and the cooks' Pantry topped up first, raw
+ * meat to the smokers while the clan is fed), and the Heart's own spoils to the Hoard. Without a Hoard, everything
+ * but food waits in its room's bins.
+ *
+ * <p><b>The night.</b> A Warlord who sleeps in the Warlord's Den wakes to the night's work done
+ * ({@link #nightsWork}): every room does what its crew would have done in the hours skipped.
+ */
+public final class Works {
+
+    /**
+     * The larder is its barrels now (core/food/Larder, 2026-09-27), and they take all the food they have room for. A clan
+     * with no Larder barrel or Hoard with room (a Heart with no Heart Chamber) has the rooms' food put straight into its
+     * ration as food points, up to this much.
+     */
+    public static final int LARDER_KEEP = 160;
+    /** Fodder the Beast Pens' bin is kept stocked with, of each kind. */
+    static final int FODDER_KEEP = 32;
+    /** Seeds kept back in the Harvest Bin to sow empty plots. */
+    static final int SEED_KEEP = 16;
+    static final int HAUL_EVERY = 5;
+    /** A crew lent from outside the reserve (Under-Empire's Warlock Engineer, its Packmaster): another comes this long after one is killed. */
+    public static final long LOAN_AGAIN = 20 * 60 * 3;
+
+    private final Settlement heart;
+    private final Map<BlockPos, RoomWork> rooms = new LinkedHashMap<>();
+    private final Set<BlockPos> opened = new HashSet<>();
+    private final Map<UUID, BlockPos> crew = new LinkedHashMap<>();
+    private final Map<BlockPos, Integer> here = new HashMap<>();
+    private final Map<BlockPos, Long> lostAt = new HashMap<>();
+    private CompoundTag saved = new CompoundTag();
+    /** The owner's orders to the workshop (and the counts a race keeps with them). */
+    private final WorkOrders orders = new WorkOrders();
+    /** The race's own works beside the engine's (Under-Empire: nest/work/ClanUpkeep). */
+    private final WorksExtension extension;
+
+    public Works(Settlement heart) {
+        this(heart, WorksExtension.NONE);
+    }
+
+    public Works(Settlement heart, WorksExtension extension) {
+        this.heart = heart;
+        this.extension = extension;
+    }
+
+    public WorkOrders orders() {
+        return orders;
+    }
+
+    @Nullable
+    static RoomWork make(Settlement heart, Building b) {
+        Rooms.Room room = Rooms.get(b.room());
+        if (room == null || b.door() == null || b.facing() == null) {
+            return null;
+        }
+        PlanPlacement pl = PlanPlacement.compute(room, b.door(), b.facing());
+        RoomWorks.Factory make = RoomWorks.get(room.function());
+        return make == null ? null : make.make(heart, b, pl);
+    }
+
+    /** Crew out of the reserve's soldiers (a Watch-Post's watch): they go back as soldiers, not workers. */
+    private final Set<UUID> clanratCrew = new HashSet<>();
+
+    /** A crew settler back into the reserve as what it was. */
+    private void refund(UUID id) {
+        boolean clanrat = clanratCrew.remove(id);
+        heart.addToReserve(clanrat ? 0 : 1, clanrat ? 1 : 0);
+    }
+
+    /** A room's crew (a post's watch), up and about. */
+    public List<SettlerMob> crewOf(ServerLevel level, BlockPos room) {
+        List<SettlerMob> out = new ArrayList<>();
+        for (var e : crew.entrySet()) {
+            if (e.getValue().equals(room) && level.getEntity(e.getKey()) instanceof SettlerMob r && r.isAlive()) {
+                out.add(r);
+            }
+        }
+        return out;
+    }
+
+    /** The rooms' works, kept in step with the Heart's buildings (and its Watch-Posts). */
+    void sync(ServerLevel level) {
+        Set<BlockPos> live = new HashSet<>();
+        for (var e : extension.extraRooms(this).entrySet()) {
+            BlockPos key = e.getKey();
+            RoomWork w = rooms.get(key);
+            if (w == null) {
+                w = e.getValue().get();
+                String k = Long.toString(key.asLong());
+                if (saved.contains(k)) {
+                    w.load(saved.getCompound(k));
+                }
+                rooms.put(key, w);
+            }
+            live.add(key);
+        }
+        for (Building b : heart.buildings()) {
+            if (b.door() == null) {
+                continue;
+            }
+            RoomWork w = rooms.get(b.door());
+            if (w == null) {
+                w = make(heart, b);
+                if (w == null) {
+                    continue;
+                }
+                String k = Long.toString(b.door().asLong());
+                if (saved.contains(k)) {
+                    w.load(saved.getCompound(k));
+                }
+                rooms.put(b.door(), w);
+            }
+            live.add(b.door());
+        }
+        for (Iterator<Map.Entry<BlockPos, RoomWork>> it = rooms.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (!live.contains(e.getKey())) {
+                it.remove();                                     // the room is gone (the Heart was carried to a new warren)
+                dismiss(level, e.getKey());
+            }
+        }
+    }
+
+    public List<RoomWork> rooms() {
+        return new ArrayList<>(rooms.values());
+    }
+
+    @Nullable
+    public RoomWork roomOf(SettlerMob rat) {
+        return rat.crewRoom() == null ? null : rooms.get(rat.crewRoom());
+    }
+
+    public boolean has(Class<? extends RoomWork> kind) {
+        return rooms.values().stream().anyMatch(kind::isInstance);
+    }
+
+    @SuppressWarnings("unchecked")
+    public <W extends RoomWork> List<W> all(Class<W> kind) {
+        List<W> out = new ArrayList<>();
+        for (RoomWork w : rooms.values()) {
+            if (kind.isInstance(w)) {
+                out.add((W) w);
+            }
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------ ticking
+
+    /** Every tick (the bellows), and a tick more now and then for a settlement whose rooms work faster (Settlement#workPace). */
+    public void tick(ServerLevel level) {
+        tickDue += heart.workPace() - 1f;
+        int extra = (int) tickDue;
+        tickDue -= extra;
+        for (RoomWork w : rooms.values()) {
+            int n = here.getOrDefault(w.key(), 0);
+            for (int i = 0; n > 0 && i <= extra; i++) {
+                w.tick(level, n);
+            }
+        }
+    }
+
+    /** The part of a tick, and of a second, a faster settlement's rooms are owed (Settlement#workPace). */
+    private float tickDue, secondDue;
+
+    /** Once a second: crews up or down to what each loaded room wants, each room's own work, the haul. */
+    public void second(ServerLevel level, long sec) {
+        secondDue += heart.workPace() - 1f;
+        int extra = (int) secondDue;                             // a faster settlement's rooms: a second more now and then
+        secondDue -= extra;
+        sync(level);
+        // crews the Heart can no longer find are back in the tunnels (never saved: a chunk unloaded, the world closed)
+        Map<BlockPos, List<SettlerMob>> up = new HashMap<>();
+        for (Iterator<Map.Entry<UUID, BlockPos>> it = crew.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            Entity ent = level.getEntity(e.getKey());
+            RoomWork home = rooms.get(e.getValue());
+            boolean strayed = ent != null && home != null && !home.box().inflatedBy(24).isInside(ent.blockPosition())
+                    && !home.reachInside(ent.blockPosition());
+            if (ent instanceof SettlerMob r && r.isAlive() && r.isCrew() && home != null && !strayed) {
+                up.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(r);
+            } else {
+                if (ent instanceof SettlerMob r && r.isAlive()) {
+                    r.discard();
+                }
+                RoomWork w = rooms.get(e.getValue());
+                if (w == null || w.crewFromHorde()) {
+                    refund(e.getKey());
+                }
+                it.remove();
+            }
+        }
+        here.clear();
+        for (RoomWork w : rooms.values()) {
+            BlockPos c = w.box().getCenter();
+            boolean live = level.isLoaded(c) && level.isPositionEntityTicking(c);
+            List<SettlerMob> mine = up.getOrDefault(w.key(), List.of());
+            if (!live) {
+                continue;
+            }
+            if (opened.add(w.key())) {
+                w.opened(level);
+            }
+            int want = w.crewWanted();
+            if (mine.size() < want) {
+                spawnCrew(level, w);
+            } else if (mine.size() > want + 1) {
+                SettlerMob r = mine.get(mine.size() - 1);
+                r.goHome();                                      // no work for it: back down to the horde
+            }
+            here.put(w.key(), mine.size());
+            for (int i = 0; i <= extra; i++) {
+                w.second(level, mine.size());
+            }
+        }
+        if (sec % HAUL_EVERY == 0) {
+            haul(level);
+        }
+        extension.second(this, level);
+    }
+
+    // ------------------------------------------------------------------ gear: the workshop's orders
+
+    /**
+     * What the rooms want made for them in the workshop, over what the owner ordered (RoomWork#gear: the Throne Hall's
+     * halberds), and what the race's own upkeep wants (WorksExtension#gear): of each, the most any asks, and why.
+     */
+    public Map<Crafter.Key, RoomWork.Gear> gear(ServerLevel level) {
+        Map<Crafter.Key, RoomWork.Gear> out = new LinkedHashMap<>();
+        if (!CoreConfig.roomsOrderGear.getAsBoolean()) {
+            return out;
+        }
+        for (RoomWork w : rooms.values()) {
+            for (RoomWork.Gear g : w.gear(level)) {
+                if (g.keep() > 0) {
+                    out.merge(Crafter.Key.of(g.item()), g, (a, b) -> a.keep() >= b.keep() ? a : b);
+                }
+            }
+        }
+        extension.gear(this, level, out);
+        return out;
+    }
+
+    /** The ledger's Orders page: every order and where it stands (as the race shows it, or the engine's plain page). */
+    public WorkOrders.View view(ServerLevel level) {
+        sync(level);
+        WorkOrders.View v = extension.view(this, level);
+        return v != null ? v : new WorkOrders.View(new ArrayList<>(), 0, orders.slingers(), 0, orders.teams(), "", "");
+    }
+
+    /** The race's own works beside the engine's. */
+    public WorksExtension extension() {
+        return extension;
+    }
+
+    /** How many of {@code like} the clan holds: the Clan Hoard, the rooms' named bins (the Armoury...), the Heart's spoils. */
+    public int holds(ServerLevel level, ItemStack like) {
+        java.util.function.Predicate<ItemStack> same = s -> ItemStack.isSameItemSameComponents(s, like);
+        int n = 0;
+        for (HoardWork h : all(HoardWork.class)) {
+            n += Bins.count(level, h.barrels(level), same);
+        }
+        for (RoomWork w : rooms.values()) {
+            if (w instanceof HoardWork) {
+                continue;
+            }
+            List<BlockPos> named = new ArrayList<>();
+            for (BlockPos p : Bins.containers(level, w.box())) {
+                if (!Bins.nameOf(level, p).isEmpty()) {
+                    named.add(p);                                // a room's bin, not a chest of the Warlord's own
+                }
+            }
+            n += Bins.count(level, named, same);
+        }
+        for (ItemStack s : heart.spoils()) {
+            if (same.test(s)) {
+                n += s.getCount();
+            }
+        }
+        return n;
+    }
+
+    private void spawnCrew(ServerLevel level, RoomWork w) {
+        boolean clanrat = w.crewType() == heart.soldierType();
+        if (w.crewFromHorde()) {
+            if ((clanrat ? heart.reserveSoldiers() : heart.reserveWorkers()) <= 0) {
+                return;
+            }
+        } else if (level.getGameTime() < lostAt.getOrDefault(w.key(), Long.MIN_VALUE / 2) + LOAN_AGAIN) {
+            return;
+        }
+        BlockPos at = standable(level, w);
+        if (at == null) {
+            return;
+        }
+        SettlerMob rat = w.crewType().create(level);
+        if (rat == null) {
+            return;
+        }
+        if (w.crewFromHorde() && !heart.takeFromReserve(clanrat)) {
+            return;
+        }
+        rat.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.random.nextFloat() * 360f, 0);
+        rat.bindTo(heart);
+        rat.finalizeSpawn(level, level.getCurrentDifficultyAt(at), MobSpawnType.MOB_SUMMONED, null);
+        rat.makeCrew(w.key());
+        w.crewSpawned(rat);
+        level.addFreshEntity(rat);
+        crew.put(rat.getUUID(), w.key());
+        if (clanrat && w.crewFromHorde()) {
+            clanratCrew.add(rat.getUUID());
+        }
+        rat.emergeAt(at.getX() + 0.5, at.getY(), at.getZ() + 0.5);
+        heart.setChanged();
+    }
+
+    /** A cell a crew rat can come up in, inside the room, near its middle if it can. */
+    @Nullable
+    static BlockPos standable(ServerLevel level, RoomWork w) {
+        BoundingBox b = w.box();
+        BlockPos c = b.getCenter();
+        int floor = w.building.standingY();                      // the doorway's level first: not down a winze or up in a gallery
+        for (int t = 0; t < 40; t++) {
+            int r = 2 + t / 4;
+            int x = c.getX() + level.random.nextInt(2 * r + 1) - r;
+            int z = c.getZ() + level.random.nextInt(2 * r + 1) - r;
+            for (int dy = 0; dy <= 1; dy++) {                      // the doorway's level: never the bottom of a pit it cannot climb out of
+                for (int y : new int[]{floor + dy, floor - dy}) {
+                    BlockPos p = new BlockPos(x, y, z);
+                    if (b.isInside(p) && SettlerMob.standable(level, p)) {
+                        return p;
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    /** One of the crew was killed. */
+    public void crewDied(UUID id, long now) {
+        clanratCrew.remove(id);
+        BlockPos k = crew.remove(id);
+        if (k != null) {
+            RoomWork w = rooms.get(k);
+            if (w != null && !w.crewFromHorde()) {
+                lostAt.put(k, now);
+            }
+            heart.setChanged();
+        }
+    }
+
+    /** One of the crew went back down into the tunnels by itself (goHome): the Heart's absorb() refunds it. */
+    public boolean forget(UUID id) {
+        BlockPos k = crew.remove(id);
+        if (k == null) {
+            return false;
+        }
+        RoomWork w = rooms.get(k);
+        if (w != null && !w.crewFromHorde()) {
+            return true;                                         // the Warlock goes back to Skryre, not into the horde
+        }
+        refund(id);
+        return true;
+    }
+
+    public boolean isCrew(UUID id) {
+        return crew.containsKey(id);
+    }
+
+    public int crewCount() {
+        return crew.size();
+    }
+
+    public List<UUID> crewIds() {
+        return new ArrayList<>(crew.keySet());
+    }
+
+    /** Every crew rat back into the tunnels at once (the Heart is carried off, or a room is gone). */
+    public void recall(ServerLevel level) {
+        for (UUID id : new ArrayList<>(crew.keySet())) {
+            BlockPos k = crew.remove(id);
+            if (level.getEntity(id) instanceof SettlerMob r) {
+                r.discard();
+            }
+            RoomWork w = k == null ? null : rooms.get(k);
+            if (w == null || w.crewFromHorde()) {
+                refund(id);
+            }
+        }
+        here.clear();
+    }
+
+    private void dismiss(ServerLevel level, BlockPos room) {
+        for (Iterator<Map.Entry<UUID, BlockPos>> it = crew.entrySet().iterator(); it.hasNext(); ) {
+            var e = it.next();
+            if (e.getValue().equals(room)) {
+                if (level.getEntity(e.getKey()) instanceof SettlerMob r) {
+                    r.discard();
+                }
+                refund(e.getKey());
+                it.remove();
+            }
+        }
+    }
+
+    /** The ground the rooms' work reaches beyond their walls (the Ore Mine's drifts): part of the warren too. */
+    public List<BoundingBox> reach() {
+        List<BoundingBox> out = new ArrayList<>();
+        for (RoomWork w : rooms.values()) {
+            if (w instanceof MineWork m) {
+                out.addAll(m.reach());
+            }
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------ the haul
+
+    /** Food a thing is worth to the larder: its nutrition (grain counts 2, a cake 14; clan/Fare). */
+    public static int ration(ItemStack s) {
+        return claude.underempire.core.food.Fare.nutrition(s);
+    }
+
+    private static boolean fodder(ItemStack s) {
+        return s.is(Items.WHEAT) || s.is(Items.WHEAT_SEEDS) || s.is(Items.CARROT) || s.is(Items.POTATO) || s.is(Items.BEETROOT)
+                || s.is(Items.BEETROOT_SEEDS);
+    }
+
+    /** Whatever plants a crop: seeds, carrots, potatoes, Pam's HarvestCraft's produce. */
+    private static boolean seed(ItemStack s) {
+        return s.getItem() instanceof net.minecraft.world.item.BlockItem bi && bi.getBlock() instanceof net.minecraft.world.level.block.CropBlock;
+    }
+
+    private static boolean meat(ItemStack s) {
+        return s.is(net.neoforged.neoforge.common.Tags.Items.FOODS_RAW_MEAT) || s.is(net.neoforged.neoforge.common.Tags.Items.FOODS_RAW_FISH);
+    }
+
+    /**
+     * What the cooks want in the Pantry: whatever the kitchen's recipes use (KitchenBook: grain, vegetables,
+     * fruit, meat raw and cooked, eggs, sugar, milk, mushrooms, any mod's; nothing better than cooked fare).
+     */
+    private static boolean pantryFood(ServerLevel level, @org.jetbrains.annotations.Nullable CookWork cook, ItemStack s) {
+        return cook != null && cook.wants(level, s);
+    }
+
+    /** Into the Hoard (any of them); what did not fit is returned. */
+    private ItemStack toHoard(ServerLevel level, ItemStack s) {
+        ItemStack rest = s;
+        for (HoardWork h : all(HoardWork.class)) {
+            if (rest.isEmpty()) {
+                break;
+            }
+            rest = h.put(level, rest);
+        }
+        return rest;
+    }
+
+    /** Move what {@code dest} takes of the live stack {@code s}: the stack shrinks by what went. */
+    private static void move(ItemStack s, java.util.function.Function<ItemStack, ItemStack> dest) {
+        if (s.isEmpty()) {
+            return;
+        }
+        ItemStack rest = dest.apply(s.copy());
+        s.shrink(s.getCount() - rest.getCount());
+    }
+
+    /** The haul log's name for a room's place. */
+    private static String name(@Nullable RoomWork w) {
+        return w == null ? "" : w.room().displayName();          // "" is never logged: a room the warren does not have
+    }
+
+    public static final String HOARD = "Clan Hoard";
+
+    /** {@link #move}, with the road it went along logged (nest/ledger/HaulLog). */
+    private void move(ItemStack s, String from, String to, java.util.function.Function<ItemStack, ItemStack> dest) {
+        if (s.isEmpty()) {
+            return;
+        }
+        net.minecraft.world.item.Item item = s.getItem();
+        int was = s.getCount();
+        move(s, dest);
+        heart.log(from, to, item, was - s.getCount());
+    }
+
+    /** {@link #topUp}, with the road it went along logged. */
+    private void topUp(ServerLevel level, List<BlockPos> into, ItemStack s, int keep, String from, String to) {
+        if (s.isEmpty()) {
+            return;
+        }
+        net.minecraft.world.item.Item item = s.getItem();
+        int was = s.getCount();
+        topUp(level, into, s, keep);
+        heart.log(from, to, item, was - s.getCount());
+    }
+
+    /** Top the containers up to {@code keep} of this kind from the live stack. */
+    private static void topUp(ServerLevel level, List<BlockPos> into, ItemStack s, int keep) {
+        if (s.isEmpty() || into.isEmpty()) {
+            return;
+        }
+        int have = Bins.count(level, into, x -> ItemStack.isSameItemSameComponents(x, s));
+        int give = Math.min(s.getCount(), keep - have);
+        if (give > 0) {
+            ItemStack rest = Bins.insert(level, into, s.copyWithCount(give));
+            s.shrink(give - rest.getCount());
+        }
+    }
+
+    /** Bowls left from stews the larder took, to go back to the cooks. */
+    private int bowls;
+
+    /**
+     * Food from the live stack into the larder's containers as it is (core/food/Larder: the Heart Chamber's barrels, then the
+     * Hoard), where the clan eats it and the Warlord can take it; {@code from}: for the haul log. It used to be turned into
+     * food points up to {@link #LARDER_KEEP}, and what went in was gone for good (the user, 2026-09-27).
+     */
+    private void feed(ServerLevel level, ItemStack s, String from) {
+        int r = ration(s);
+        int grade = claude.underempire.core.food.Fare.grade(s);
+        if (s.isEmpty() || grade < 0 || r <= 0) {
+            return;
+        }
+        s.shrink(heart.stockLarder(level, s, from));
+        // no Larder barrel or Hoard with room (a Heart with no Heart Chamber round it): into the ration as food points, up
+        // to LARDER_KEEP, as before the larder was barrels
+        net.minecraft.world.item.Item item = s.getItem();
+        int was = s.getCount();
+        while (!s.isEmpty() && heart.food() < LARDER_KEEP) {
+            if (claude.underempire.core.food.Fare.leftover(s).is(Items.BOWL)) {
+                bowls++;
+            }
+            heart.addFood(heart.foodValue(r), grade, from);
+            s.shrink(1);
+        }
+        heart.log(from, claude.underempire.core.ledger.HaulLog.LARDER, item, was - s.getCount());
+    }
+
+    /** Below this the larder takes raw food at once, rather than leave it for the cooks. */
+    static final int LARDER_LOW = 40;
+    /** Of each ingredient, what the Cook-Pits' Pantry is kept stocked with. */
+    public static final int PANTRY_KEEP = 32;
+
+    /**
+     * The horde carries each room's work on through the tunnels (see the class notes). The fare decides the
+     * food's road: what the cooks and the smokers made goes to the larder first; raw food goes to the cooks
+     * and the smokers while there are any, and into the larder raw only when it runs low.
+     */
+    public void haul(ServerLevel level) {
+        boolean hoard = has(HoardWork.class);
+        ForgeWork forge = all(ForgeWork.class).stream().findFirst().orElse(null);
+        CookWork cook = all(CookWork.class).stream().findFirst().orElse(null);
+        boolean smokers = forge != null && forge.has(level, RecipeType.SMOKING);
+        boolean rawToLarder = !(smokers || cook != null) || heart.food() < LARDER_LOW;
+        List<BlockPos> pantry = cook == null ? List.of() : cook.pantry(level);
+        List<BlockPos> touched = new ArrayList<>(pantry);
+        bowls = 0;
+        // the Heart's own spoils
+        if (hoard && !heart.spoils().isEmpty()) {
+            for (Iterator<ItemStack> it = heart.spoils().iterator(); it.hasNext(); ) {
+                ItemStack s = it.next();
+                move(s, claude.underempire.core.ledger.HaulLog.SPOILS, HOARD, st -> toHoard(level, st));
+                if (s.isEmpty()) {
+                    it.remove();
+                }
+            }
+            heart.setChanged();
+        }
+        // what the cooks made: the larder first, then the Hoard
+        if (cook != null) {
+            List<BlockPos> made = cook.fareBins(level);
+            touched.addAll(made);
+            for (ItemStack s : Bins.stacks(level, made)) {
+                feed(level, s, name(cook));
+                if (hoard) {
+                    move(s, name(cook), HOARD, st -> toHoard(level, st));
+                }
+            }
+        }
+        // the smelt: the smokers' food to the larder (and cooked meat to the Pantry for stew), the rest to the Hoard
+        for (ForgeWork f : all(ForgeWork.class)) {
+            touched.addAll(f.ingotBins(level));
+            for (ItemStack s : Bins.stacks(level, f.ingotBins(level))) {
+                if (claude.underempire.core.food.Fare.grade(s) >= 0) {
+                    if (pantryFood(level, cook, s)) {
+                        topUp(level, pantry, s, 16, name(f), name(cook));
+                    }
+                    feed(level, s, name(f));
+                }
+                if (hoard) {
+                    move(s, name(f), HOARD, st -> toHoard(level, st));
+                }
+            }
+        }
+        // the mine's ore and stone
+        for (MineWork m : all(MineWork.class)) {
+            List<BlockPos> carts = m.carts(level);
+            touched.addAll(carts);
+            for (ItemStack s : Bins.stacks(level, carts)) {
+                if (forge != null && ForgeWork.cooks(level, RecipeType.SMELTING, s)) {
+                    move(s, name(m), name(forge), st -> Bins.insert(level, forge.oreBins(level), st));
+                } else if (forge != null && AbstractFurnaceBlockEntity.isFuel(s)) {
+                    move(s, name(m), name(forge), st -> Bins.insert(level, forge.fuelBins(level), st));
+                }
+                if (hoard) {
+                    move(s, name(m), HOARD, st -> toHoard(level, st));
+                }
+            }
+            if (hoard) {
+                touched.addAll(m.stoneBins(level));
+                for (ItemStack s : Bins.stacks(level, m.stoneBins(level))) {
+                    move(s, name(m), HOARD, st -> toHoard(level, st));
+                }
+            }
+        }
+        // the harvest: fodder, the Pantry, the smokers, the larder, the Hoard (a few seeds kept back for sowing)
+        List<PensWork> pens = all(PensWork.class);
+        for (FieldsWork f : all(FieldsWork.class)) {
+            List<BlockPos> bins = f.bins(level);
+            touched.addAll(bins);
+            for (ItemStack s : Bins.stacks(level, bins)) {
+                if (fodder(s)) {
+                    for (PensWork p : pens) {
+                        topUp(level, p.fodderBins(level), s, FODDER_KEEP, name(f), name(p));
+                    }
+                }
+                if (pantryFood(level, cook, s)) {
+                    topUp(level, pantry, s, PANTRY_KEEP, name(f), name(cook));
+                }
+                if (smokers && !rawToLarder && ForgeWork.cooks(level, RecipeType.SMOKING, s)) {
+                    move(s, name(f), name(forge), st -> Bins.insert(level, forge.oreBins(level), st));
+                }
+                if (rawToLarder) {
+                    feed(level, s, name(f));
+                }
+            }
+            if (hoard) {
+                for (ItemStack s : Bins.stacks(level, bins)) {
+                    int keep = seed(s) ? Math.max(0, SEED_KEEP - (Bins.count(level, bins, x -> ItemStack.isSameItem(x, s)) - s.getCount())) : 0;
+                    if (s.getCount() > keep) {
+                        ItemStack part = s.copyWithCount(s.getCount() - keep);
+                        ItemStack rest = toHoard(level, part);
+                        s.shrink(part.getCount() - rest.getCount());
+                        heart.log(name(f), HOARD, part.getItem(), part.getCount() - rest.getCount());
+                    }
+                }
+            }
+        }
+        // the butcher's work: meat to the Pantry and the smokers (the larder takes it raw only when short), eggs to
+        // the Pantry for pies, the rest to the Hoard
+        for (PensWork p : pens) {
+            List<BlockPos> bins = p.butcherBins(level);
+            touched.addAll(bins);
+            for (ItemStack s : Bins.stacks(level, bins)) {
+                if (pantryFood(level, cook, s)) {
+                    topUp(level, pantry, s, s.is(Items.EGG) ? 16 : PANTRY_KEEP, name(p), name(cook));
+                }
+                if (smokers && !rawToLarder && meat(s)) {
+                    move(s, name(p), name(forge), st -> Bins.insert(level, forge.oreBins(level), st));
+                }
+                if (rawToLarder) {
+                    feed(level, s, name(p));
+                }
+                if (hoard) {
+                    move(s, name(p), HOARD, st -> toHoard(level, st));
+                }
+            }
+        }
+        // the orchard's fruit and berries: the Pantry, the larder (raw: at once only while it runs low, if there is
+        // cooking), the Hoard; saplings back into the Sapling Crate
+        for (OrchardWork o : all(OrchardWork.class)) {
+            List<BlockPos> bins = o.bins(level);
+            touched.addAll(bins);
+            touched.addAll(o.crates(level));
+            for (ItemStack s : Bins.stacks(level, bins)) {
+                if (OrchardWork.sapling(s)) {
+                    move(s, st -> Bins.insert(level, o.crates(level), st));
+                }
+                if (pantryFood(level, cook, s)) {
+                    topUp(level, pantry, s, PANTRY_KEEP, name(o), name(cook));
+                }
+                if (rawToLarder) {
+                    feed(level, s, name(o));
+                }
+                if (hoard) {
+                    move(s, name(o), HOARD, st -> toHoard(level, st));
+                }
+            }
+        }
+        // timber: a few logs to the Pantry for bowls, the rest to the Hoard
+        for (GroveWork g : all(GroveWork.class)) {
+            touched.addAll(g.bins(level));
+            for (ItemStack s : Bins.stacks(level, g.bins(level))) {
+                if (s.is(net.minecraft.tags.ItemTags.LOGS)) {
+                    topUp(level, pantry, s, 8, name(g), name(cook));
+                }
+                if (hoard) {
+                    move(s, name(g), HOARD, st -> toHoard(level, st));
+                }
+            }
+        }
+        // the buckets the cooks emptied (the milk for a cake), to the Beast Pens to be milked into again
+        if (!pens.isEmpty() && !pantry.isEmpty()) {
+            List<BlockPos> into = pens.get(0).fodderBins(level);
+            int have = Bins.count(level, into, st -> st.is(Items.BUCKET));
+            if (have < 4 && !into.isEmpty()) {
+                ItemStack b = Bins.take(level, pantry, st -> st.is(Items.BUCKET), 4 - have);
+                if (!b.isEmpty()) {
+                    int was = b.getCount();
+                    ItemStack rest = Bins.insert(level, into, b);
+                    heart.log(name(cook), name(pens.get(0)), Items.BUCKET, was - rest.getCount());
+                    if (!rest.isEmpty()) {
+                        Bins.insert(level, pantry, rest);
+                    }
+                    touched.addAll(into);
+                }
+            }
+        }
+        // the bowls the stews came in, back to the cooks
+        if (bowls > 0) {
+            ItemStack b = new ItemStack(Items.BOWL, bowls);
+            ItemStack rest = Bins.insert(level, pantry, b);
+            if (cook != null) {
+                heart.log(claude.underempire.core.ledger.HaulLog.LARDER, name(cook), Items.BOWL, bowls - rest.getCount());
+            }
+            if (hoard && !rest.isEmpty()) {
+                int was = rest.getCount();
+                heart.log(claude.underempire.core.ledger.HaulLog.LARDER, HOARD, Items.BOWL, was - toHoard(level, rest).getCount());
+            }
+            bowls = 0;
+        }
+        if (hoard) {
+            supply(level, touched);
+        }
+        Bins.changed(level, touched);
+        if (forge != null) {
+            Bins.changed(level, forge.oreBins(level));
+            Bins.changed(level, forge.fuelBins(level));
+        }
+    }
+
+    /** The most the horde carries out of the Hoard to the rooms in one haul. */
+    static final int SUPPLY_BUDGET = 512;
+
+    /**
+     * The Hoard's supply (user, 2026-09-26: "they dont grab the materials they need from the hoard"): every room's supply
+     * bins kept stocked out of the Clan Hoard (RoomWork#supplies: the Forge's ore and fuel, the Fields' seed, the cooks'
+     * makings, the Orchard's saplings, the Pens' fodder, the Throne Hall's halberds, the Fleshpits' trough), up to
+     * {@link #SUPPLY_BUDGET} a haul. Only the Hoard's barrels are drawn on: never the Warlord's own chests, never another
+     * room's bins.
+     */
+    private void supply(ServerLevel level, List<BlockPos> touched) {
+        List<HoardWork> hoards = all(HoardWork.class);
+        int budget = SUPPLY_BUDGET;
+        for (RoomWork w : rooms.values()) {
+            if (w instanceof HoardWork || budget <= 0 || !level.isLoaded(w.box().getCenter())) {
+                continue;
+            }
+            for (RoomWork.Supply sp : w.supplies(level)) {
+                if (sp.bins().isEmpty()) {
+                    continue;
+                }
+                boolean full = false;
+                for (HoardWork h : hoards) {
+                    for (BlockPos p : h.barrels(level)) {
+                        net.minecraft.world.Container c = Bins.at(level, p);
+                        for (int i = 0; c != null && i < c.getContainerSize() && budget > 0 && !full; i++) {
+                            final ItemStack st = c.getItem(i);
+                            if (st.isEmpty() || !sp.what().test(st)) {
+                                continue;
+                            }
+                            int have = Bins.count(level, sp.bins(), x -> ItemStack.isSameItemSameComponents(x, st));
+                            int n = Math.min(Math.min(sp.keep() - have, st.getCount()), budget);
+                            if (n <= 0) {
+                                continue;
+                            }
+                            ItemStack rest = Bins.insert(level, sp.bins(), st.copyWithCount(n));
+                            int went = n - rest.getCount();
+                            if (went > 0) {
+                                heart.log(HOARD, name(w), st.getItem(), went);
+                                st.shrink(went);
+                                if (st.isEmpty()) {
+                                    c.setItem(i, ItemStack.EMPTY);
+                                }
+                                c.setChanged();
+                                budget -= went;
+                                touched.add(p);
+                                touched.addAll(sp.bins());
+                            }
+                            full = !rest.isEmpty();                // its bins have no room for more
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ the night
+
+    /** {@code seconds} of every room's work at once (the Warlord slept in the Den); then the haul carries it on. */
+    public void nightsWork(ServerLevel level, int seconds, List<Component> report) {
+        sync(level);
+        for (RoomWork w : rooms.values()) {
+            BlockPos c = w.box().getCenter();
+            if (level.isLoaded(c)) {
+                w.nightsWork(level, seconds, report);
+            }
+        }
+        for (PensWork p : all(PensWork.class)) {
+            p.sweep(level);
+        }
+        for (int i = 0; i < 4; i++) {
+            haul(level);
+        }
+    }
+
+    public void describe(ServerLevel level, List<Component> out) {
+        for (RoomWork w : rooms.values()) {
+            if (level.isLoaded(w.box().getCenter())) {
+                w.describe(level, out);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ save / load
+
+    public CompoundTag save(net.minecraft.core.HolderLookup.Provider registries) {
+        CompoundTag t = new CompoundTag();
+        t.put("orders", orders.save(registries));
+        extension.save(t, registries);
+        CompoundTag st = saved.copy();
+        for (RoomWork w : rooms.values()) {
+            st.put(Long.toString(w.key().asLong()), w.save());
+        }
+        t.put("rooms", st);
+        ListTag cl = new ListTag();
+        for (var e : crew.entrySet()) {
+            CompoundTag c = new CompoundTag();
+            c.putUUID("id", e.getKey());
+            c.put("room", NbtUtils.writeBlockPos(e.getValue()));
+            if (clanratCrew.contains(e.getKey())) {
+                c.putBoolean("clanrat", true);
+            }
+            cl.add(c);
+        }
+        t.put("crew", cl);                                       // the rats are never saved: on load they are back in the tunnels
+        return t;
+    }
+
+    public void load(CompoundTag t, net.minecraft.core.HolderLookup.Provider registries) {
+        orders.load(t.getCompound("orders"), registries);
+        extension.load(t, registries);
+        saved = t.getCompound("rooms");
+        rooms.clear();
+        crew.clear();
+        clanratCrew.clear();
+        for (Tag x : t.getList("crew", Tag.TAG_COMPOUND)) {
+            CompoundTag c = (CompoundTag) x;
+            if (c.hasUUID("id")) {
+                NbtUtils.readBlockPos(c, "room").ifPresent(p -> crew.put(c.getUUID("id"), p));
+                if (c.getBoolean("clanrat")) {
+                    clanratCrew.add(c.getUUID("id"));
+                }
+            }
+        }
+    }
+}

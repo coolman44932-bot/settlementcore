@@ -1,0 +1,57 @@
+{
+  "values": [
+    {
+      "id": "#c:foods/raw_meat",
+      "required": false
+    },
+    {
+      "id": "#c:foods/raw_fish",
+      "required": false
+    },
+    {
+      "id": "#c:foods/vegetable",
+      "required": false
+    },
+    {
+      "id": "#c:foods/fruit",
+      "required": false
+    },
+    {
+      "id": "#c:foods/berry",
+      "required": false
+    },
+    "minecraft:wheat",
+    {
+      "id": "#c:rawmeats",
+      "required": false
+    },
+    {
+      "id": "#c:rawfish",
+      "required": false
+    },
+    {
+      "id": "#c:groundmeats",
+      "required": false
+    },
+    {
+      "id": "#c:fruits",
+      "required": false
+    },
+    {
+      "id": "#c:vegetables",
+      "required": false
+    },
+    {
+      "id": "#c:berries",
+      "required": false
+    },
+    {
+      "id": "#c:citrusfruits",
+      "required": false
+    },
+    {
+      "id": "#c:nuts",
+      "required": false
+    }
+  ]
+}

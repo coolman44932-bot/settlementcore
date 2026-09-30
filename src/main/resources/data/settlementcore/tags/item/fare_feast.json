@@ -1,0 +1,25 @@
+{
+  "values": [
+    {
+      "id": "#c:foods/soup",
+      "required": false
+    },
+    {
+      "id": "#c:foods/pie",
+      "required": false
+    },
+    {
+      "id": "#c:foods/golden",
+      "required": false
+    },
+    {
+      "id": "#c:foods/edible_when_placed",
+      "required": false
+    },
+    {
+      "id": "#c:foods/candy",
+      "required": false
+    },
+    "minecraft:honey_bottle"
+  ]
+}
