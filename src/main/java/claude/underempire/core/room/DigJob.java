@@ -184,7 +184,9 @@ public class DigJob {
                 break;
             }
             BlockState was = level.getBlockState(t.pos());
-            put(level, t);
+            if (!put(level, i, t)) {
+                break;                                           // not yet (a kind of job's own rule): the horde waits there too
+            }
             finished.set(i);
             n++;
             gnawed++;
@@ -218,7 +220,8 @@ public class DigJob {
             taskCells.add(t.pos().asLong());
         }
         // what is open beside the room (a cave, a drop, the sky; water and loose gravel) is walled up as it is dug
-        shoring = RoomShoring.of(level, pl, RoomTemplates.get(level, roomId), keep, warren());
+        // (a job left open, an open-air pit or a raised building, walls nothing up: its shoring is never worked out)
+        shoring = shores ? RoomShoring.of(level, pl, RoomTemplates.get(level, roomId), keep, warren()) : null;
         // the room was changed since this dig began (a new version of the mod: the rooms' warpstone lamps,
         // 2026-09-25): its tasks are not the ones the saved progress counted, so what is done is read off the world
         int print = RoomTemplates.print(level, roomId);
@@ -285,6 +288,57 @@ public class DigJob {
         return 0;
     }
 
+    /**
+     * Where a claim stops looking for tasks (an index past the last it may hand out): the whole list for a dug room; a raised
+     * building's current phase, or its courses in reach, so a claim never walks the rest of a big building's list.
+     */
+    protected int claimEnd() {
+        return tasks.size();
+    }
+
+    /**
+     * Whether a solid cell the task makes another solid block is done for free as the claim passes it (a dug room's walls
+     * refaced as the front goes by: invisible work in the rock). A raised building's are laid by its settlers, in the open.
+     */
+    protected boolean refacesFree() {
+        return true;
+    }
+
+    /**
+     * Whether the claim may go the old way under {@code -Pperfflags=rowclaim} (the A/B loop), which never asks
+     * {@link #claimable} or {@link #anchorBias}: a raised building's claims always go through them.
+     */
+    protected boolean rowClaim() {
+        return PerfFlags.on("rowclaim");
+    }
+
+    /** Task {@code i} done without a block put (a kind of job that leaves a player's block standing, or heaves one in). */
+    protected final void markDone(int i) {
+        finished.set(i);
+    }
+
+    /** The tasks {@code rat}'s batch holds, the one it stands to first; null if it holds none. */
+    @Nullable
+    protected final int[] claimOf(UUID rat) {
+        Claim c = claims.get(rat);
+        return c == null ? null : c.indices().clone();
+    }
+
+    /** How many batches are out. */
+    protected final int claimCount() {
+        return claims.size();
+    }
+
+    /** Whether task {@code i} is in a batch someone holds. */
+    protected final boolean isClaimed(int i) {
+        return claimed.get(i);
+    }
+
+    /** How many tasks are done. */
+    public int finishedCount() {
+        return finished.cardinality();
+    }
+
     public boolean isDone() {
         return tasks != null && finished.cardinality() >= tasks.size();
     }
@@ -316,7 +370,7 @@ public class DigJob {
         while (low < tasks.size() && finished.get(low)) {
             low++;
         }
-        if (!PerfFlags.on("rowclaim")) {
+        if (!rowClaim()) {
             return claimAtFace(level, rat, batch, now, near);   // (-Pperfflags=rowclaim: the old way, for A/B)
         }
         int[] picked = new int[batch];
@@ -344,9 +398,10 @@ public class DigJob {
             // are shaped as the dig front passes. Rats only spend time carving and furnishing.
             if (!cur.isAir() && cur.getFluidState().isEmpty() && !t.state().isAir() && t.nbt() == null
                     && cur.isSolid() && t.state().isSolid()) {
-                put(level, t);
-                finished.set(i);
-                freeApplied++;
+                if (put(level, i, t)) {
+                    finished.set(i);
+                    freeApplied++;
+                }
                 if (++freebies > 512) {
                     break;
                 }
@@ -393,11 +448,16 @@ public class DigJob {
     private BlockPos claimAtFace(ServerLevel level, UUID rat, int batch, long now, BlockPos near) {
         it.unimi.dsi.fastutil.ints.IntArrayList cand = new it.unimi.dsi.fastutil.ints.IntArrayList();
         int freebies = 0;
-        for (int i = low; i < tasks.size() && cand.size() < WINDOW; i++) {
+        int end = Math.min(tasks.size(), claimEnd());
+        boolean reface = refacesFree();
+        for (int i = low; i < end && cand.size() < WINDOW; i++) {
             if (finished.get(i) || claimed.get(i)) {
                 continue;
             }
             Task t = tasks.get(i);
+            if (!level.isLoaded(t.pos())) {
+                continue;                       // never loaded for a look: a wide dig's far side waits for its chunk
+            }
             BlockState cur = level.getBlockState(t.pos());
             if (cur.equals(t.state()) && t.nbt() == null) {
                 finished.set(i);
@@ -409,11 +469,12 @@ public class DigJob {
                 }
                 continue;
             }
-            if (!cur.isAir() && cur.getFluidState().isEmpty() && !t.state().isAir() && t.nbt() == null
+            if (reface && !cur.isAir() && cur.getFluidState().isEmpty() && !t.state().isAir() && t.nbt() == null
                     && cur.isSolid() && t.state().isSolid()) {
-                put(level, t);
-                finished.set(i);
-                freeApplied++;
+                if (put(level, i, t)) {
+                    finished.set(i);
+                    freeApplied++;
+                }
                 if (++freebies > 512) {
                     break;
                 }
@@ -489,7 +550,7 @@ public class DigJob {
         }
         for (net.minecraft.core.Direction d : net.minecraft.core.Direction.values()) {
             BlockPos q = p.relative(d);
-            if (level.getBlockState(q).getCollisionShape(level, q).isEmpty()) {
+            if (level.isLoaded(q) && level.getBlockState(q).getCollisionShape(level, q).isEmpty()) {   // a look never loads a chunk
                 return true;
             }
         }
@@ -522,16 +583,21 @@ public class DigJob {
             int i = c.indices()[k];
             if (!finished.get(i)) {
                 Task t = tasks.get(i);
-                out.add(new Crumb(t.pos(), level.getBlockState(t.pos())));
-                put(level, t);
-                finished.set(i);
-                gnawed++;
+                BlockState was = level.getBlockState(t.pos());
+                if (put(level, i, t)) {
+                    out.add(new Crumb(t.pos(), was));
+                    finished.set(i);
+                    gnawed++;
+                }
             }
         }
         return out;
     }
 
-    /** The rat has gnawed its batch: put each block in place. Returns how many were done. */
+    /**
+     * The rat has gnawed its batch: put each block in place. Returns how many were done. A cell a kind of job won't put yet
+     * ({@link #put}) is left open, and handed out again.
+     */
     public int complete(ServerLevel level, UUID rat) {
         Claim c = claims.remove(rat);
         if (c == null) {
@@ -539,8 +605,7 @@ public class DigJob {
         }
         for (int i : c.indices()) {
             claimed.clear(i);
-            if (!finished.get(i)) {
-                put(level, tasks.get(i));
+            if (!finished.get(i) && put(level, i, tasks.get(i))) {
                 finished.set(i);
                 gnawed++;
             }
@@ -561,8 +626,7 @@ public class DigJob {
     public void finishAll(ServerLevel level) {
         ensureLoaded(level);
         for (int i = 0; i < tasks.size(); i++) {
-            if (!finished.get(i)) {
-                put(level, tasks.get(i));
+            if (!finished.get(i) && put(level, i, tasks.get(i))) {
                 finished.set(i);
             }
         }
@@ -597,15 +661,18 @@ public class DigJob {
      * with an inventory) goes to the Heart as spoils first; bedrock and other unbreakable blocks stay
      * where they are; and a cell carved open next to water, lava or loose gravel/sand outside the room
      * gets that neighbour walled up with the room's lining, so the warren neither floods nor caves in.
+     *
+     * <p>Returns whether task {@code i} is done (a cell left as it is, bedrock or a player's block, is done too); false only
+     * from a kind of job whose cell can't go in yet (a raised building's block with nothing under it), which is left open.
      */
-    private void put(ServerLevel level, Task t) {
+    protected boolean put(ServerLevel level, int i, Task t) {
         BlockState was = level.getBlockState(t.pos());
         if (was.getDestroySpeed(level, t.pos()) < 0) {
-            return;                                              // bedrock, barriers: no rat gnaws those
+            return true;                                         // bedrock, barriers: no rat gnaws those
         }
         boolean ours = warren().shored(t.pos().asLong());
         if (naturalOnly && !natural(was) && !ours && (alsoCut == null || !alsoCut.isInside(t.pos()))) {
-            return;                                              // someone put that there: nobody aimed this dig at it
+            return true;                                         // someone put that there: nobody aimed this dig at it
         }
         if (ours) {
             warren().unshore(t.pos().asLong());                  // the warren's own walling, dug through: this room's now
@@ -622,6 +689,7 @@ public class DigJob {
         if (shores && RoomShoring.open(t.state())) {
             shoring.around(level, t.pos());                      // a cave, a drop, water, loose gravel beside it: walled up
         }
+        return true;
     }
 
     /** Takes what a dig turns up (WarrenHeartBlockEntity#takeSpoils). */

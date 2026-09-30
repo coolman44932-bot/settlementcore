@@ -43,6 +43,16 @@ public record PlanPlacement(Rooms.Room room, Rotation rotation, BlockPos origin,
         return compute(room, aimedGround.above(), extendsToward);
     }
 
+    /** The way the room extends from its door: what {@link #compute} was given ({@link #rotationFor}'s inverse). */
+    public Direction facing() {
+        return switch (rotation) {
+            case CLOCKWISE_90 -> Direction.SOUTH;
+            case CLOCKWISE_180 -> Direction.WEST;
+            case COUNTERCLOCKWISE_90 -> Direction.NORTH;
+            default -> Direction.EAST;
+        };
+    }
+
     /** Template-local position to world position. */
     public BlockPos world(BlockPos local) {
         return origin.offset(local(local, rotation));

@@ -64,6 +64,15 @@ public abstract class RoomWork {
         return false;
     }
 
+    /**
+     * Whether its crew mill about the room when they have nothing to do (CrewGoal.Idle). A building being raised says no: its
+     * box is the building going up, and a builder milling about in it stepped into the one cell of a course still open,
+     * with the course over it laid all round (SiteWork).
+     */
+    public boolean millsAbout() {
+        return true;
+    }
+
     /** How many of its crew it wants at work. */
     public abstract int crewWanted();
 

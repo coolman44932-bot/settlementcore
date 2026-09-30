@@ -315,8 +315,8 @@ public class CrewGoal extends Goal {
             busy = 0;
             wall = null;
             RoomWork w = room();
-            if (w == null) {
-                return;
+            if (w == null || !w.millsAbout()) {
+                return;                                          // (a building's builders wait where they stand: SiteWork)
             }
             BoundingBox b = w.box();
             if (!b.isInside(rat.blockPosition())) {

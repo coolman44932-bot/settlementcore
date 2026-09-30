@@ -70,15 +70,20 @@ import java.util.Set;
 @PrefixGameTestTemplate(false)
 public class SitingGameTests {
 
-    private static final String PLATFORM = "raise_test_platform";
-    private static final int UP = 360;
+    public static final String PLATFORM = "raise_test_platform";
+    /** What the test building costs its settlement (Works#raise: a paid raise spends it, a refused one nothing). */
+    public static final int PLATFORM_COST = 10;
+    static final int UP = 360;
     /** How deep each test's ground goes under the floor. */
-    private static final int DEEP = 16;
+    static final int DEEP = 16;
 
-    /** The test building, registered the first time a test asks (never at start-up: nothing but the tests needs it). */
-    static synchronized Rooms.Room platform() {
+    /**
+     * The test building, registered the first time a test asks (never at start-up: nothing but the tests needs it). The one
+     * registration for every batch that raises it (the root project's RaiseGameTests too), so they all have the same room.
+     */
+    public static synchronized Rooms.Room platform() {
         if (Rooms.get(PLATFORM) == null) {
-            Rooms.Room r = new Rooms.Room(PLATFORM, "Test Platform", 0, Rooms.Function.of("RAISE_TEST"),
+            Rooms.Room r = new Rooms.Room(PLATFORM, "Test Platform", PLATFORM_COST, Rooms.Function.of("RAISE_TEST"),
                     "The engine's stepped test building: a 9x9 apron, 7x7, 5x5 and 3x3 steps and a lantern.", 9, 5, 9, 0, 1, 4,
                     List.of(), List.of(), List.of());
             Rooms.register(Core.NAMESPACE, new Rooms.Catalog(List.of(), List.of(), List.of(), Set.of(), 0, List.of(r)));
@@ -90,33 +95,34 @@ public class SitingGameTests {
 
     /** The grass's height at a column (absolute y). */
     @FunctionalInterface
-    private interface Land {
+    public interface Land {
         int at(int x, int z);
     }
 
     /**
      * A site in its plot: the platform facing east with its box's north-west column at (bx0, bz0), its door on the west face,
-     * its floor (the ground layer) at +360.
+     * its floor (the ground layer) at +360. Public: the crewed tests of the root project (RaiseGameTests) raise the platform on
+     * the same plot, and RaiseJobGameTests lays its ground here too.
      */
-    private static final class Site {
-        final GameTestHelper h;
-        final ServerLevel level;
-        final int px0;
-        final int pz0;
-        final int px1;
-        final int pz1;
-        final int floor;
-        final int bx0;
-        final int bz0;
-        final PlanPlacement pl;
-        final List<RoomTemplates.Entry> template;
+    public static final class Site {
+        public final GameTestHelper h;
+        public final ServerLevel level;
+        public final int px0;
+        public final int pz0;
+        public final int px1;
+        public final int pz1;
+        public final int floor;
+        public final int bx0;
+        public final int bz0;
+        public final PlanPlacement pl;
+        public final List<RoomTemplates.Entry> template;
 
-        Site(GameTestHelper h) {
+        public Site(GameTestHelper h) {
             this(h, UP);
         }
 
         /** A site whose floor is at +{@code up} over the plot (lower than +360 where the land must rise far over it). */
-        Site(GameTestHelper h, int up) {
+        public Site(GameTestHelper h, int up) {
             this.h = h;
             this.level = h.getLevel();
             BlockPos c1 = h.absolutePos(new BlockPos(0, up, 0));
@@ -141,32 +147,32 @@ public class SitingGameTests {
         }
 
         /** The highest cell the checks read: 24 over the floor, or the build limit's last (the floor is 301, the limit 319). */
-        int top() {
+        public int top() {
             return Math.min(floor + 24, level.getMaxBuildHeight() - 1);
         }
 
-        int bx1() {
+        public int bx1() {
             return bx0 + 8;
         }
 
-        int bz1() {
+        public int bz1() {
             return bz0 + 8;
         }
 
-        boolean inBox(int x, int z) {
+        public boolean inBox(int x, int z) {
             return x >= bx0 && x <= bx1() && z >= bz0 && z <= bz1();
         }
 
-        void set(int x, int y, int z, BlockState s) {
+        public void set(int x, int y, int z, BlockState s) {
             level.setBlock(new BlockPos(x, y, z), s, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
         }
 
-        BlockState get(int x, int y, int z) {
+        public BlockState get(int x, int y, int z) {
             return level.getBlockState(new BlockPos(x, y, z));
         }
 
         /** Every column of the plot, from under the ground to the build limit: air. */
-        void clear() {
+        public void clear() {
             BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
             BlockState air = Blocks.AIR.defaultBlockState();
             for (int x = px0; x <= px1; x++) {
@@ -181,7 +187,7 @@ public class SitingGameTests {
         }
 
         /** The plot cleared, then its ground laid: stone from DEEP under the floor, 3 of dirt, grass at the land's height. */
-        void lay(Land land) {
+        public void lay(Land land) {
             clear();
             for (int x = px0; x <= px1; x++) {
                 for (int z = pz0; z <= pz1; z++) {
@@ -194,7 +200,7 @@ public class SitingGameTests {
         }
 
         /** Fails the test after clearing the plot, so nothing is left over the next batches' plots. */
-        void guard(Runnable r) {
+        public void guard(Runnable r) {
             try {
                 r.run();
             } catch (RuntimeException | Error e) {
@@ -203,15 +209,15 @@ public class SitingGameTests {
             }
         }
 
-        Siting.Result plan(boolean reshape) {
+        public Siting.Result plan(boolean reshape) {
             return plan(RoomShoring.Warren.alone(), reshape);
         }
 
-        Siting.Result plan(RoomShoring.Warren warren, boolean reshape) {
+        public Siting.Result plan(RoomShoring.Warren warren, boolean reshape) {
             return Siting.plan(level, pl, warren, reshape);
         }
 
-        Plan expectPlan(Siting.Result r, String scene) {
+        public Plan expectPlan(Siting.Result r, String scene) {
             if (r instanceof Refusal no) {
                 throw new net.minecraft.gametest.framework.GameTestAssertException(scene + " was refused: " + no.why() + " (at " + no.spot() + ")"
                         + dumpLand(this, no.spot()));
@@ -219,7 +225,7 @@ public class SitingGameTests {
             return (Plan) r;
         }
 
-        Refusal expectRefusal(Siting.Result r, String scene) {
+        public Refusal expectRefusal(Siting.Result r, String scene) {
             if (r instanceof Plan p) {
                 throw new net.minecraft.gametest.framework.GameTestAssertException(scene + " was sited, not refused: " + p + dump(this, p, heights(p)));
             }
@@ -235,7 +241,7 @@ public class SitingGameTests {
         }
 
         /** Where a walker's feet go on a column: the top of its highest block with a shape, not a plant or a leaf; water's top. */
-        int surface(int x, int z) {
+        public int surface(int x, int z) {
             BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
             for (int y = top(); y > floor - DEEP - 2; y--) {
                 BlockState s = level.getBlockState(p.set(x, y, z));
@@ -251,7 +257,7 @@ public class SitingGameTests {
         }
 
         /** The world's surface over a plan's area, row by row (z outer), as the plan's arrays are. */
-        int[] heights(Plan p) {
+        public int[] heights(Plan p) {
             int[] a = new int[p.width() * p.depth()];
             for (int i = 0; i < a.length; i++) {
                 a[i] = surface(p.x0() + i % p.width(), p.z0() + i / p.width());
@@ -323,7 +329,7 @@ public class SitingGameTests {
      * Null when no step on the ground walked is over 1: between neighbouring columns of the area, neither in the box, kept or
      * a pond, and not both on the border (that is the land as it was). Else how many, and the first.
      */
-    private static String stepProblem(Site s, Plan p, int[] a) {
+    public static String stepProblem(Site s, Plan p, int[] a) {
         return stepProblem(s, p, a, true);
     }
 
@@ -386,7 +392,7 @@ public class SitingGameTests {
      * Null when a walker on the landing gets to every free column and to the border, stepping at most 1 and never onto a
      * kept column, a pond or the box.
      */
-    private static String walkProblem(Site s, Plan p, int[] a) {
+    public static String walkProblem(Site s, Plan p, int[] a) {
         int w = p.width();
         boolean[] seen = new boolean[a.length];
         ArrayDeque<Integer> q = new ArrayDeque<>();
@@ -422,7 +428,7 @@ public class SitingGameTests {
     }
 
     /** Null when every worked column (the berm, the landing, the ramp) stands at the height the plan gave it. */
-    private static String heightProblem(Site s, Plan p, int[] a) {
+    public static String heightProblem(Site s, Plan p, int[] a) {
         for (int i = 0; i < a.length; i++) {
             Reshape.Kind k = kindAt(p, i);
             if ((k == Reshape.Kind.FREE || k == Reshape.Kind.PAD) && !boxed(s, p, i)) {
@@ -437,7 +443,7 @@ public class SitingGameTests {
     }
 
     /** The area's heights over the floor: # the box, P the pad, b the border, K kept, ~ a pond. */
-    private static String dump(Site s, Plan p, int[] a) {
+    public static String dump(Site s, Plan p, int[] a) {
         StringBuilder sb = new StringBuilder("\n(x " + p.x0() + ", z " + p.z0() + ", over the floor " + p.floor() + "; # box, P pad, b border, K kept, ~ pond; "
                 + p.describe() + ")");
         for (int z = 0; z < p.depth(); z++) {
@@ -471,7 +477,7 @@ public class SitingGameTests {
         return sb.toString();
     }
 
-    private static void expect(GameTestHelper h, Site s, Plan p, int[] a, String problem) {
+    static void expect(GameTestHelper h, Site s, Plan p, int[] a, String problem) {
         h.assertTrue(problem == null, problem == null ? "" : problem + dump(s, p, a));
     }
 
@@ -1163,7 +1169,7 @@ public class SitingGameTests {
         return written(t, false);
     }
 
-    private static CompoundTag roundTrip(CompoundTag t) {
+    public static CompoundTag roundTrip(CompoundTag t) {
         try {
             ByteArrayOutputStream out = new ByteArrayOutputStream();
             NbtIo.writeCompressed(t, out);

@@ -6,6 +6,9 @@ import claude.underempire.core.settlement.Building;
 import claude.underempire.core.room.Rooms;
 import claude.underempire.core.CoreConfig;
 import claude.underempire.core.room.PlanPlacement;
+import claude.underempire.core.room.RaiseJob;
+import claude.underempire.core.room.RoomShoring;
+import claude.underempire.core.room.Siting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.component.DataComponents;
 import net.minecraft.nbt.CompoundTag;
@@ -74,6 +77,8 @@ public final class Works {
 
     private final Settlement heart;
     private final Map<BlockPos, RoomWork> rooms = new LinkedHashMap<>();
+    /** Buildings being raised on the surface, by door (docs/plans/surface-builder.md): kept in {@link #rooms} too, while they stand. */
+    private final Map<BlockPos, SiteWork> sites = new LinkedHashMap<>();
     private final Set<BlockPos> opened = new HashSet<>();
     private final Map<UUID, BlockPos> crew = new LinkedHashMap<>();
     private final Map<BlockPos, Integer> here = new HashMap<>();
@@ -143,6 +148,10 @@ public final class Works {
                 rooms.put(key, w);
             }
             live.add(key);
+        }
+        for (SiteWork s : sites.values()) {                      // a building being raised: its builders' room until it is handed over
+            rooms.putIfAbsent(s.key(), s);
+            live.add(s.key());
         }
         for (Building b : heart.buildings()) {
             if (b.door() == null) {
@@ -229,6 +238,9 @@ public final class Works {
                     && !home.reachInside(ent.blockPosition());
             if (ent instanceof SettlerMob r && r.isAlive() && r.isCrew() && home != null && !strayed) {
                 up.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(r);
+            } else if (home == null && ent instanceof SettlerMob r && r.isAlive() && r.isHomeward()) {
+                // on its way down from a building raised into a room with no work (handOver): the settlement takes it back
+                // into the reserve when it gets there (forget), or here, if it is lost on the way (no entity: the branch below)
             } else {
                 if (ent instanceof SettlerMob r && r.isAlive()) {
                     r.discard();
@@ -263,6 +275,7 @@ public final class Works {
                 w.second(level, mine.size());
             }
         }
+        finishSites(level);
         if (sec % HAUL_EVERY == 0) {
             haul(level);
         }
@@ -391,6 +404,7 @@ public final class Works {
         clanratCrew.remove(id);
         BlockPos k = crew.remove(id);
         if (k != null) {
+            letGo(k, id);
             RoomWork w = rooms.get(k);
             if (w != null && !w.crewFromHorde()) {
                 lostAt.put(k, now);
@@ -405,6 +419,7 @@ public final class Works {
         if (k == null) {
             return false;
         }
+        letGo(k, id);
         RoomWork w = rooms.get(k);
         if (w != null && !w.crewFromHorde()) {
             return true;                                         // the Warlock goes back to Skryre, not into the horde
@@ -429,6 +444,9 @@ public final class Works {
     public void recall(ServerLevel level) {
         for (UUID id : new ArrayList<>(crew.keySet())) {
             BlockPos k = crew.remove(id);
+            if (k != null) {
+                letGo(k, id);
+            }
             if (level.getEntity(id) instanceof SettlerMob r) {
                 r.discard();
             }
@@ -444,6 +462,7 @@ public final class Works {
         for (Iterator<Map.Entry<UUID, BlockPos>> it = crew.entrySet().iterator(); it.hasNext(); ) {
             var e = it.next();
             if (e.getValue().equals(room)) {
+                letGo(room, e.getKey());
                 if (level.getEntity(e.getKey()) instanceof SettlerMob r) {
                     r.discard();
                 }
@@ -451,6 +470,158 @@ public final class Works {
                 it.remove();
             }
         }
+    }
+
+    // ------------------------------------------------------------------ raising buildings (docs/plans/surface-builder.md)
+
+    /** The buildings being raised, in the order they were begun. */
+    public List<SiteWork> sites() {
+        return new ArrayList<>(sites.values());
+    }
+
+    /** A builder of a site is gone: its batch goes back. */
+    private void letGo(BlockPos room, UUID id) {
+        SiteWork s = sites.get(room);
+        if (s != null) {
+            s.let(id);
+        }
+    }
+
+    /** {@link #raise(ServerLevel, PlanPlacement, boolean, boolean)}, the land round it reshaped into ramps. */
+    @Nullable
+    public String raise(ServerLevel level, PlanPlacement pl, boolean free) {
+        return raise(level, pl, free, true);
+    }
+
+    /**
+     * Begins raising the building at {@code pl} ({@code PlanPlacement.onGround}): the land is sited ({@link Siting#plan}, the
+     * other sites kept out of it as the settlement's rooms are), then its price is paid, then its builders come up. Returns
+     * why it can't be, in words for the player, or null when it is begun. Every refusal comes before anything is spent.
+     *
+     * @param free    paid for by no one: a creative raise, and the tests. Otherwise the room's cost, in the settlement's currency
+     * @param reshape false for the plinth, berm and landing only (the land round them is left as it is)
+     */
+    @Nullable
+    public String raise(ServerLevel level, PlanPlacement pl, boolean free, boolean reshape) {
+        Rooms.Room room = pl.room();
+        String the = Settlement.the(room.displayName());
+        if (!Rooms.isRaised(room.id())) {
+            return cap(the) + " is dug, not raised";
+        }
+        BlockPos door = pl.door();
+        String at = door.getX() + " " + door.getY() + " " + door.getZ();
+        if (sites.containsKey(door)) {
+            return "Something is being raised at " + at + " already";
+        }
+        if (!heart.inSettlement(door) && !besideSite(door)) {
+            return cap(the) + "'s door at " + at + " is outside the settlement: raise it near its heart, or beside what it has built";
+        }
+        Siting.Result sited = Siting.plan(level, pl, withSites(), reshape);
+        if (sited instanceof Siting.Refusal no) {
+            return no.why();
+        }
+        Siting.Plan plan = (Siting.Plan) sited;
+        int cost = free ? 0 : room.cost();
+        if (cost > 0 && !heart.spendCurrency(cost, "Raising " + the)) {
+            return cap(the) + " costs " + cost + " of the settlement's currency, and it has " + heart.currency();
+        }
+        RaiseJob job = new RaiseJob(room.id(), door, pl.facing(), plan, cost);
+        job.ensureLoaded(level);
+        SiteWork site = new SiteWork(heart, job);
+        sites.put(door, site);
+        rooms.put(door, site);
+        heart.setChanged();
+        return null;
+    }
+
+    private static String cap(String s) {
+        return s.isEmpty() ? s : Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    /** Within 2 of a building being raised: a site may be begun there too (a temple's courts beside it). */
+    private boolean besideSite(BlockPos p) {
+        for (SiteWork s : sites.values()) {
+            if (s.box().inflatedBy(2).isInside(p)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** The settlement for siting a new building: its own rooms and heart, and every cell the sites being raised work. */
+    private RoomShoring.Warren withSites() {
+        return new RoomShoring.Warren() {
+            @Override
+            public it.unimi.dsi.fastutil.longs.LongSet roomCells(ServerLevel level, BoundingBox area, BoundingBox except) {
+                it.unimi.dsi.fastutil.longs.LongOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(heart.roomCells(level, area, except));
+                for (SiteWork s : sites.values()) {
+                    RaiseJob job = s.job();
+                    job.ensureLoaded(level);
+                    BoundingBox f = job.footprint();
+                    if (s.box().equals(except) || f == null || !f.intersects(area)) {
+                        continue;
+                    }
+                    for (long c : job.cells()) {
+                        if (area.isInside(BlockPos.getX(c), BlockPos.getY(c), BlockPos.getZ(c))) {
+                            out.add(c);
+                        }
+                    }
+                }
+                return out;
+            }
+
+            @Override
+            public boolean shored(long pos) {
+                return heart.shored(pos);
+            }
+
+            @Override
+            public void shore(long pos) {
+                heart.shore(pos);
+            }
+
+            @Override
+            public void unshore(long pos) {
+                heart.unshore(pos);
+            }
+        };
+    }
+
+    /** Sites whose every cell is done, handed over: see {@link #handOver}. */
+    private void finishSites(ServerLevel level) {
+        if (sites.isEmpty()) {
+            return;
+        }
+        for (Iterator<SiteWork> it = sites.values().iterator(); it.hasNext(); ) {
+            SiteWork s = it.next();
+            if (s.raised() && level.isLoaded(s.box().getCenter())) {
+                it.remove();
+                handOver(level, s);
+            }
+        }
+    }
+
+    /**
+     * A raised building becomes one of the settlement's (surface-builder.md, section 2): its fences and stairs joined up, then
+     * added walled (never walled up against the sky: the Heart's wallUpRooms walls any building added unwalled). The site is
+     * dropped and its key cleared from {@link #opened} and {@link #saved}, so the next {@link #sync} makes the room's own work
+     * at the same door and opens it (its {@code opened()} runs once, as any room's). The builders are keyed to that door, so
+     * they are the room's crew now; a room with no work sends them home.
+     */
+    private void handOver(ServerLevel level, SiteWork s) {
+        BlockPos key = s.key();
+        s.job().finishAll(level);                                // nothing left to put in; and its joinUp
+        heart.addBuilding(s.building, true);
+        rooms.remove(key);
+        opened.remove(key);
+        saved.remove(Long.toString(key.asLong()));
+        if (RoomWorks.get(s.room().function()) == null) {
+            for (SettlerMob r : crewOf(level, key)) {
+                r.goHome();
+            }
+        }
+        heart.tellOwner(cap(Settlement.the(s.room().displayName())) + " is raised.", net.minecraft.ChatFormatting.GREEN);
+        heart.setChanged();
     }
 
     /** The ground the rooms' work reaches beyond their walls (the Ore Mine's drifts): part of the warren too. */
@@ -879,9 +1050,19 @@ public final class Works {
         extension.save(t, registries);
         CompoundTag st = saved.copy();
         for (RoomWork w : rooms.values()) {
+            if (w instanceof SiteWork) {
+                continue;                                        // saved as its job, under "sites"
+            }
             st.put(Long.toString(w.key().asLong()), w.save());
         }
         t.put("rooms", st);
+        if (!sites.isEmpty()) {                                  // only then: a settlement with none saves as it did
+            ListTag sl = new ListTag();
+            for (SiteWork s : sites.values()) {
+                sl.add(s.job().save());
+            }
+            t.put("sites", sl);
+        }
         ListTag cl = new ListTag();
         for (var e : crew.entrySet()) {
             CompoundTag c = new CompoundTag();
@@ -901,6 +1082,13 @@ public final class Works {
         extension.load(t, registries);
         saved = t.getCompound("rooms");
         rooms.clear();
+        sites.clear();
+        for (Tag x : t.getList("sites", Tag.TAG_COMPOUND)) {
+            RaiseJob job = RaiseJob.load((CompoundTag) x);
+            if (job != null && !sites.containsKey(job.door)) {
+                sites.put(job.door, new SiteWork(heart, job));  // its builders come up again once it is loaded (sync)
+            }
+        }
         crew.clear();
         clanratCrew.clear();
         for (Tag x : t.getList("crew", Tag.TAG_COMPOUND)) {
