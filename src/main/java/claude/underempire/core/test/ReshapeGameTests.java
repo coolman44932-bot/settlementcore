@@ -112,6 +112,31 @@ public class ReshapeGameTests {
     }
 
     /**
+     * Null when every pair on the ground walked is within 1: a free column and a free, pad or border neighbour. A kept
+     * column or a pond is walked round, so its own steps don't count here (the result's heldSteepest has them).
+     */
+    private static String walkedStepProblem(Scene s, int[] a) {
+        for (int z = 0; z < s.h(); z++) {
+            for (int x = 0; x < s.w(); x++) {
+                int i = s.at(x, z);
+                for (int j : new int[]{x < s.w() - 1 ? i + 1 : -1, z < s.h() - 1 ? i + s.w() : -1}) {
+                    if (j < 0 || (s.kinds()[i].held() && s.kinds()[j].held()) || round(s.kinds()[i]) || round(s.kinds()[j])) {
+                        continue;
+                    }
+                    if (Math.abs(a[i] - a[j]) > 1) {
+                        return "a step of " + a[i] + " to " + a[j] + " on the ground walked, between " + s.where(i) + " and " + s.where(j);
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static boolean round(Kind k) {
+        return k == Kind.KEPT || k == Kind.FLUID;
+    }
+
+    /**
      * Null when no free column is strictly under, or over, all four of its neighbours. A column held up by its own floor
      * (floors, if given) is the floor's doing and is let off.
      */
@@ -435,7 +460,97 @@ public class ReshapeGameTests {
             cut |= loose[s.at(3, gz)] < 2;
         }
         h.assertTrue(cut, "with no floors the line was not cut either: the check can't fail" + dump(s, loose));
+        // a lone column floored at 3 in land of 2: the clamp brings its neighbours up to 2, and it stands 1 over all four,
+        // a bump the speck pass would level to 2 but for its floor
+        Scene lone = flat(Reshape.frame(new Rect(-40, -40, -32, -32), 6), 2);
+        int[] one = new int[lone.ground().length];
+        Arrays.fill(one, Reshape.NO_FLOOR);
+        one[lone.at(2, 2)] = 3;
+        int[] b = lone.plan(one, 6).height();
+        h.assertTrue(b[lone.at(2, 2)] >= 3, "a lone column floored at 3 came out " + b[lone.at(2, 2)] + dump(lone, b));
+        expect(h, lone, b, stepProblem(lone, b));
+        expect(h, lone, b, speckProblem(lone, b, one));
         h.succeed();
+    }
+
+    /**
+     * A player's post, as high as the land (6), 2 columns from a pad cut down to 0: the ramp can't come within 1 of it, and
+     * no margin changes that (the post is where it is). The ramp goes round it and the post stands on its own column: not
+     * too steep, walkable on the ground walked, the post unchanged, and how far it stands over the ramp reported. (Before
+     * the second pass this was reported too steep at every margin: the review of f1a38a0.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aPostByADeepCutStandsOnItsOwnColumn(GameTestHelper h) {
+        Scene s = flat(Reshape.frame(new Rect(200, 200, 208, 208), 10), 6);
+        int post = s.at(20, 14);                                 // the pad is grid 10..18: 2 columns east of its edge
+        s.kinds()[post] = Kind.KEPT;
+        Result r = s.plan(null, 10);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep() && r.steepest() <= 1, "a post by the cut made the ramp too steep (" + r.steepest() + " at "
+                + r.spotX() + "," + r.spotZ() + "): a kept column is never a refusal" + dump(s, a));
+        expect(h, s, a, walkedStepProblem(s, a));
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, walkProblem(s, a, s.at(14, 14), true));
+        h.assertTrue(a[post] == 6 && r.heldSteepest() >= 2, "the post is " + a[post] + " and stands " + r.heldSteepest()
+                + " over the ramp: the scene should leave it standing well over it" + dump(s, a));
+        h.succeed();
+    }
+
+    /**
+     * A pond on a rise (surface 3, the rise 7x7 at 3) in land of 0 round a pad at 0: the ramp falls away from it on every
+     * side, so each of its four banks would be cut under the water but for their floors. Checked side by side; the same
+     * pond as kept columns is cut on every side (the control).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aPondOnARiseKeepsAllFourBanks(GameTestHelper h) {
+        Scene s = rise(Kind.FLUID);
+        Result r = s.plan(null, 10);
+        int[] a = r.height();
+        h.assertTrue(!r.tooSteep(), "the ramp round the pond is reported too steep (" + r.steepest() + ")" + dump(s, a));
+        String[] sides = {"west", "east", "north", "south"};
+        int[] under = banksUnderBySide(s, a);
+        for (int k = 0; k < 4; k++) {
+            h.assertTrue(under[k] == 0, "the pond's " + sides[k] + " bank is cut under its surface in " + under[k] + " columns" + dump(s, a));
+        }
+        expect(h, s, a, heldProblem(s, a));
+        expect(h, s, a, walkedStepProblem(s, a));
+        Scene plain = rise(Kind.KEPT);
+        int[] b = plain.plan(null, 10).height();
+        int[] cut = banksUnderBySide(plain, b);
+        for (int k = 0; k < 4; k++) {
+            h.assertTrue(cut[k] > 0, "as kept columns the pond's " + sides[k] + " bank wasn't cut: that side proves nothing" + dump(plain, b));
+        }
+        h.succeed();
+    }
+
+    /** A 5x5 pad at 0 with a margin of 10, land of 0, and a 7x7 rise of 3 at grid (2..8, 8..14) round a 3x3 pond (4..6, 10..12). */
+    private static Scene rise(Kind kind) {
+        Scene s = flat(Reshape.frame(new Rect(300, 300, 304, 304), 10), 0);
+        for (int gz = 8; gz <= 14; gz++) {
+            for (int gx = 2; gx <= 8; gx++) {
+                s.ground()[s.at(gx, gz)] = 3;
+            }
+        }
+        for (int gz = 10; gz <= 12; gz++) {
+            for (int gx = 4; gx <= 6; gx++) {
+                s.kinds()[s.at(gx, gz)] = kind;
+            }
+        }
+        return s;
+    }
+
+    /** The rise's pond banks lower than its surface (3), counted per side: west, east, north, south. */
+    private static int[] banksUnderBySide(Scene s, int[] a) {
+        int[] n = new int[4];
+        for (int d = 10; d <= 12; d++) {
+            n[0] += a[s.at(3, d)] < 3 ? 1 : 0;
+            n[1] += a[s.at(7, d)] < 3 ? 1 : 0;
+        }
+        for (int d = 4; d <= 6; d++) {
+            n[2] += a[s.at(d, 9)] < 3 ? 1 : 0;
+            n[3] += a[s.at(d, 13)] < 3 ? 1 : 0;
+        }
+        return n;
     }
 
     /**
@@ -472,7 +587,7 @@ public class ReshapeGameTests {
                         && f.index(5, 38) == -1 && f.index(10, 20) == 5 * 19 + 5,
                 "index maps the world's columns to the wrong cells");
         h.assertTrue(Reshape.frame(pad, 5).h() == 19 && Reshape.frame(pad, 5).w() == 19, "with no landing the frame is not 19x19");
-        // the land falls away 2 along the door's side, and the pad is held level with the landing
+        // the land rises 2 along the door's side, and the pad is held level with the landing
         Scene s = new Scene(f, new int[f.w() * f.h()], 0);
         for (int gz = 0; gz < f.h(); gz++) {
             Arrays.fill(s.ground(), gz * f.w(), (gz + 1) * f.w(), gz > 17 ? 2 : 0);

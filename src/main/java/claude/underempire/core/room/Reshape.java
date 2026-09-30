@@ -108,8 +108,9 @@ public final class Reshape {
      * @param height     the new height of every column: whole blocks; the held columns exactly as they were held (PAD at the
      *                   floor, the rest at their own)
      * @param margin     the margin the frame was built with (as passed to {@link #plan}), so the caller knows which pass this is
-     * @param steepest   the steepest step left between 4-neighbours, over every pair with a FREE column in it (two held
-     *                   columns are the land as it is, and not ours to shape)
+     * @param steepest   the steepest step left on the ground walked: between a FREE column and a FREE, PAD or BORDER
+     *                   4-neighbour (two held columns are the land as it is, and not ours to shape; a KEPT or FLUID column
+     *                   is walked round, not over)
      * @param spotX      where the steepest step is, when it is too steep: the FREE column of the pair, as a grid column (add
      *                   the frame's origin for the world's); -1 when it isn't too steep
      * @param spotZ      as spotX
@@ -117,9 +118,11 @@ public final class Reshape {
      * @param fillColumns columns higher than they were
      * @param cutBlocks  blocks taken off the tops of those columns, all together
      * @param fillBlocks blocks laid on the tops of the filled ones
+     * @param heldSteepest the steepest step between a FREE column and a KEPT or FLUID neighbour: how far a kept thing now
+     *                   stands over (or under) the ramp beside it. Never a refusal: the ramp goes round it.
      */
     public record Result(int[] height, int margin, int steepest, int spotX, int spotZ,
-                         int cutColumns, int fillColumns, int cutBlocks, int fillBlocks) {
+                         int cutColumns, int fillColumns, int cutBlocks, int fillBlocks, int heldSteepest) {
         /** A step over {@link #MAX_STEP} is left between a FREE column and its neighbour: widen the margin. */
         public boolean tooSteep() {
             return steepest > MAX_STEP;
@@ -149,8 +152,8 @@ public final class Reshape {
      * @param door    the side of the pad the landing is on; null for none
      */
     public static Frame frame(Rect pad, Rect landing, Side door, int margin) {
-        if (margin < 1) {
-            throw new IllegalArgumentException("a margin of " + margin + ": the ring needs one");
+        if (margin < 2) {
+            throw new IllegalArgumentException("a margin of " + margin + ": the ring needs one, and the ramp one more");
         }
         Rect all = landing == null ? pad : pad.union(landing);
         int north = margin;
@@ -209,20 +212,44 @@ public final class Reshape {
     public static Result plan(int w, int h, int[] ground, Kind[] kinds, int[] floors, int floorY, int margin) {
         int[] lows = lows(w, h, ground, kinds, floors);
         double[] field = solved(w, h, ground, kinds, floorY);
-        int n = w * h;
         boolean[] held = held(kinds);
+        Result first = settle(w, h, ground, kinds, floorY, margin, lows, field, held, null);
+        if (!first.tooSteep()) {
+            return first;
+        }
+        // A kept column (or a pond) the ramp can't come within 1 of: the clamp's pull toward it left a step on the ground
+        // walked, and no margin fixes that (the post is where it is). Clamp again without them: the ramp goes round, and
+        // the kept thing stands on its own column, over or under it. Only a margin too narrow for the pad and the land
+        // is left too steep.
+        boolean[] aside = new boolean[kinds.length];
+        boolean any = false;
+        for (int i = 0; i < kinds.length; i++) {
+            aside[i] = walkedRound(kinds[i]);
+            any |= aside[i];
+        }
+        if (!any) {
+            return first;
+        }
+        Result second = settle(w, h, ground, kinds, floorY, margin, lows, field, held, aside);
+        return second.steepest() < first.steepest() ? second : first;
+    }
+
+    /** Rounds, clamps and levels the solved field; {@code aside} (null for none) are held columns the steps ignore. */
+    private static Result settle(int w, int h, int[] ground, Kind[] kinds, int floorY, int margin, int[] lows,
+                                 double[] field, boolean[] held, boolean[] aside) {
+        int n = w * h;
         // round before clamping: the limit is a whole-block promise about blocks that get placed, and a clamped continuous
         // field can still round into a 2-block stair
         double[] rounded = new double[n];
         for (int i = 0; i < n; i++) {
             rounded[i] = held[i] ? heldAt(kinds[i], ground[i], floorY) : Math.max(lows[i], Math.round(field[i]));
         }
-        clampSteps(rounded, held, lows, w, h);
+        clampSteps(rounded, held, lows, w, h, aside);
         int[] out = new int[n];
         for (int i = 0; i < n; i++) {
             out[i] = held[i] ? heldAt(kinds[i], ground[i], floorY) : (int) Math.max(lows[i], Math.round(rounded[i]));
         }
-        levelSpecks(out, held, lows, w, h);
+        levelSpecks(out, held, lows, w, h, aside);
         return result(w, h, ground, kinds, out, margin);
     }
 
@@ -468,7 +495,7 @@ public final class Reshape {
      * they don't (a pad 20 above land 8 columns off) the field is handed back as it settled, and the caller is told what
      * the steepest step came to (a cliff forced at the border would hide it).
      */
-    private static void clampSteps(double[] data, boolean[] frozen, int[] lows, int w, int h) {
+    private static void clampSteps(double[] data, boolean[] frozen, int[] lows, int w, int h, boolean[] aside) {
         int cap = Math.max(64, Math.min(4096, CLAMP_BUDGET / Math.max(1, w * h)));
         boolean moved = true;
         for (int it = 0; moved && it < cap; it++) {
@@ -488,24 +515,16 @@ public final class Reshape {
                     }
                     double lo = Double.NEGATIVE_INFINITY;
                     double hi = Double.POSITIVE_INFINITY;
-                    if (x > 0) {
-                        lo = Math.max(lo, data[i - 1] - MAX_STEP);
-                        hi = Math.min(hi, data[i - 1] + MAX_STEP);
-                    }
-                    if (x < w - 1) {
-                        lo = Math.max(lo, data[i + 1] - MAX_STEP);
-                        hi = Math.min(hi, data[i + 1] + MAX_STEP);
-                    }
-                    if (z > 0) {
-                        lo = Math.max(lo, data[i - w] - MAX_STEP);
-                        hi = Math.min(hi, data[i - w] + MAX_STEP);
-                    }
-                    if (z < h - 1) {
-                        lo = Math.max(lo, data[i + w] - MAX_STEP);
-                        hi = Math.min(hi, data[i + w] + MAX_STEP);
+                    for (int k = 0; k < 4; k++) {
+                        int j = neighbour(i, x, z, w, h, k);
+                        if (j < 0 || (aside != null && aside[j])) {
+                            continue;
+                        }
+                        lo = Math.max(lo, data[j] - MAX_STEP);
+                        hi = Math.min(hi, data[j] + MAX_STEP);
                     }
                     if (lo == Double.NEGATIVE_INFINITY) {
-                        continue;                            // a 1x1 grid has no neighbour
+                        continue;                            // no neighbour it is held to (a 1x1 grid; one ringed by kept columns)
                     }
                     double current = data[i];
                     double next = current;
@@ -538,7 +557,7 @@ public final class Reshape {
      * changes, and no neighbour turns into a speck (each now has an equal neighbour), so the passes end. A bump is never
      * cut under its floor: that one is the floor's, not the ground's.
      */
-    private static void levelSpecks(int[] a, boolean[] held, int[] lows, int w, int h) {
+    private static void levelSpecks(int[] a, boolean[] held, int[] lows, int w, int h, boolean[] aside) {
         boolean changed = true;
         for (int pass = 0; changed && pass < w * h; pass++) {
             changed = false;
@@ -551,13 +570,8 @@ public final class Reshape {
                     int lo = Integer.MAX_VALUE;
                     int hi = Integer.MIN_VALUE;
                     for (int k = 0; k < 4; k++) {
-                        int j = switch (k) {
-                            case 0 -> x > 0 ? i - 1 : -1;
-                            case 1 -> x < w - 1 ? i + 1 : -1;
-                            case 2 -> z > 0 ? i - w : -1;
-                            default -> z < h - 1 ? i + w : -1;
-                        };
-                        if (j >= 0) {
+                        int j = neighbour(i, x, z, w, h, k);
+                        if (j >= 0 && (aside == null || !aside[j])) {
                             lo = Math.min(lo, a[j]);
                             hi = Math.max(hi, a[j]);
                         }
@@ -577,10 +591,21 @@ public final class Reshape {
         }
     }
 
+    /** The cell of the k-th 4-neighbour of cell i at (x, z) (west, east, north, south), or -1 off the grid. */
+    private static int neighbour(int i, int x, int z, int w, int h, int k) {
+        return switch (k) {
+            case 0 -> x > 0 ? i - 1 : -1;
+            case 1 -> x < w - 1 ? i + 1 : -1;
+            case 2 -> z > 0 ? i - w : -1;
+            default -> z < h - 1 ? i + w : -1;
+        };
+    }
+
     // --- the answer --------------------------------------------------------------------------------------------------
 
     private static Result result(int w, int h, int[] ground, Kind[] kinds, int[] out, int margin) {
         int steepest = 0;
+        int heldSteepest = 0;
         int spotX = -1;
         int spotZ = -1;
         for (int z = 0; z < h; z++) {
@@ -592,6 +617,10 @@ public final class Reshape {
                         continue;
                     }
                     int d = Math.abs(out[i] - out[j]);
+                    if (walkedRound(kinds[i]) || walkedRound(kinds[j])) {
+                        heldSteepest = Math.max(heldSteepest, d);
+                        continue;
+                    }
                     if (d > steepest) {
                         steepest = d;
                         int free = kinds[i].held() ? j : i;
@@ -618,6 +647,11 @@ public final class Reshape {
                 fillBlocks += out[i] - ground[i];
             }
         }
-        return new Result(out, margin, steepest, spotX, spotZ, cutColumns, fillColumns, cutBlocks, fillBlocks);
+        return new Result(out, margin, steepest, spotX, spotZ, cutColumns, fillColumns, cutBlocks, fillBlocks, heldSteepest);
+    }
+
+    /** A column the ramp goes round, not over: a player's thing, another building, a pond. */
+    private static boolean walkedRound(Kind k) {
+        return k == Kind.KEPT || k == Kind.FLUID;
     }
 }
