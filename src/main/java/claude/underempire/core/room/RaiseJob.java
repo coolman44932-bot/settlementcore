@@ -56,8 +56,11 @@ import java.util.UUID;
  * <p>No stalls: a cell shelved {@value #HEAVE_AFTER} times (no builder could get to it) is heaved into place, and counted; and so
  * is the lowest open cell when builders are up with nothing to hand them and none at work (SiteWork#second).
  *
- * <p>Hanging things in a course (a hanging lantern, a chain, vines: {@link #hangs}) are held by what is over them. A cell over the
- * build height, or under the world, is done with nothing put (as a dig's is), and nothing ever loads a chunk to lay a cell.
+ * <p>Hanging things in a course (a hanging lantern, a hanging chain, vines by their top face: {@link #hangs}) are held by what is
+ * over them, or by their own column laid over them, else as any block is, by eaves ({@link #held}). They wait on the courses over
+ * them, so they never hold the course window down ({@link #windowCourse}), and what they hang from never waits for them
+ * ({@link #underToCome}). A cell over the build height, or under the world, is done with nothing put (as a dig's is), and
+ * nothing ever loads a chunk to lay a cell.
  */
 public class RaiseJob extends DigJob {
 
@@ -95,6 +98,8 @@ public class RaiseJob extends DigJob {
     private int[] courseEnd = new int[0];
     /** Cells a task fills (a block, not air), and the last task that does. */
     private final Long2IntOpenHashMap fills = new Long2IntOpenHashMap();
+    /** The course's cells that hang from what is over them ({@link #hangs}): a lantern under its ceiling, a chain, a hanging vine. */
+    private final BitSet hanging = new BitSet();
     /** Cells a settler's task empties (a cut), and the task. */
     private final Long2IntOpenHashMap cuts = new Long2IntOpenHashMap();
     /** The cuts and fills of the berm, landing and ramp, by column. */
@@ -103,6 +108,8 @@ public class RaiseJob extends DigJob {
     @Nullable private BoundingBox footprint;
     /** The first task not done (monotone: a task once done stays done). */
     private int front;
+    /** The first task not done that is not one of the {@link #hanging} (monotone as well): where the course window stands. */
+    private int lead;
 
     // --- builders who could not get to their cells -------------------------------------------------------------------
     private final Int2IntOpenHashMap shelves = new Int2IntOpenHashMap();
@@ -210,8 +217,10 @@ public class RaiseJob extends DigJob {
         phase = ph;
         lift = lf;
         front = 0;
+        lead = 0;
         clearEnd = 0;
         fills.clear();
+        hanging.clear();
         cuts.clear();
         columns.clear();
         cells.clear();
@@ -247,6 +256,9 @@ public class RaiseJob extends DigJob {
                 cuts.put(k, i);
             } else {
                 fills.put(k, i);
+                if (ph[i] == COURSE && hangs(tasks.get(i).state())) {
+                    hanging.set(i);
+                }
             }
             boolean inBox = box.isInside(p.getX(), box.minY(), p.getZ());
             if (ph[i] == PLINTH && !inBox) {
@@ -285,6 +297,24 @@ public class RaiseJob extends DigJob {
             front++;
         }
         return front;
+    }
+
+    /**
+     * The course the window stands at: the lowest open course not counting the {@link #hanging} cells, which wait on the courses
+     * over them (their ceiling) and so never hold the window down: a lantern on a chain under the roof, the lowest open cell,
+     * would keep the roof, two courses over it, from ever being handed out, and so itself from ever being held. With nothing but
+     * hanging cells left there is no window: each goes in once what it hangs from is in ({@link #held}), top of a column first.
+     */
+    private int windowCourse() {
+        List<Task> ts = tasks();
+        int f = front();
+        if (lead < f) {
+            lead = f;
+        }
+        while (lead < ts.size() && (finished(lead) || hanging.get(lead))) {
+            lead++;
+        }
+        return lead < ts.size() ? lift[lead] : Integer.MAX_VALUE / 2;
     }
 
     // --- where it stands ---------------------------------------------------------------------------------------------
@@ -505,7 +535,7 @@ public class RaiseJob extends DigJob {
             return clearEnd;
         }
         if (phase[f] == COURSE) {
-            int c = lift[f] + 1;                                 // the lowest open course and the one over it
+            int c = windowCourse() + 1;                          // the lowest open course and the one over it
             return c < courseEnd.length ? courseEnd[c] : ts.size();
         }
         return phaseEnd[phase[f]];
@@ -517,7 +547,7 @@ public class RaiseJob extends DigJob {
         if (i < clearEnd || f < clearEnd || phase[i] != phase[f]) {
             return false;                                        // strictly in order: this phase only
         }
-        if (phase[i] == COURSE && lift[i] > lift[f] + 1) {
+        if (phase[i] == COURSE && lift[i] > windowCourse() + 1) {
             return false;                                        // never more than a course over the lowest open one
         }
         if (shelvedUntil.get(i) > level.getGameTime()) {
@@ -533,7 +563,7 @@ public class RaiseJob extends DigJob {
 
     @Override
     protected double anchorBias(int i, Task t) {
-        return PER_LIFT * Math.max(0, lift[i] - lift[front()]);
+        return PER_LIFT * Math.max(0, lift[i] - windowCourse());
     }
 
     /** Every change on the surface is a builder's, in the open. */
@@ -557,15 +587,26 @@ public class RaiseJob extends DigJob {
         if (t.state().isAir()) {
             return i < clearEnd || open(level, p.above()) && wayOut(level, p);
         }
-        return seal.get(i) || held(level, p, t.state(), phase[i] == COURSE, openAt(fills, BlockPos.asLong(p.getX(), p.getY() - 1, p.getZ())));
+        return seal.get(i) || held(level, p, t.state(), phase[i] == COURSE, underToCome(p));
+    }
+
+    /**
+     * Whether the site still has a block to lay under {@code p} that the cell at {@code p} would rest on. A piece that hangs from
+     * {@code p} ({@link #hangs}: a lantern under the ceiling) rests on nothing there, and doesn't count: the ceiling never waits
+     * for what hangs from it (while the lantern waited for its ceiling, neither could go in).
+     */
+    private boolean underToCome(BlockPos p) {
+        int i = fills.getOrDefault(BlockPos.asLong(p.getX(), p.getY() - 1, p.getZ()), -1);
+        return i >= 0 && !finished(i) && !hanging.get(i);
     }
 
     /**
      * Whether the block {@code s} put at {@code p} is held there: by something under it; or, in a building's course (never the
-     * earthworks), by what it hangs from when it is a hanging thing ({@link #hangs}: something solid over it), or else, where
-     * the site puts nothing under it ({@code underToCome} false: eaves), by a sturdy face beside it. A course's cell over one
-     * still to be laid waits for it, never hangs off its neighbour; a hanging lantern waits for its ceiling (the review of
-     * 51b59f8: every hanging cell waited out the stall).
+     * earthworks), by what it hangs from when it is a hanging thing ({@link #hungFrom}: something solid over it, or its own column
+     * over it, laid), or else, where the site puts nothing under it ({@code underToCome} false: eaves), by a sturdy face beside it
+     * (for a hanging thing too: a wall vine, a chain laid between two walls and a cobweb in a corner are held by their walls). A
+     * course's cell over one still to be laid waits for it, never hangs off its neighbour; a hanging lantern waits for its ceiling
+     * (the review of 51b59f8: every hanging cell waited out the stall).
      */
     public static boolean held(ServerLevel level, BlockPos p, BlockState s, boolean course, boolean underToCome) {
         if (supported(level, p, false)) {
@@ -574,22 +615,50 @@ public class RaiseJob extends DigJob {
         if (!course) {
             return false;
         }
-        if (hangs(s)) {
-            BlockPos a = p.above();
-            return level.isLoaded(a) && !level.getBlockState(a).getCollisionShape(level, a).isEmpty();
+        if (hungFrom(level, p, s)) {
+            return true;
         }
         return !underToCome && supported(level, p, true);
     }
 
     /**
-     * A thing that hangs from what is over it: a hanging lantern, a chain, vines (and the cave's, the weeping), hanging roots,
-     * a spore blossom, a hanging sign, a cobweb, a dripstone pointing down, a bell on the ceiling.
+     * Whether {@code s} at {@code p} hangs from what is over it, laid: something solid over it (a piece that {@link #hangs}), or its
+     * own column over it ({@link #sameColumn}: a vine under a vine, a cave vine under its plant, weeping vines). Every cell of a
+     * column of vines but the top one has a vine over it, and a vine has no collision shape to count as solid.
+     */
+    private static boolean hungFrom(ServerLevel level, BlockPos p, BlockState s) {
+        boolean hangs = hangs(s);
+        if (!hangs && !(s.getBlock() instanceof net.minecraft.world.level.block.VineBlock)) {
+            return false;
+        }
+        BlockPos a = p.above();
+        if (!level.isLoaded(a)) {
+            return false;
+        }
+        BlockState up = level.getBlockState(a);
+        return hangs && !up.getCollisionShape(level, a).isEmpty() || sameColumn(s, up);
+    }
+
+    /** Whether {@code up} is the same kind of hanging piece as {@code s}: vines, a cave vine and its plants, weeping vines and theirs. */
+    private static boolean sameColumn(BlockState s, BlockState up) {
+        net.minecraft.world.level.block.Block b = s.getBlock();
+        net.minecraft.world.level.block.Block u = up.getBlock();
+        return b == u || b instanceof net.minecraft.world.level.block.CaveVines && u instanceof net.minecraft.world.level.block.CaveVines
+                || (b instanceof net.minecraft.world.level.block.WeepingVinesBlock || b instanceof net.minecraft.world.level.block.WeepingVinesPlantBlock)
+                && (u instanceof net.minecraft.world.level.block.WeepingVinesBlock || u instanceof net.minecraft.world.level.block.WeepingVinesPlantBlock);
+    }
+
+    /**
+     * A thing that hangs from what is over it, and from nothing else: a hanging lantern, a chain hanging (not one laid sideways), a
+     * vine by its top face (not a wall vine, held by its wall), cave vines and the weeping, hanging roots, a spore blossom, a hanging
+     * sign, a cobweb, a dripstone pointing down, a bell on the ceiling.
      */
     public static boolean hangs(BlockState s) {
         net.minecraft.world.level.block.Block b = s.getBlock();
         return s.hasProperty(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING)
                 && s.getValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.HANGING)
-                || b instanceof net.minecraft.world.level.block.ChainBlock || b instanceof net.minecraft.world.level.block.VineBlock
+                || b instanceof net.minecraft.world.level.block.ChainBlock && s.getValue(net.minecraft.world.level.block.ChainBlock.AXIS) == Direction.Axis.Y
+                || b instanceof net.minecraft.world.level.block.VineBlock && s.getValue(net.minecraft.world.level.block.VineBlock.UP)
                 || b instanceof net.minecraft.world.level.block.CaveVines || b instanceof net.minecraft.world.level.block.WeepingVinesBlock
                 || b instanceof net.minecraft.world.level.block.WeepingVinesPlantBlock || b instanceof net.minecraft.world.level.block.HangingRootsBlock
                 || b instanceof net.minecraft.world.level.block.SporeBlossomBlock || b instanceof net.minecraft.world.level.block.CeilingHangingSignBlock

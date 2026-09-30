@@ -123,6 +123,14 @@ public class SitingGameTests {
 
         /** A site whose floor is at +{@code up} over the plot (lower than +360 where the land must rise far over it). */
         public Site(GameTestHelper h, int up) {
+            this(h, up, platform());
+        }
+
+        /**
+         * A site of another building (a hand-built one, {@link RoomTemplates#put}): 9 wide and deep like the platform, its door
+         * at (0,1,4), any height, its template every cell of the box.
+         */
+        public Site(GameTestHelper h, int up, Rooms.Room room) {
             this.h = h;
             this.level = h.getLevel();
             BlockPos c1 = h.absolutePos(new BlockPos(0, up, 0));
@@ -137,13 +145,15 @@ public class SitingGameTests {
             h.assertTrue(floor + 17 < level.getMaxBuildHeight() && floor - DEEP - 2 > level.getMinBuildHeight(),
                     "the site's floor " + floor + " leaves no room for its ground and its hills under the build limit " + level.getMaxBuildHeight());
             BlockPos door = new BlockPos(bx0, floor + 1, bz0 + 4);
-            pl = PlanPlacement.onGround(platform(), door.below(), Direction.EAST);
+            pl = PlanPlacement.onGround(room, door.below(), Direction.EAST);
             BoundingBox b = pl.box();
-            h.assertTrue(b.minX() == bx0 && b.minZ() == bz0 && b.maxX() == bx0 + 8 && b.maxZ() == bz0 + 8 && b.minY() == floor && b.maxY() == floor + 4,
-                    "the platform aimed at " + door.below() + " facing east is placed at " + b + ", not its box from " + bx0 + " " + floor + " " + bz0);
-            template = RoomTemplates.get(level, PLATFORM);
-            h.assertTrue(template.size() == 9 * 5 * 9, "the platform's template (from " + Rooms.namespacesFor(PLATFORM) + ") has "
-                    + template.size() + " cells, not 405: it didn't load from the engine's namespace");
+            h.assertTrue(b.minX() == bx0 && b.minZ() == bz0 && b.maxX() == bx0 + 8 && b.maxZ() == bz0 + 8 && b.minY() == floor
+                            && b.maxY() == floor + room.sizeY() - 1,
+                    "the " + room.id() + " aimed at " + door.below() + " facing east is placed at " + b + ", not its box from " + bx0 + " " + floor + " " + bz0);
+            template = RoomTemplates.get(level, room.id());
+            int cells = room.sizeX() * room.sizeY() * room.sizeZ();
+            h.assertTrue(template.size() == cells, "the " + room.id() + "'s template (from " + Rooms.namespacesFor(room.id()) + ") has "
+                    + template.size() + " cells, not " + cells + ": it didn't load from the engine's namespace");
         }
 
         /** The highest cell the checks read: 24 over the floor, or the build limit's last (the floor is 301, the limit 319). */

@@ -46,6 +46,15 @@ public final class RoomTemplates {
         PRINTS.clear();
     }
 
+    /**
+     * A room's template given by hand, for the tests: a small building no .nbt holds, read as a loaded one is (every cell, air
+     * too) until {@link #clear}.
+     */
+    public static void put(String id, List<Entry> entries) {
+        CACHE.put(id, List.copyOf(entries));
+        PRINTS.remove(id);
+    }
+
     private static final Map<String, Integer> PRINTS = new HashMap<>();
 
     /**

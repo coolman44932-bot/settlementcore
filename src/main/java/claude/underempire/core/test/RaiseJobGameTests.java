@@ -4,6 +4,7 @@ import claude.underempire.core.Core;
 import claude.underempire.core.room.DigJob;
 import claude.underempire.core.room.RaiseJob;
 import claude.underempire.core.room.RoomTemplates;
+import claude.underempire.core.room.Rooms;
 import claude.underempire.core.room.Siting;
 import claude.underempire.core.room.Siting.Earthwork;
 import claude.underempire.core.room.Siting.Phase;
@@ -317,6 +318,274 @@ public class RaiseJobGameTests {
                              String scene) {
         h.assertTrue(RaiseJob.held(level, p, s, course, underToCome) == want, scene + ": " + (want ? "not held" : "held") + " (" + s + " at "
                 + p.toShortString() + ", over " + level.getBlockState(p.below()) + ", under " + level.getBlockState(p.above()) + ")");
+    }
+
+    // --- hand-built buildings: hanging pieces -----------------------------------------------------------------------------
+
+    /** A hanging lantern under a roof cell, and a lantern on a chain under another: every hanging piece under a roof still to be laid. */
+    public static final String HANGERS = "raise_test_hangers";
+    /** Wall vines, a chain between two pillars and a cobweb in a corner (under open sky), and vine columns hanging from beams. */
+    public static final String VINES = "raise_test_vines";
+
+    private static final BlockState AIR = Blocks.AIR.defaultBlockState();
+    private static final BlockState BRICK = Blocks.STONE_BRICKS.defaultBlockState();
+
+    /** The cells of a hand-built building, every cell of its box (air until set). */
+    private static final class Cells {
+        final Map<BlockPos, BlockState> at = new java.util.LinkedHashMap<>();
+
+        Cells(int sizeX, int sizeY, int sizeZ) {
+            for (int y = 0; y < sizeY; y++) {
+                for (int z = 0; z < sizeZ; z++) {
+                    for (int x = 0; x < sizeX; x++) {
+                        at.put(new BlockPos(x, y, z), AIR);
+                    }
+                }
+            }
+        }
+
+        void set(int x, int y, int z, BlockState s) {
+            at.put(new BlockPos(x, y, z), s);
+        }
+
+        void box(int x0, int y0, int z0, int x1, int y1, int z1, BlockState s) {
+            for (int y = y0; y <= y1; y++) {
+                for (int z = z0; z <= z1; z++) {
+                    for (int x = x0; x <= x1; x++) {
+                        set(x, y, z, s);
+                    }
+                }
+            }
+        }
+
+        /** The apron (the ground layer, whole in every column), the walls up to y 4, and the door gap at (0,1,4) and (0,2,4). */
+        void room() {
+            box(0, 0, 0, 8, 0, 8, BRICK);
+            box(0, 1, 0, 8, 4, 0, BRICK);
+            box(0, 1, 8, 8, 4, 8, BRICK);
+            box(0, 1, 0, 0, 4, 8, BRICK);
+            box(8, 1, 0, 8, 4, 8, BRICK);
+            box(0, 1, 4, 0, 2, 4, AIR);
+        }
+    }
+
+    /** A 9x{@code sizeY}x9 building of {@code cells}, door (0,1,4), registered under the engine's namespace once, its template handed in. */
+    private static synchronized Rooms.Room handBuilt(String id, String name, int sizeY, java.util.function.Consumer<Cells> furnish) {
+        if (Rooms.get(id) == null) {
+            Cells c = new Cells(9, sizeY, 9);
+            furnish.accept(c);
+            List<RoomTemplates.Entry> entries = new ArrayList<>();
+            for (var e : c.at.entrySet()) {
+                entries.add(new RoomTemplates.Entry(e.getKey(), e.getValue(), null));
+            }
+            RoomTemplates.put(id, entries);
+            Rooms.Room r = new Rooms.Room(id, name, 0, Rooms.Function.of("RAISE_TEST"), "A hand-built test building: " + name, 9, sizeY, 9, 0, 1, 4,
+                    List.of(), List.of(), List.of());
+            Rooms.register(Core.NAMESPACE, new Rooms.Catalog(List.of(), List.of(), List.of(), java.util.Set.of(), 0, List.of(r)));
+        }
+        return Rooms.get(id);
+    }
+
+    private static BlockState hangingLantern() {
+        return Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, true);
+    }
+
+    private static BlockState wallVine(net.minecraft.world.level.block.state.properties.BooleanProperty face) {
+        return Blocks.VINE.defaultBlockState().setValue(face, true);
+    }
+
+    /** Stone pillars, 1 to {@code top} high, at (x, z). */
+    private static void pillar(Cells c, int x, int z, int top) {
+        c.box(x, 1, z, x, top, z, BRICK);
+    }
+
+    /** Under a roof of stone bricks over the whole box (y 5): a hanging lantern under one roof cell, a lantern on a chain under another. */
+    public static synchronized Rooms.Room hangers() {
+        return handBuilt(HANGERS, "Test Hanging Lamps", 7, c -> {
+            c.room();
+            c.box(0, 5, 0, 8, 5, 8, BRICK);                      // the roof
+            c.set(6, 4, 2, hangingLantern());                    // under the roof cell (6,5,2)
+            c.set(3, 4, 6, Blocks.CHAIN.defaultBlockState());    // a chain under (3,5,6), and a lantern on it
+            c.set(3, 3, 6, hangingLantern());
+        });
+    }
+
+    /**
+     * Under open sky: three wall vines up the south wall; a cobweb in the north-west corner; a chain between two pillars' tops; and
+     * two beams on pillars, one with a column of cave vines hanging from it (two plants and their head), one with weeping vines.
+     */
+    public static synchronized Rooms.Room vines() {
+        return handBuilt(VINES, "Test Vines", 7, c -> {
+            c.room();
+            for (int y = 2; y <= 4; y++) {
+                c.set(2, y, 7, wallVine(VineBlock.SOUTH));       // against the south wall (z 8)
+            }
+            c.set(1, 4, 1, Blocks.COBWEB.defaultBlockState());   // in the corner, the walls beside it
+            pillar(c, 3, 4, 3);
+            pillar(c, 5, 4, 3);
+            c.set(4, 3, 4, Blocks.CHAIN.defaultBlockState().setValue(net.minecraft.world.level.block.ChainBlock.AXIS, net.minecraft.core.Direction.Axis.X));
+            for (int z : new int[]{6, 2}) {                      // a beam over two pillars, and a column hanging from its middle, free of both
+                pillar(c, 3, z, 4);
+                pillar(c, 7, z, 4);
+                c.box(3, 5, z, 7, 5, z, BRICK);
+                boolean cave = z == 6;
+                c.set(5, 4, z, (cave ? Blocks.CAVE_VINES_PLANT : Blocks.WEEPING_VINES_PLANT).defaultBlockState());
+                c.set(5, 3, z, (cave ? Blocks.CAVE_VINES_PLANT : Blocks.WEEPING_VINES_PLANT).defaultBlockState());
+                c.set(5, 2, z, (cave ? Blocks.CAVE_VINES : Blocks.WEEPING_VINES).defaultBlockState());
+            }
+        });
+    }
+
+    /** The first cell of the job's list the world doesn't have as the job wants it yet: where its lowest open cell is, in words; or "none". */
+    private static String firstOpen(ServerLevel level, RaiseJob job) {
+        List<DigJob.Task> tasks = job.taskList();
+        for (int i = 0; i < tasks.size(); i++) {
+            DigJob.Task t = tasks.get(i);
+            if (level.getBlockState(t.pos()) != t.state()) {
+                return t.pos().toShortString() + " " + t.state() + " (course " + job.liftOf(i) + ", phase " + job.phaseOf(i) + ")";
+            }
+        }
+        return "none";
+    }
+
+    /**
+     * A hand-built building raised as a site's builders raise it (the claim loop of aRaiseJobLaysCourseByCourse: batch after batch,
+     * a cell at a time), on flat ground, with the site's own stall rule as SiteWork#second has it: with nothing to hand out and nobody
+     * at work for {@link SiteWork#DRY_SECONDS} seconds (60 ticks, the builders standing idle and the courses over held back) the lowest
+     * open cell is heaved into place. The check is that none ever had to be: every stall is listed, with the cell it was stuck on,
+     * and the world is the template at the end.
+     */
+    private static void raisedWithoutAStall(GameTestHelper h, Rooms.Room room, String scene) {
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), scene);
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 3L);
+            BlockPos near = s.pl.door();
+            List<String> stalls = new ArrayList<>();
+            int rounds = 0;
+            for (; !job.isDone(); rounds++) {
+                h.assertTrue(rounds < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size()
+                        + " done; open: " + job.openReport(level, 8));
+                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                if (anchor == null) {
+                    h.assertTrue(!job.anyClaimable(level) && !job.anyOut(level.getGameTime()), "claim handed out nothing, but the site could: "
+                            + job.openReport(level, 8));
+                    stalls.add(firstOpen(level, job) + " [" + job.openReport(level, 4) + "]");
+                    h.assertTrue(job.heaveFront(level), "the stalled site's lowest open cell can't even be heaved: " + job.openReport(level, 8));
+                    continue;
+                }
+                job.gnawSome(level, builder, 1f);
+                job.complete(level, builder);
+                near = anchor;
+            }
+            h.assertTrue(job.heaved() == 0 && stalls.isEmpty(), scene + ": the site stalled " + stalls.size() + " times (" + job.heaved()
+                    + " heaved; each a " + SiteWork.DRY_SECONDS + " s wait, " + SiteWork.DRY_SECONDS * 20 * stalls.size() + " ticks, with the builders idle): "
+                    + String.join(" | ", stalls));
+            for (RoomTemplates.Entry e : s.template) {
+                BlockPos w = s.pl.world(e.local());
+                BlockState now = level.getBlockState(w);
+                h.assertTrue(now == e.state().rotate(s.pl.rotation()), "the " + room.id() + "'s cell " + e.local() + " at " + w.toShortString()
+                        + " is " + now + ", not " + e.state());
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * A hanging cell and the cell it hangs from wait for each other (the review of 51b59f8's second pass): a hanging lantern L under a
+     * roof cell C, both the site's to lay. L waits for C (a hanging thing is held by what is over it); C waited for L (a course's cell
+     * over one still to be laid waits for it), so neither could ever go in and only the stall rule's heave broke it, a pair at a time.
+     * A lantern on a chain under the roof is the same over three courses, and worse: the lantern (course 3) held the window down, so the
+     * roof (course 5) was never handed out, however the chain was. In a 9x9 hall with a roof over it: a hanging lantern under one roof
+     * cell, and a lantern on a chain under another; no cell may be heaved.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aHangingPieceAndItsCeilingAreLaidWithoutAHeave(GameTestHelper h) {
+        raisedWithoutAStall(h, hangers(), "a hanging lantern under its roof cell, and one on a chain");
+    }
+
+    /**
+     * Only what hangs is held from above (the review of 51b59f8's second pass: the hold for hanging cells was too broad and had no
+     * eaves to fall back on: a vine is {@code noCollission}, so "something solid over it" failed for every vine but the top one of a
+     * column, for wall vines whose faces are the sides, for a chain laid between two walls, and for a cobweb in a corner; the eaves
+     * rule held them all before). Under open sky: three wall vines up a wall, a cobweb in a corner, a chain between two pillars,
+     * and a column of cave vines and one of weeping vines hanging from beams; no cell may be heaved.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aWallVineAChainBetweenWallsAndAVineColumnAreLaidWithoutAHeave(GameTestHelper h) {
+        raisedWithoutAStall(h, vines(), "wall vines, a cobweb in a corner, a chain between pillars, and vine columns hanging from beams");
+    }
+
+    /**
+     * What is a hanging piece and what holds it, cell by cell in the air (the two tests above raise whole buildings): a piece hangs only
+     * where it depends on the cell over it (a vine's top face, a vertical chain: not a wall vine, not a chain laid sideways); a hanging
+     * piece is held by something solid over it, or by its own column over it already laid (vines under vines, a cave vine under its
+     * plant, weeping vines), and else, like any block, by a sturdy face beside it where nothing is still to go under it.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "raise")
+    public static void aHangingPieceIsHeldFromAboveFromItsColumnOrAsEaves(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            BlockState vineUp = Blocks.VINE.defaultBlockState().setValue(VineBlock.UP, true);
+            BlockState vineSouth = wallVine(VineBlock.SOUTH);
+            BlockState chainX = Blocks.CHAIN.defaultBlockState().setValue(net.minecraft.world.level.block.ChainBlock.AXIS, Direction.Axis.X);
+            for (var e : new Object[][]{{hangingLantern(), true}, {Blocks.LANTERN.defaultBlockState(), false}, {Blocks.CHAIN.defaultBlockState(), true},
+                    {chainX, false}, {vineUp, true}, {vineSouth, false}, {Blocks.COBWEB.defaultBlockState(), true}, {Blocks.CAVE_VINES_PLANT.defaultBlockState(), true},
+                    {Blocks.WEEPING_VINES.defaultBlockState(), true}, {Blocks.HANGING_ROOTS.defaultBlockState(), true}, {BRICK, false}}) {
+                BlockState st = (BlockState) e[0];
+                h.assertTrue(RaiseJob.hangs(st) == (Boolean) e[1], st + (((Boolean) e[1]) ? " doesn't hang from the cell over it" : " is taken for a piece that hangs from the cell over it"));
+            }
+            BlockPos p = new BlockPos(s.px0 + 4, s.floor + 6, s.pz0 + 4);
+            BlockState stone = Blocks.STONE.defaultBlockState();
+            // a wall vine: held by the wall beside it (eaves), not by anything over it, and not with a block still to go under it
+            s.set(p.getX(), p.getY(), p.getZ() + 1, stone);
+            held(h, level, p, vineSouth, true, false, true, "a wall vine against stone");
+            held(h, level, p, vineSouth, true, true, false, "a wall vine against stone, with a block still to go under it");
+            s.set(p.getX(), p.getY(), p.getZ() + 1, AIR);
+            held(h, level, p, vineSouth, true, false, false, "a wall vine against nothing");
+            // a chain laid sideways between two walls; a chain hanging, with only a wall beside it (hangs, but the eaves hold it too)
+            s.set(p.getX() - 1, p.getY(), p.getZ(), stone);
+            held(h, level, p, Blocks.CHAIN.defaultBlockState(), true, false, true, "a hanging chain with a wall beside it and nothing over it");
+            s.set(p.getX() + 1, p.getY(), p.getZ(), stone);
+            held(h, level, p, chainX, true, false, true, "a chain between two walls");
+            s.set(p.getX() - 1, p.getY(), p.getZ(), AIR);
+            s.set(p.getX() + 1, p.getY(), p.getZ(), AIR);
+            held(h, level, p, Blocks.CHAIN.defaultBlockState(), true, false, false, "a chain hanging from nothing");
+            // a cobweb in a corner
+            s.set(p.getX() - 1, p.getY(), p.getZ(), stone);
+            s.set(p.getX(), p.getY(), p.getZ() - 1, stone);
+            held(h, level, p, Blocks.COBWEB.defaultBlockState(), true, false, true, "a cobweb in a corner");
+            s.set(p.getX() - 1, p.getY(), p.getZ(), AIR);
+            s.set(p.getX(), p.getY(), p.getZ() - 1, AIR);
+            held(h, level, p, Blocks.COBWEB.defaultBlockState(), true, false, false, "a cobweb in the open");
+            // a column hangs from its own top piece, already laid, where nothing solid is over it
+            BlockPos over = p.above();
+            s.set(over.getX(), over.getY(), over.getZ(), Blocks.CAVE_VINES_PLANT.defaultBlockState());
+            held(h, level, p, Blocks.CAVE_VINES_PLANT.defaultBlockState(), true, false, true, "a cave vine plant under its plant");
+            held(h, level, p, Blocks.CAVE_VINES.defaultBlockState(), true, false, true, "a cave vine's head under its plant");
+            held(h, level, p, Blocks.WEEPING_VINES_PLANT.defaultBlockState(), true, false, false, "weeping vines under cave vines");
+            s.set(over.getX(), over.getY(), over.getZ(), Blocks.WEEPING_VINES_PLANT.defaultBlockState());
+            held(h, level, p, Blocks.WEEPING_VINES_PLANT.defaultBlockState(), true, false, true, "a weeping vines plant under its plant");
+            held(h, level, p, Blocks.WEEPING_VINES.defaultBlockState(), true, false, true, "weeping vines' head under its plant");
+            held(h, level, p, BRICK, true, false, false, "stone bricks under a plant (nothing holds them)");
+            s.set(over.getX(), over.getY(), over.getZ(), vineSouth);
+            held(h, level, p, vineSouth, true, false, true, "a vine under a vine (its face held by the vine over it, below a wall's end)");
+            s.set(over.getX(), over.getY(), over.getZ(), AIR);
+            held(h, level, p, Blocks.CAVE_VINES_PLANT.defaultBlockState(), true, false, false, "a cave vine plant under air");
+            s.clear();
+            h.succeed();
+        }));
     }
 
     /**

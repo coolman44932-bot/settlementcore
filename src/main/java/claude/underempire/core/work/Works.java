@@ -115,11 +115,26 @@ public final class Works {
 
     /** Crew out of the reserve's soldiers (a Watch-Post's watch): they go back as soldiers, not workers. */
     private final Set<UUID> clanratCrew = new HashSet<>();
+    /**
+     * Crew taken out of the reserve ({@link #spawnCrew}): they go back into it wherever they end, by where they came from and not by
+     * the room they are the crew of by then (a site's builders handed over into a room with a crew lent from outside the reserve).
+     */
+    private final Set<UUID> fromReserve = new HashSet<>();
 
     /** A crew settler back into the reserve as what it was. */
     private void refund(UUID id) {
+        fromReserve.remove(id);
         boolean clanrat = clanratCrew.remove(id);
         heart.addToReserve(clanrat ? 0 : 1, clanrat ? 1 : 0);
+    }
+
+    /**
+     * Whether crew settler {@code id}, leaving the crew of {@code w} (null: the room is gone), goes back into the reserve: a horde
+     * room's crew do, and so does anyone who came out of the reserve, whatever room they are the crew of now. A lent crew (the
+     * Workshop's Warlock Engineer) goes back to where it was lent from.
+     */
+    private boolean toReserve(UUID id, @Nullable RoomWork w) {
+        return w == null || w.crewFromHorde() || fromReserve.contains(id);
     }
 
     /** A room's crew (a post's watch), up and about. */
@@ -245,8 +260,7 @@ public final class Works {
                 if (ent instanceof SettlerMob r && r.isAlive()) {
                     r.discard();
                 }
-                RoomWork w = rooms.get(e.getValue());
-                if (w == null || w.crewFromHorde()) {
+                if (toReserve(e.getKey(), rooms.get(e.getValue()))) {
                     refund(e.getKey());
                 }
                 letGo(e.getValue(), e.getKey());                 // a site's builder: its batch goes back at once
@@ -371,8 +385,11 @@ public final class Works {
         w.crewSpawned(rat);
         level.addFreshEntity(rat);
         crew.put(rat.getUUID(), w.key());
-        if (clanrat && w.crewFromHorde()) {
-            clanratCrew.add(rat.getUUID());
+        if (w.crewFromHorde()) {
+            fromReserve.add(rat.getUUID());
+            if (clanrat) {
+                clanratCrew.add(rat.getUUID());
+            }
         }
         rat.emergeAt(at.getX() + 0.5, at.getY(), at.getZ() + 0.5);
         heart.setChanged();
@@ -403,6 +420,7 @@ public final class Works {
     /** One of the crew was killed. */
     public void crewDied(UUID id, long now) {
         clanratCrew.remove(id);
+        fromReserve.remove(id);
         BlockPos k = crew.remove(id);
         if (k != null) {
             letGo(k, id);
@@ -421,8 +439,7 @@ public final class Works {
             return false;
         }
         letGo(k, id);
-        RoomWork w = rooms.get(k);
-        if (w != null && !w.crewFromHorde()) {
+        if (!toReserve(id, rooms.get(k))) {
             return true;                                         // the Warlock goes back to Skryre, not into the horde
         }
         refund(id);
@@ -451,8 +468,7 @@ public final class Works {
             if (level.getEntity(id) instanceof SettlerMob r) {
                 r.discard();
             }
-            RoomWork w = k == null ? null : rooms.get(k);
-            if (w == null || w.crewFromHorde()) {
+            if (toReserve(id, k == null ? null : rooms.get(k))) {
                 refund(id);
             }
         }
@@ -607,8 +623,10 @@ public final class Works {
      * added walled (never walled up against the sky: the Heart's wallUpRooms walls any building added unwalled). The site is
      * dropped and its key cleared from {@link #opened} and {@link #saved}, and the room's own work made at the same door, which
      * the next second opens (its {@code opened()} runs once, as any room's). The builders are keyed to that door, so they are
-     * the room's crew now; a room with no work (none registered for its kind, or none made for it) sends them home, and each is
-     * taken back into the reserve when it gets there (#forget), once.
+     * the room's crew now. A room with no work (none registered for its kind, or none made for it), or whose crew is lent from
+     * outside the reserve (the Workshop's Warlock Engineer: {@code crewFromHorde()} false: slaves are not its crew, and while they
+     * filled it his own would never come up), sends them home, and each is taken back into the reserve when it gets there
+     * (#forget; {@code toReserve}: by where it came from, not by the room it was the crew of), once.
      */
     private void handOver(ServerLevel level, SiteWork s) {
         BlockPos key = s.key();
@@ -620,7 +638,8 @@ public final class Works {
         RoomWork next = make(heart, s.building);
         if (next != null) {
             rooms.put(key, next);
-        } else {
+        }
+        if (next == null || !next.crewFromHorde()) {
             for (SettlerMob r : crewOf(level, key)) {
                 r.goHome();
             }
@@ -1076,6 +1095,10 @@ public final class Works {
             if (clanratCrew.contains(e.getKey())) {
                 c.putBoolean("clanrat", true);
             }
+            RoomWork home = rooms.get(e.getValue());
+            if (fromReserve.contains(e.getKey()) && (home == null || !home.crewFromHorde())) {
+                c.putBoolean("reserve", true);                   // a site's builder on its way home from a lent crew's room: the room alone wouldn't send it back
+            }
             cl.add(c);
         }
         t.put("crew", cl);                                       // the rats are never saved: on load they are back in the tunnels
@@ -1096,12 +1119,16 @@ public final class Works {
         }
         crew.clear();
         clanratCrew.clear();
+        fromReserve.clear();
         for (Tag x : t.getList("crew", Tag.TAG_COMPOUND)) {
             CompoundTag c = (CompoundTag) x;
             if (c.hasUUID("id")) {
                 NbtUtils.readBlockPos(c, "room").ifPresent(p -> crew.put(c.getUUID("id"), p));
                 if (c.getBoolean("clanrat")) {
                     clanratCrew.add(c.getUUID("id"));
+                }
+                if (c.getBoolean("reserve")) {
+                    fromReserve.add(c.getUUID("id"));
                 }
             }
         }
