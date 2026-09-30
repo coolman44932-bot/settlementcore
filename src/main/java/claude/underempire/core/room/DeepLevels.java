@@ -46,7 +46,7 @@ import java.util.Set;
  * loaded, and cutting only the ground itself (DigJob#natural), never anything a player built. The deeper
  * you go, the more of the horde teems about you (clan/Horde#swarmTarget, {@link #tierAt}).
  */
-public final class WarrenDeeps {
+public final class DeepLevels {
 
     /** Blocks a second the horde gnaws: one per this many rats of the horde, within RATE_MIN..RATE_MAX. */
     public static final int HORDE_PER_BLOCK = 8;
@@ -89,7 +89,7 @@ public final class WarrenDeeps {
     private boolean scanned;
     @Nullable private String lastFailure;
 
-    public WarrenDeeps(Settlement heart) {
+    public DeepLevels(Settlement heart) {
         this.heart = heart;
     }
 

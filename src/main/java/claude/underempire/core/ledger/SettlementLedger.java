@@ -48,7 +48,7 @@ import java.util.Set;
  * ticking) for a while, so a Tally-Scroll works anywhere, and the tally fills in as the chunks come in. The stores the
  * clan knows of are kept by the Heart (WarrenHeartBlockEntity#ledgerStores), so it knows which chunks to wake.
  */
-public final class ClanLedger {
+public final class SettlementLedger {
 
     /** Where a line of the tally is kept: in the stores (and the spoils pile), or the Heart's warpstone hoard. */
     public static final int STORES = 0, WARPSTONE = 1;
@@ -58,9 +58,9 @@ public final class ClanLedger {
             "repair chest", "armoury", "feeding trough");
 
     /** How long a store's chunk is held loaded after the Ledger last reached for it. */
-    private static final TicketType<ChunkPos> REACH = TicketType.create("underempire_ledger", Comparator.comparingLong(ChunkPos::toLong), 20 * 30);
+    private static final TicketType<ChunkPos> REACH = TicketType.create("settlementcore_ledger", Comparator.comparingLong(ChunkPos::toLong), 20 * 30);
 
-    private ClanLedger() {
+    private SettlementLedger() {
     }
 
     /** One kind of thing in the hoard: a single item standing for all of it (count 1), how many, and where it is kept. */

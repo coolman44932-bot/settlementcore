@@ -8,7 +8,7 @@ import org.jetbrains.annotations.Nullable;
 
 /**
  * One room of a settlement, dug or being dug: which room (core/room/Rooms), the box it fills, and its entry door and the way
- * that door faces (null for rooms dug before doors were kept: core/room/WarrenDeeps#placementOf infers them).
+ * that door faces (null for rooms dug before doors were kept: core/room/DeepLevels#placementOf infers them).
  */
 public record Building(String room, BoundingBox box, @Nullable BlockPos door, @Nullable Direction facing) {
     /** A room no race registers and whose door was never kept: where most rooms stand, a floor course over the footing. */

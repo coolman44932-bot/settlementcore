@@ -4,7 +4,7 @@ import claude.underempire.core.unit.SettlerMob;
 import claude.underempire.core.settlement.Settlement;
 import claude.underempire.core.Core;
 import claude.underempire.core.CoreConfig;
-import claude.underempire.core.settlement.WarrenSpawns;
+import claude.underempire.core.settlement.SettlementSpawns;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
@@ -395,7 +395,7 @@ public final class Muster {
             return;
         }
         UUID id = e.getEntity().getUUID();
-        for (Settlement h : WarrenSpawns.loaded(level)) {
+        for (Settlement h : SettlementSpawns.loaded(level)) {
             if (h.muster().foes.remove(id)) {
                 h.muster().slain++;
                 return;

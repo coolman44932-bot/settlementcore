@@ -99,7 +99,7 @@ public final class CoreConfig {
     public static IntSupplier musterMax = () -> common(DEFENDERS_MAX, 40);
     /** Defenders sent up for each foe. */
     public static IntSupplier musterPerFoe = () -> common(DEFENDERS_PER_FOE, 3);
-    /** Levels dug beneath a settlement, each a way down deeper than the last (room/WarrenDeeps). */
+    /** Levels dug beneath a settlement, each a way down deeper than the last (room/DeepLevels). */
     public static IntSupplier deepLevels = () -> common(DEEP_LEVELS, 2);
     /** The rooms order their own gear from the workshop (work/Works#gear). */
     public static BooleanSupplier roomsOrderGear = () -> common(ROOMS_ORDER_GEAR, true);

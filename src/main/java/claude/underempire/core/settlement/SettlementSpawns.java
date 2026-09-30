@@ -25,11 +25,11 @@ import java.util.Set;
  * spawners and spawn eggs are not stopped: those the warren has to fight.
  */
 @EventBusSubscriber(modid = Core.MODID)
-public final class WarrenSpawns {
+public final class SettlementSpawns {
 
     private static final Map<ResourceKey<Level>, Set<Settlement>> HEARTS = new HashMap<>();
 
-    private WarrenSpawns() {
+    private SettlementSpawns() {
     }
 
     public static void add(ServerLevel level, Settlement heart) {
