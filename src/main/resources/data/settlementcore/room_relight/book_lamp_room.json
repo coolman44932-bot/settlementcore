@@ -1,0 +1,7 @@
+{
+  "version": 2,
+  "steps": [
+    {"version": 1, "cells": [[1, 1, 1, "minecraft:air", "minecraft:glowstone"]]},
+    {"version": 2, "cells": [[1, 2, 1, "minecraft:air", "minecraft:sea_lantern"]]}
+  ]
+}
