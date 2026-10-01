@@ -22,6 +22,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.LanternBlock;
 import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
@@ -57,6 +58,22 @@ public class RaiseJobGameTests {
         }
         if (x == bx0 + 3 && z == bz0 + 2 || x == bx0 + 4 && z == bz0 - 3) {
             g += 1;
+        }
+        return g;
+    }
+
+    /**
+     * {@link #patch} with a hump of 2 over four columns in the box (cells of the 1st and 2nd steps, which the courses lay over) and a dip of 1 under four
+     * others (floor cells that are air over solid ground): what a site that did nothing must neither carve into a hillside nor fill (surface-builder.md,
+     * item 20). The crewed test of the call-off (the root project's RaiseGameTests) lays it too.
+     */
+    public static int humpy(int floor, int bx0, int bz0, int x, int z) {
+        int g = patch(floor, bx0, bz0, x, z);
+        if (x >= bx0 + 3 && x <= bx0 + 4 && z >= bz0 + 5 && z <= bz0 + 6) {
+            g = floor + 2;
+        }
+        if (x >= bx0 + 1 && x <= bx0 + 2 && z >= bz0 + 7 && z <= bz0 + 8) {
+            g = floor - 1;
         }
         return g;
     }
@@ -1023,6 +1040,194 @@ public class RaiseJobGameTests {
             held(h, level, p, vineSouth, true, false, true, "a vine under a vine (its face held by the vine over it, below a wall's end)");
             s.set(over.getX(), over.getY(), over.getZ(), AIR);
             held(h, level, p, Blocks.CAVE_VINES_PLANT.defaultBlockState(), true, false, false, "a cave vine plant under air");
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    // --- the clearing's foot, and a site that did nothing (surface-builder.md item 20, P1.1 and P1.2) --------------------------------
+
+    /**
+     * The builder sent to cut a tree stands at its foot, whatever the tree's size (item 20: "the clearing's cutter can be out of reach": it anchored at the
+     * lowest of the next {@link SiteWork#CLEAR_BATCH} cells top-down, which for a tree of more cells than that is its crown, high over the trunk, where no one can
+     * stand: the cutter stood out CrewGoal's 400 ticks and the site cleared 20 cells a second after each 400 ticks with no cell down). Oaks of 25, 110 and 255
+     * cells (the most a site fells is {@code Siting.TREE_MAX}, 256) stand in the platform's box, and the clearing's batches are taken as SiteWork takes them
+     * ({@link RaiseJob#clearNext}, then {@link RaiseJob#clearSome} for each cell of the chore): for every batch of every oak {@link RaiseJob#clearFoot} is the
+     * foot of the trunk, the cell of its first log, and the scene shows what the old anchor did: the lowest cell of the batch was more than
+     * {@link RaiseJob#STAND_UP} over the foot for the batches of the two big oaks (the first, at least), and never for the small one.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 200, batch = "raise")
+    public static void theClearingsFootIsTheTrunksFootWhateverTheTreesSize(GameTestHelper h) {
+        Site s = new Site(h);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            for (int[] oak : new int[][]{{4, 1, 2, 25}, {14, 2, 4, 110}, {15, 3, 5, 255}}) {
+                s.lay((x, z) -> s.floor);
+                List<BlockPos> tree = SitingGameTests.tree(s, s.bx0 + 4, s.floor + 1, s.bz0 + 4, oak[0], oak[1], oak[2]);
+                h.assertTrue(tree.size() == oak[3], "the test's oak (a trunk of " + oak[0] + ", a crown " + oak[1] + " out over " + oak[2] + " layers) has " + tree.size()
+                        + " cells, not " + oak[3]);
+                Plan p = s.expectPlan(s.plan(true), "an oak of " + tree.size() + " cells");
+                RaiseJob job = new RaiseJob(SitingGameTests.PLATFORM, s.pl.door(), Direction.EAST, p, 0);
+                job.ensureLoaded(level);
+                BlockPos foot = new BlockPos(s.bx0 + 4, s.floor + 1, s.bz0 + 4);
+                BlockPos near = s.pl.door();                     // where a builder is as it is sent: the landing, near enough
+                int batches = 0;
+                int out = 0;
+                int highest = 0;
+                for (List<BlockPos> cells = job.clearNext(level, SiteWork.CLEAR_BATCH); !cells.isEmpty(); cells = job.clearNext(level, SiteWork.CLEAR_BATCH)) {
+                    h.assertTrue(++batches <= 8, "no end to the clearing's batches of an oak of " + tree.size() + " cells: " + job.state());
+                    int lowest = Integer.MAX_VALUE;
+                    for (BlockPos c : cells) {
+                        lowest = Math.min(lowest, c.getY());
+                    }
+                    BlockPos at = job.clearFoot(level, cells, near);
+                    h.assertTrue(at.equals(foot), "the batch " + batches + " of an oak of " + tree.size() + " cells (" + cells.size() + " cells, the lowest " + (lowest - foot.getY())
+                            + " over the foot) is cut from " + at.toShortString() + " (" + (at.getY() - foot.getY()) + " over the foot), not from the foot of the trunk at " + foot.toShortString());
+                    if (lowest - foot.getY() > RaiseJob.STAND_UP) {
+                        out++;
+                    }
+                    highest = Math.max(highest, lowest - foot.getY());
+                    job.clearSome(level, cells.size());
+                }
+                h.assertTrue(batches == (tree.size() + SiteWork.CLEAR_BATCH - 1) / SiteWork.CLEAR_BATCH, "an oak of " + tree.size() + " cells was cut in " + batches + " batches");
+                h.assertTrue(tree.size() <= SiteWork.CLEAR_BATCH ? out == 0 : out >= 1, "the scene doesn't show the old anchor's fault: " + out + " of the " + batches
+                        + " batches of an oak of " + tree.size() + " cells had their lowest cell out of reach of its foot (the highest " + highest + " over it)");
+                for (BlockPos c : tree) {
+                    h.assertTrue(level.getBlockState(c).isAir(), "the oak's cell " + c.toShortString() + " is " + level.getBlockState(c) + ": the clearing left it standing");
+                }
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /** Every block of {@code box}, x fastest, then z, then y (a grass block read as dirt: it spreads and dies under the random ticks, which no job does). */
+    private static BlockState[] states(ServerLevel level, BoundingBox box) {
+        BlockState[] out = new BlockState[box.getXSpan() * box.getYSpan() * box.getZSpan()];
+        int i = 0;
+        for (int y = box.minY(); y <= box.maxY(); y++) {
+            for (int z = box.minZ(); z <= box.maxZ(); z++) {
+                for (int x = box.minX(); x <= box.maxX(); x++) {
+                    BlockState b = level.getBlockState(new BlockPos(x, y, z));
+                    out[i++] = b.is(Blocks.GRASS_BLOCK) ? Blocks.DIRT.defaultBlockState() : b;
+                }
+            }
+        }
+        return out;
+    }
+
+    /** How many cells of {@code box} are not what {@code was} ({@link #states}) says, and the first, in words; null when none. */
+    private static String changed(ServerLevel level, BoundingBox box, BlockState[] was) {
+        BlockState[] now = states(level, box);
+        int n = 0;
+        String first = null;
+        for (int i = 0; i < now.length; i++) {
+            if (now[i] != was[i]) {
+                n++;
+                if (first == null) {
+                    first = new BlockPos(box.minX() + i % box.getXSpan(), box.minY() + i / (box.getXSpan() * box.getZSpan()), box.minZ() + (i / box.getXSpan()) % box.getZSpan())
+                            .toShortString() + " was " + was[i] + ", is " + now[i];
+                }
+            }
+        }
+        return n == 0 ? null : n + " cells changed, the first " + first;
+    }
+
+    /**
+     * A site that did nothing leaves nothing (item 20: "a call-off before or during the clearing makes {@code levelFloor} carve the building's shell into a
+     * hillside"): {@link RaiseJob#levelFloor} filled every never-laid floor cell that was air over solid ground, and cut every never-laid cell over the floor that
+     * held the land, whether the building had begun or not, so a site called off at tick 0 left the hump in its box cut and the dip filled. On
+     * {@link #humpy}'s land (a hump of 2 over four columns of the box and one of 1 on another, a dip of 1 under four, a dip of 2 across the south-east corner), a
+     * job is torn down at four stages, the world compared with what it was before the leveling (the cells the teardown takes down come out of it):
+     * <ul>
+     *   <li>nothing done: nothing is taken down ({@code tearOpen} 0) and the floor is left alone: no cell of the area changes;</li>
+     *   <li>the clearing done, nothing laid: the same, the clearing's cuts staying as they were;</li>
+     *   <li>the plinth of the building's blocks laid in the dip, no course: it comes down to the land's ground, and the floor is made level, a cell over each of the
+     *   dip's columns that is air over solid ground, but the hump is not cut: nothing of the building has risen to leave it standing among its cells;</li>
+     *   <li>one cell of a course laid: the hump is cut too, as the coordinator decided ("my call: leave level ground").</li>
+     * </ul>
+     * Each stage is worked out here from the world, not from the engine's own count. Each fails without its guard (the old code carves at the first two
+     * stages, and cuts the hump at the third).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 200, batch = "raise")
+    public static void aSiteThatDidNothingLeavesNothingWhenItIsTornDown(GameTestHelper h) {
+        Site s = new Site(h);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            for (int stage = 1; stage <= 4; stage++) {
+                s.lay((x, z) -> humpy(s.floor, s.bx0, s.bz0, x, z));
+                Plan p = s.expectPlan(s.plan(true), "the hump and the dip");
+                RaiseJob job = new RaiseJob(SitingGameTests.PLATFORM, s.pl.door(), Direction.EAST, p, 0);
+                job.ensureLoaded(level);
+                int clearing = 0;
+                while (clearing < job.taskList().size() && job.phaseOf(clearing) == RaiseJob.CLEARING) {
+                    clearing++;
+                }
+                int firstCourse = clearing;
+                while (firstCourse < job.taskList().size() && job.phaseOf(firstCourse) != RaiseJob.COURSE) {
+                    firstCourse++;
+                }
+                String done = switch (stage) {
+                    case 1 -> "nothing done";
+                    case 2 -> "the clearing done";
+                    case 3 -> "the earthworks done, the plinth laid";
+                    default -> "the earthworks and one cell of the first course done";
+                };
+                if (stage >= 2) {
+                    job.gnawInOrder(level, stage == 2 ? clearing : stage == 3 ? firstCourse : firstCourse + 1, new ArrayList<>());
+                }
+                int laid = stage <= 2 ? 0 : stage == 3 ? 4 : 5;  // the four cells of the plinth of the building's blocks in the dip, and a course cell
+                h.assertTrue(job.laidCount() == laid, done + ": " + job.laidCount() + " cells of the building are laid, not " + laid);
+                BoundingBox area = job.footprint();
+                BlockPos hump = new BlockPos(s.bx0 + 3, s.floor + 2, s.bz0 + 5);
+                BlockPos dip = new BlockPos(s.bx0 + 1, s.floor, s.bz0 + 7);
+                h.assertTrue(level.getBlockState(hump).is(Blocks.GRASS_BLOCK) && !level.getBlockState(hump.below()).isAir() && level.getBlockState(dip).isAir()
+                                && !level.getBlockState(dip.below()).isAir(), done + ": the scene has no hump at " + hump.toShortString() + " or no dip at " + dip.toShortString() + ": "
+                        + level.getBlockState(hump) + ", " + level.getBlockState(dip));
+                BlockState[] before = states(level, area);
+                job.startTearDown(level, level.getGameTime());
+                int plinth = job.tearOpen();
+                job.tearSelf(level, 100);
+                h.assertTrue(job.tornDown() && job.tornCount() == plinth && plinth == laid, done + ": the teardown took down " + job.tornCount() + " of " + plinth
+                        + " cells, with " + laid + " laid");
+                // what leveling must do, from the world: a floor cell that is air over solid ground; and, once a course is laid, a cell the building has over its floor
+                // that holds the land
+                int fill = 0;
+                for (int x = s.bx0; x <= s.bx0 + 8; x++) {
+                    for (int z = s.bz0; z <= s.bz0 + 8; z++) {
+                        BlockPos c = new BlockPos(x, s.floor, z);
+                        fill += level.getBlockState(c).isAir() && !level.getBlockState(c.below()).isAir() ? 1 : 0;
+                    }
+                }
+                int cut = 0;
+                for (RoomTemplates.Entry e : s.template) {
+                    BlockPos c = s.pl.world(e.local());
+                    cut += !e.state().isAir() && e.local().getY() >= 1 && Siting.ground(level.getBlockState(c)) ? 1 : 0;
+                }
+                BlockState[] torn = states(level, area);
+                int n = job.levelFloor(level);
+                String moved = changed(level, area, torn);
+                if (stage <= 2) {
+                    h.assertTrue(n == 0 && moved == null, done + ": the site that did nothing changed the land: levelFloor made " + n + " cells level, " + moved + " (the hump at "
+                            + hump.toShortString() + " is " + level.getBlockState(hump) + ", the dip's floor cell at " + dip.toShortString() + " is " + level.getBlockState(dip) + ")");
+                    h.assertTrue(changed(level, area, before) == null, done + ": the world changed since the teardown began: " + changed(level, area, before));
+                    continue;
+                }
+                int want = fill + (stage == 4 ? cut : 0);
+                h.assertTrue(fill >= 8 && cut >= 9 && n == want, done + ": levelFloor made " + n + " cells level, not the " + want + " the world calls for (" + fill + " floor cells that are air over solid ground, "
+                        + (stage == 4 ? cut : 0) + " cells of the land over the floor in the building's cells; the scene has at least 8 and 9)");
+                for (int x = s.bx0; x <= s.bx0 + 8; x++) {
+                    for (int z = s.bz0; z <= s.bz0 + 8; z++) {
+                        BlockPos floorCell = new BlockPos(x, s.floor, z);
+                        h.assertTrue(Siting.ground(level.getBlockState(floorCell)), done + ": the floor of the box at " + x + " " + z + " is " + level.getBlockState(floorCell)
+                                + ": a hole where the dip was, or masonry");
+                    }
+                }
+                boolean standing = !level.getBlockState(hump).isAir() && !level.getBlockState(hump.below()).isAir();
+                h.assertTrue(stage == 3 ? standing : level.getBlockState(hump).isAir() && level.getBlockState(hump.below()).isAir(), done + ": the hump at " + hump.toShortString()
+                        + (stage == 3 ? " was cut (" : " still stands (") + level.getBlockState(hump) + ", " + level.getBlockState(hump.below()) + ") "
+                        + (stage == 3 ? "by a building that never rose: there is nothing of it left standing among its cells to level" : "though the building rose: nothing stands up out of its floor"));
+            }
             s.clear();
             h.succeed();
         }));

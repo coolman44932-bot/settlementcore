@@ -70,7 +70,7 @@ public final class SiteWork extends RoomWork {
     public static final int TICKS_PER_BLOCK = 6;
     /** The most cells a call of {@link RaiseJob#clear} does (the tests and the finish clear a site whole, unpaced). */
     public static final int CLEAR_PER_SECOND = 256;
-    /** The most cells of what is to be cut down one builder is sent to at once: a whole tree. */
+    /** The most cells of what is to be cut down one builder is sent to at once: a whole tree; a bigger one (up to Siting.TREE_MAX) is felled in batches, top-down, from its one foot. */
     public static final int CLEAR_BATCH = 60;
     /** Ticks a cell takes the builder at the trees: a tree of 50 blocks is down in about 2.5 s. */
     public static final int CLEAR_TICKS_PER_BLOCK = 1;
@@ -289,9 +289,10 @@ public final class SiteWork extends RoomWork {
     }
 
     /**
-     * The builder's chore while the site clears: walk to the foot of what is to be cut (the lowest of the next cells that hold a block: a tree's trunk),
-     * stand where the work is in reach, and swing at it; the cells come down in order with the swings, each with its dust and sound, and what is left
-     * of the batch when the chore ends. Null for any builder but the one that was sent, or when nothing is left to cut.
+     * The builder's chore while the site clears: walk to the foot of what is to be cut ({@link RaiseJob#clearFoot}: a tree's trunk, even when the next
+     * {@value #CLEAR_BATCH} cells, top-down, are only its upper part), stand where the work is in reach, and swing at it; the cells come down in order with
+     * the swings, each with its dust and sound, and what is left of the batch when the chore ends. A site called off while it swings fells nothing more
+     * ({@link RaiseJob#clearSome}). Null for any builder but the one that was sent, or when nothing is left to cut.
      */
     @Nullable
     private Chore nextClearChore(ServerLevel level, SettlerMob rat) {
@@ -304,12 +305,7 @@ public final class SiteWork extends RoomWork {
             cutter = null;
             return null;
         }
-        BlockPos anchor = cells.get(0);
-        for (BlockPos c : cells) {
-            if (c.getY() < anchor.getY() || c.getY() == anchor.getY() && c.distSqr(rat.blockPosition()) < anchor.distSqr(rat.blockPosition())) {
-                anchor = c;
-            }
-        }
+        BlockPos anchor = job.clearFoot(level, cells, rat.blockPosition());   // the foot of what is cut, not the lowest of these cells: a tree's crown, when it has more than a batch
         BlockPos stand = job.stand(level, anchor, cells, rat.blockPosition()).at();
         int n = cells.size();
         int work = Math.max(4, Math.round(CLEAR_TICKS_PER_BLOCK * n / rat.tempo()));

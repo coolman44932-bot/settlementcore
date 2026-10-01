@@ -461,7 +461,49 @@ public class RaiseJob extends DigJob {
      */
     public List<Crumb> clearSome(ServerLevel level, int changes) {
         ensureLoaded(level);
+        if (tearing) {
+            return List.of();                                    // called off: a cutter mid-chore (its swings and its end) fells nothing more
+        }
         return gnawChanges(level, changes, clearEnd);
+    }
+
+    /**
+     * Where the builder sent to cut {@code cells} ({@link #clearNext}) goes to stand: the foot of what it is cutting, the lowest block still to be cut in the
+     * rectangle of columns the cells stand over (a tree's trunk, where its first log meets the ground), the nearest to {@code near} of the lowest. Not the lowest of
+     * the cells themselves: a batch is only the next {@link SiteWork#CLEAR_BATCH} cells top-down, so for a tree of more cells than that the lowest of them is its
+     * crown, up in the air over the trunk, where no one can stand. The builder never got in reach of it, gave up after CrewGoal's 400 ticks, and the site
+     * cleared 20 cells after each 400 ticks with no cell down (item 20 of surface-builder.md: a tree of 100 cells took about a minute, one of 256 minutes). The swings
+     * fell the cells in the job's order whoever stands where, so the foot is only where the builder is seen to stand to its work. {@code cells} is never empty.
+     */
+    public BlockPos clearFoot(ServerLevel level, List<BlockPos> cells, BlockPos near) {
+        ensureLoaded(level);
+        int x0 = Integer.MAX_VALUE, x1 = Integer.MIN_VALUE, z0 = Integer.MAX_VALUE, z1 = Integer.MIN_VALUE;
+        BlockPos lowest = cells.get(0);
+        for (BlockPos c : cells) {
+            x0 = Math.min(x0, c.getX());
+            x1 = Math.max(x1, c.getX());
+            z0 = Math.min(z0, c.getZ());
+            z1 = Math.max(z1, c.getZ());
+            if (c.getY() < lowest.getY()) {
+                lowest = c;
+            }
+        }
+        BlockPos best = lowest;                                  // the cells' own lowest, unless something is lower in their columns (or as low and nearer)
+        List<Task> ts = tasks();
+        for (int i = front(); i < clearEnd; i++) {
+            if (finished(i)) {
+                continue;
+            }
+            BlockPos p = ts.get(i).pos();
+            if (p.getX() < x0 || p.getX() > x1 || p.getZ() < z0 || p.getZ() > z1 || p.getY() > best.getY() || !level.isLoaded(p)
+                    || level.getBlockState(p).isAir()) {
+                continue;
+            }
+            if (p.getY() < best.getY() || p.distSqr(near) < best.distSqr(near)) {
+                best = p;
+            }
+        }
+        return best;
     }
 
     /** The site clears the land itself: its clearing isn't done yet (and its builders have nothing to do). */
@@ -1579,12 +1621,20 @@ public class RaiseJob extends DigJob {
      * filled to a block under the floor) gets the land's own ground, as {@link #tearCell} gives the cells that came down; and in the cells above the floor
      * that were never laid, the land that still stands there (a hump the courses had not got to) is cut, so nothing stands up out of the floor either.
      * Returns how many cells it changed.
+     *
+     * <p>A site that did nothing leaves nothing (the plan's item 20: called off in the clearing, or at tick 0, the cells were cut and filled all the same,
+     * and the shell of the building was carved into a hillside). The floor is made level only once something of the building has been laid
+     * ({@link #laidCount}: the plinth of its blocks, or a course), which is what came down and left the holes; the land over it is cut only once a
+     * course has been laid ({@link #risen}), since only a building that rose can leave a pillar of the land standing among its cells. Before that the land
+     * is as the clearing and the earthworks left it, which stay, as they must.
      */
     public int levelFloor(ServerLevel level) {
         ensureLoaded(level);
         int n = 0;
         List<Task> ts = tasks();
-        for (int i = 0; plan != null && i < ts.size(); i++) {
+        boolean laid = laidCount() > 0;
+        boolean risen = risen();
+        for (int i = 0; plan != null && laid && i < ts.size(); i++) {
             if (phase[i] != COURSE || finished(i)) {
                 continue;
             }
@@ -1599,12 +1649,23 @@ public class RaiseJob extends DigJob {
                     level.setBlock(p, plan.look(p.getX(), p.getZ()).at(plan.floor() - p.getY()), flags);
                     n++;
                 }
-            } else if (Siting.ground(now)) {
+            } else if (risen && Siting.ground(now)) {
                 level.setBlock(p, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), flags);
                 n++;
             }
         }
         return n;
+    }
+
+    /** Whether any cell of a course is done: the building has begun to rise (the land over its floor is cut by {@link #levelFloor} only then). */
+    public boolean risen() {
+        List<Task> ts = tasks();
+        for (int i = 0; ts != null && i < ts.size(); i++) {
+            if (phase[i] == COURSE && finished(i)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
