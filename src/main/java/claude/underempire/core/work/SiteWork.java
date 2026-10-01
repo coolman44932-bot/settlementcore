@@ -111,6 +111,8 @@ public final class SiteWork extends RoomWork {
     /** How many cells the clearing had done when the site last looked, and when that last changed (game time): a clearing that goes nowhere is the site's own. */
     private int clearSeen = -1;
     private long clearAt = -1;
+    /** The site has begun to clear the land itself (no builder came, or none got on): once begun it goes on, 20 cells a second, and is not given back to a builder (not saved). */
+    private boolean clearSelf;
     /** When each builder was last sent back round to the landing ({@link #backToTheDoor}). */
     private final Map<UUID, Long> sentAt = new HashMap<>();
     /** The falls {@link SureFooting} took the damage of since the site was begun (or loaded: not saved), and the longest. */
@@ -226,7 +228,8 @@ public final class SiteWork extends RoomWork {
                 clearSeen = done;
                 clearAt = now;
             }
-            if (crewHere == 0 && heart.reserveWorkers() <= 0 || now - clearAt >= CLEAR_PATIENCE) {
+            if (clearSelf || crewHere == 0 && heart.reserveWorkers() <= 0 || now - clearAt >= CLEAR_PATIENCE) {
+                clearSelf = true;                                // its own cells change the count the patience watches, which began the 400 ticks again after each 20
                 effects(level, job.clearSome(level, CLEAR_SELF_PER_SECOND));
             }
         }
