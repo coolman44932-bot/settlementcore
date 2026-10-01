@@ -1,6 +1,7 @@
 package claude.underempire.core.test;
 
 import claude.underempire.core.Core;
+import claude.underempire.core.defence.Muster;
 import claude.underempire.core.room.PlanPlacement;
 import claude.underempire.core.room.RaiseJob;
 import claude.underempire.core.room.Rooms;
@@ -14,6 +15,7 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
@@ -28,7 +30,8 @@ import java.util.regex.Pattern;
  * refused, called off, torn down and handed over on a settlement of the tests' own, and every line the engine says about it, to the
  * owner or in a report, is read for a word of another race's: rat, warlord, clan, clanrat, warren, horde, heart, warpstone, slave, skaven
  * (word-bounded, and plural). A word found is fixed with a seam, a word of {@link claude.underempire.core.settlement.Settlement}, never an
- * exception here (the first it found: a refusal that said "raise it near its heart", now {@code Settlement#centreName}).
+ * exception here (the first it found: a refusal that said "raise it near its heart", now {@code Settlement#centreName}). The muster's alarm and
+ * all-clear lines are read the same way (its words: {@code Settlement#musterWords}).
  */
 @GameTestHolder(Core.MODID)
 @PrefixGameTestTemplate(false)
@@ -142,6 +145,49 @@ public class EngineWordsGameTests {
             s.clear();
             h.succeed();
         }));
+    }
+
+    /**
+     * The muster's two lines to the owner (core/defence/Muster) on a settlement of the tests' own that gives no words for them: a foe comes into it and
+     * the alarm is told; the foe goes, {@link Muster#ALL_CLEAR} quiet seconds pass and the all-clear is told. Neither has a race's word ("The warren is attacked!",
+     * "the horde rises", "sink back into the tunnels" were the Skaven's, said to any race: the review of 20da67f). The all-clear's tail, which needs defenders
+     * the engine cannot make (it has no mob), is read from the line the muster builds it with, for one defender and for several.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void theMustersAlarmAndAllClearNameNoRace(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        TestSettlement t = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        t.claim(h.makeMockServerPlayerInLevel(), "The Pool of Sotek");
+        t.holds = true;
+        Hoglin foe = MusterGameTests.foeAt(level, h.absolutePos(new BlockPos(4, 2, 4)), false);
+        foe.setNoGravity(true);
+        foe.setInvulnerable(true);
+        level.addFreshEntity(foe);
+        try {
+            Muster muster = t.muster();
+            muster.second(level, t);
+            h.assertTrue(muster.alarmed() && muster.lastSeen == 1, "the foe in the settlement raised no alarm (" + muster.lastSeen + " seen)");
+            h.assertTrue(t.heard.size() == 1 && t.heard.get(0).startsWith("The settlement is attacked!"), "the alarm said " + t.heard + ", not a line of the engine's words");
+            foe.discard();
+            for (int i = 0; i < Muster.ALL_CLEAR; i++) {
+                muster.second(level, t);
+            }
+            h.assertTrue(!muster.alarmed() && t.heard.size() == 2 && t.heard.get(1).startsWith("The settlement is clear:"),
+                    "the all-clear said " + t.heard + ", not a second line of the engine's words");
+            List<String> said = new ArrayList<>(t.heard);
+            said.add(Muster.clearLine(t.musterWords(), 3, 2, 4));
+            said.add(Muster.clearLine(t.musterWords(), 1, 0, 1));
+            said.add(Muster.attackedLine(t.musterWords(), "3 Zombies and a Pillager", "Test Platform", false));
+            h.assertTrue(said.get(2).endsWith("4 defenders stand down.") && said.get(3).endsWith("A defender stands down."), "the all-clear's tail reads " + said.get(2) + " / " + said.get(3));
+            for (String line : said) {
+                String word = raceWordIn(line);
+                h.assertTrue(word == null, "the muster said \"" + line + "\", with the race's word \"" + word + "\": a seam (a Settlement word) is owed, not an exception here");
+            }
+        } finally {
+            foe.discard();
+            t.setRemoved();
+        }
+        h.succeed();
     }
 
     /** What the site says of itself: its report and what it needs. */

@@ -369,9 +369,27 @@ public final class Muster {
         Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
         Mob head = in.stream().min(Comparator.comparingDouble(m -> m.distanceToSqr(heart))).orElseThrow();
         String where = h.placeOf(head.blockPosition());
-        h.tellOwner("The warren is attacked! " + claude.underempire.core.Words.capital(count(in))
-                + (where.isEmpty() ? " in the tunnels" : " in the " + where)
-                + ": the horde rises to meet " + (in.size() == 1 ? "it." : "them."), ChatFormatting.RED);
+        h.tellOwner(attackedLine(h.musterWords(), count(in), where, in.size() == 1), ChatFormatting.RED);
+    }
+
+    /**
+     * The alarm's line to the owner, in the settlement's words ({@link Settlement#musterWords}): {@code foes} are what it is in ("5 Zombies and a Pillager"),
+     * {@code where} the room they are in (none: in no room), {@code one} whether there is the one of them. Public for the engine's tests.
+     */
+    public static String attackedLine(Settlement.MusterWords w, String foes, String where, boolean one) {
+        return "The " + w.place() + " is attacked! " + claude.underempire.core.Words.capital(foes)
+                + (where.isEmpty() ? " in " + w.ground() : " in the " + where)
+                + ": " + w.rises() + " to meet " + (one ? "it." : "them.");
+    }
+
+    /**
+     * The all-clear's line to the owner, in the settlement's words: {@code slain} foes slain, {@code lost} of its own lost, and {@code home} of its
+     * defenders stood down (none: no more said). Public for the engine's tests.
+     */
+    public static String clearLine(Settlement.MusterWords w, int slain, int lost, int home) {
+        return "The " + w.place() + " is clear: " + slain + (slain == 1 ? " foe" : " foes") + " slain, " + lost + " of ours lost."
+                + (home > 0 ? " " + claude.underempire.core.Words.capital(claude.underempire.core.Words.count(home, "defender"))
+                + " " + (home == 1 ? w.verb() + "s" : w.verb()) + " " + w.back() + "." : "");
     }
 
     private void standDown(ServerLevel level, Settlement h) {
@@ -388,9 +406,7 @@ public final class Muster {
                 clear(r);
             }
         }
-        h.tellOwner("The warren is clear: " + slain + (slain == 1 ? " foe" : " foes") + " slain, " + lost + " of ours lost."
-                + (home > 0 ? " " + claude.underempire.core.Words.capital(claude.underempire.core.Words.count(home, "defender"))
-                + (home == 1 ? " sinks" : " sink") + " back into the tunnels." : ""), ChatFormatting.GREEN);
+        h.tellOwner(clearLine(h.musterWords(), slain, lost, home), ChatFormatting.GREEN);
         defenders.clear();
         buffed.clear();
         foes.clear();

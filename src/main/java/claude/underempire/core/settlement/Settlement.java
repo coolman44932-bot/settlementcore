@@ -125,6 +125,23 @@ public interface Settlement extends RoomShoring.Warren {
         return "centre";
     }
 
+    /**
+     * The words of the muster's two lines to the owner (core/defence/Muster): the alarm, "The warren is attacked! 3 Zombies in the tunnels: the horde
+     * rises to meet them.", and the all-clear, "The warren is clear: 3 foes slain, 1 of ours lost. 4 defenders sink back into the tunnels." (the Warren
+     * Heart's words). {@code place} is what the settlement is called in them ("warren"), {@code ground} where a foe is that is in none of its rooms
+     * ("the tunnels"), {@code rises} what its defenders do at the alarm, before "to meet it" ("the horde rises"), and {@code verb} (plural: "sink";
+     * the singular adds an s) and {@code back} what they do at the all-clear ("back into the tunnels"). The engine's own name no race.
+     */
+    record MusterWords(String place, String ground, String rises, String verb, String back) {
+        /** What a race that says nothing of its own gets (the test of core/test/EngineWordsGameTests reads every line made of it). */
+        public static final MusterWords ENGINE = new MusterWords("settlement", "the settlement", "its defenders rise", "stand", "down");
+    }
+
+    /** The words of the muster's lines: {@link MusterWords#ENGINE} until a race says. */
+    default MusterWords musterWords() {
+        return MusterWords.ENGINE;
+    }
+
     /** Whether {@code bed} is in one of its dens (core/work/Den). */
     boolean inDen(BlockPos bed);
 

@@ -99,7 +99,7 @@ public class MusterGameTests {
                 });
     }
 
-    private static Hoglin foeAt(ServerLevel level, BlockPos at, boolean inTheWorld) {
+    static Hoglin foeAt(ServerLevel level, BlockPos at, boolean inTheWorld) {
         Hoglin foe = EntityType.HOGLIN.create(level);
         foe.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 0, 0);
         foe.setNoAi(true);
