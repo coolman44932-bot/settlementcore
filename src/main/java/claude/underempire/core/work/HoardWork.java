@@ -67,12 +67,12 @@ public class HoardWork extends RoomWork {
         }
     }
 
-    /** Which section a thing belongs in. */
-    public static Kind kind(ItemStack s) {
+    /** Which section a thing belongs in: the settlement's own currency (its unit, its refined form) is metal whatever it is made of. */
+    public static Kind kind(Settlement heart, ItemStack s) {
         if (s.is(Tags.Items.INGOTS) || s.is(Tags.Items.RAW_MATERIALS) || s.is(Tags.Items.GEMS) || s.is(Tags.Items.NUGGETS)
                 || s.is(Tags.Items.ORES) || s.is(Tags.Items.DUSTS) || s.is(ItemTags.COALS) || s.is(Tags.Items.STORAGE_BLOCKS)
                 || s.is(Items.FLINT) || s.is(Items.AMETHYST_SHARD) || s.is(Items.QUARTZ)
-                || Currencies.unit(s) || Currencies.refined(s)) {
+                || Currencies.unit(heart, s) || Currencies.refined(heart, s)) {
             return Kind.METALS;
         }
         if (s.has(net.minecraft.core.component.DataComponents.FOOD) || s.is(Tags.Items.CROPS) || s.is(Tags.Items.SEEDS)
@@ -96,7 +96,7 @@ public class HoardWork extends RoomWork {
     /** Into the Hoard, in its own section if there is room, else Spoils, else anywhere. Returns what did not fit. */
     public ItemStack put(ServerLevel level, ItemStack s) {
         rescan(level);
-        ItemStack rest = store(level, sections.getOrDefault(kind(s), List.of()), s);
+        ItemStack rest = store(level, sections.getOrDefault(kind(heart, s), List.of()), s);
         if (!rest.isEmpty()) {
             rest = store(level, sections.getOrDefault(Kind.SPOILS, List.of()), rest);
         }
@@ -137,7 +137,7 @@ public class HoardWork extends RoomWork {
                     }
                     for (int i = 0; i < c.getContainerSize(); i++) {
                         ItemStack have = c.getItem(i);
-                        if (!have.isEmpty() && kind(have) == k && Bins.hasRoom(level, sections.get(k), have)) {
+                        if (!have.isEmpty() && kind(heart, have) == k && Bins.hasRoom(level, sections.get(k), have)) {
                             BlockPos to = nearest(sections.get(k), from);
                             ItemStack like = have.copy();
                             return carry("sorting the hoard", from, st -> ItemStack.isSameItemSameComponents(st, like), 64, to, from,

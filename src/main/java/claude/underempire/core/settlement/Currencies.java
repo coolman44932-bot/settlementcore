@@ -11,14 +11,16 @@ import java.util.List;
 import java.util.function.Supplier;
 
 /**
- * Every race's currency, for the engine's checks that have no settlement at hand (what a hoard's section a thing goes in,
- * how precious it is to smelt): its unit, its block, its refined form and the ores it is mined from. Registered at start-up
+ * Every race's currency: its unit, its block, its refined form and the ores it is mined from. Registered at start-up
  * (Under-Empire: warpstone shards, blocks, refined warpstone and warpstone ore); resolved lazily, so a race registers its
  * items before the registries fill.
  *
- * <p>What a thing is worth in a settlement's currency is {@link #worth}: its unit is one, its block nine, and a race may count more
- * things in ({@link #alsoWorth}: gold nuggets, nine to the ingot). It is asked of a settlement, and answers for that settlement's own
- * currency only: two races' currencies can be registered at once, and shards put into a gold settlement's ledger are not gold.
+ * <p>Every question the engine asks of a currency is asked of a settlement, and answers for that settlement's own currency only
+ * (its {@link Settlement#currencyItem} is the key): two races' currencies can be registered at once, and shards put into a gold
+ * settlement's ledger are not gold, gold ore cut by a Skaven mine is not warpstone, and a gold block in a Skaven forge's bin is
+ * not refined warpstone on its way. What a thing is worth in a settlement's currency is {@link #worth}: its unit is one, its block
+ * nine, and a race may count more things in ({@link #alsoWorth}: gold nuggets, nine to the ingot). {@link #unit}, {@link #block},
+ * {@link #refined} and {@link #ore} say whether a thing is that settlement's own unit, block, refined form or ore.
  */
 public final class Currencies {
 
@@ -98,39 +100,32 @@ public final class Currencies {
         return null;
     }
 
-    /** One unit of some race's currency (a warpstone shard). */
-    public static boolean unit(ItemStack s) {
-        for (Currency c : ALL) {
-            if (s.is(c.unit().get())) {
-                return true;
-            }
-        }
-        return false;
+    /** One unit of {@code settlement}'s own currency (a warpstone shard for the Skaven), and of no other's. */
+    public static boolean unit(Settlement settlement, ItemStack s) {
+        return s.is(settlement.currencyItem());
     }
 
-    /** Some race's currency block. */
-    public static boolean block(ItemStack s) {
-        for (Currency c : ALL) {
-            if (s.is(c.block().get())) {
-                return true;
-            }
-        }
-        return false;
+    /** {@code settlement}'s own currency block, and no other's. */
+    public static boolean block(Settlement settlement, ItemStack s) {
+        return s.is(settlement.currencyBlock());
     }
 
-    /** Some race's refined currency. */
-    public static boolean refined(ItemStack s) {
-        for (Currency c : ALL) {
-            if (c.refined() != null && s.is(c.refined().get())) {
-                return true;
-            }
-        }
-        return false;
+    /** {@code settlement}'s own refined currency, and no other's: nothing for a settlement that refines none. */
+    public static boolean refined(Settlement settlement, ItemStack s) {
+        Item refined = settlement.refinedCurrency();
+        return refined != null && s.is(refined);
     }
 
-    /** An ore some race's currency is mined from. */
-    public static boolean ore(BlockState s) {
+    /**
+     * An ore {@code settlement}'s own currency is mined from: one registered beside its {@link Settlement#currencyItem unit}, and no
+     * other race's (a Skaven mine cutting gold ore finds ore, not warpstone, whatever the Great Plan registered).
+     */
+    public static boolean ore(Settlement settlement, BlockState s) {
+        Item unit = settlement.currencyItem();
         for (Currency c : ALL) {
+            if (c.unit().get() != unit) {
+                continue;
+            }
             for (Supplier<? extends Block> b : c.ores()) {
                 if (s.is(b.get())) {
                     return true;

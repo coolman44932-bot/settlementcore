@@ -119,7 +119,7 @@ public class ForgeWork extends RoomWork {
             if (s.isEmpty() || !pick.test(s)) {
                 continue;
             }
-            int v = value(s);
+            int v = valueFor(s);
             if (v > bestValue) {
                 best = s.copy();
                 bestValue = v;
@@ -128,15 +128,20 @@ public class ForgeWork extends RoomWork {
         return best;
     }
 
+    /** What the settlement's own currency block is worth to smelt: pressed for the Fleshpits (or dropped in by the Warlord), it is refined at once. */
+    static final int CURRENCY_BLOCK_VALUE = 85;
+
+    /** {@link #value}, but a block of this settlement's own currency (and no other race's) goes first of what is not ancient debris or a diamond. */
+    public int valueFor(ItemStack s) {
+        return Currencies.block(heart, s) ? CURRENCY_BLOCK_VALUE : value(s);
+    }
+
     /**
      * How precious a thing is to smelt, the most first: ancient debris, diamond and emerald ore, gold, iron, the other
      * mods' metals (tin, silver, ...), lapis and redstone, copper, coal and quartz ore, then the rest (food for a plain
      * furnace, then stone, sand, logs).
      */
     public static int value(ItemStack s) {
-        if (Currencies.block(s)) {
-            return 85;                                           // pressed for the Fleshpits (or dropped in by the Warlord): refined at once
-        }
         if (s.is(net.minecraft.world.item.Items.ANCIENT_DEBRIS) || s.is(Tags.Items.ORES_NETHERITE_SCRAP)) {
             return 100;
         }
@@ -220,8 +225,8 @@ public class ForgeWork extends RoomWork {
 
     // ------------------------------------------------------------------ refining warpstone
 
-    public static boolean refined(ItemStack s) {
-        return Currencies.refined(s);
+    public static boolean refined(Settlement heart, ItemStack s) {
+        return Currencies.refined(heart, s);
     }
 
     /** Whether the chambers can refine: a blast furnace, and an Ore Bin to put the blocks in. */
@@ -232,13 +237,13 @@ public class ForgeWork extends RoomWork {
     /** Refined warpstone on its way: warpstone blocks in the Ore Bin and the blast furnaces, refined waiting in their outputs. */
     int refinedComing(ServerLevel level) {
         rescan(level);
-        int n = REFINED_PER_BLOCK * Bins.count(level, ores, s -> Currencies.block(s));
+        int n = REFINED_PER_BLOCK * Bins.count(level, ores, s -> Currencies.block(heart, s));
         for (BlockPos p : furnaces) {
             if (level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f) {
-                if (Currencies.block(f.getItem(0))) {
+                if (Currencies.block(heart, f.getItem(0))) {
                     n += REFINED_PER_BLOCK * f.getItem(0).getCount();
                 }
-                if (refined(f.getItem(2))) {
+                if (refined(heart, f.getItem(2))) {
                     n += f.getItem(2).getCount();
                 }
             }

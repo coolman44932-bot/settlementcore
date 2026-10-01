@@ -13,6 +13,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
@@ -54,7 +55,7 @@ public class CurrencyGameTests {
     }
 
     private static void registerCopper() {
-        Currencies.register(() -> Items.COPPER_INGOT, () -> Items.COPPER_BLOCK, null);
+        Currencies.register(() -> Items.COPPER_INGOT, () -> Items.COPPER_BLOCK, null, () -> Blocks.COPPER_ORE);
         Currencies.alsoWorth(() -> Items.COPPER_INGOT, () -> Items.FLINT, 1, 9);
     }
 
@@ -87,8 +88,8 @@ public class CurrencyGameTests {
             Currencies.Worth block = Currencies.worth(copper, new ItemStack(Items.COPPER_BLOCK));
             h.assertTrue(block.unitsOf(3) == 27 && block.itemsFor(3) == 3, "3 blocks come to " + block.unitsOf(3) + " and take " + block.itemsFor(3));
         });
-        h.assertTrue(Currencies.worth(copper, new ItemStack(Items.FLINT)) == null && !Currencies.unit(new ItemStack(Items.COPPER_INGOT)),
-                "the test's copper is still a currency after it (its scraps are worth something, or its ingot is a unit)");
+        h.assertTrue(Currencies.worth(copper, new ItemStack(Items.FLINT)) == null && !Currencies.ore(copper, Blocks.COPPER_ORE.defaultBlockState()),
+                "the test's copper is still a currency after it (its scraps are worth something, or its ore is its ore)");
         h.succeed();
     }
 
@@ -96,7 +97,7 @@ public class CurrencyGameTests {
      * Two currencies registered at once (as two races' are once both are loaded) are each worth something only to the settlement they
      * belong to: a copper settlement counts its ingot (1), block (9) and flint scraps (1 per 9) and refuses iron's ingot, block and
      * nuggets, and an iron settlement counts its own and refuses copper's, scraps included (a worth is tied to the unit it was named
-     * for); a settlement of neither counts neither. The checks that have no settlement at hand ({@link Currencies#unit}) still see both.
+     * for); a settlement of neither counts neither.
      */
     @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
     public static void aSettlementCountsOnlyItsOwnCurrency(GameTestHelper h) {
@@ -119,8 +120,8 @@ public class CurrencyGameTests {
                 h.assertTrue(Currencies.worth(neither, coppers[i]) == null && Currencies.worth(neither, irons[i]) == null,
                         "a settlement of another currency counted a " + kinds[i] + " of copper or iron");
             }
-            h.assertTrue(Currencies.unit(coppers[0]) && Currencies.unit(irons[0]) && Currencies.block(coppers[1]) && Currencies.block(irons[1]),
-                    "the checks with no settlement at hand no longer see both currencies");
+            h.assertTrue(Currencies.unit(copper, coppers[0]) && !Currencies.unit(copper, irons[0]) && Currencies.block(iron, irons[1]) && !Currencies.block(iron, coppers[1]),
+                    "a settlement's unit and block are not its own currency's alone");
         });
         h.succeed();
     }

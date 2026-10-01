@@ -977,13 +977,16 @@ public class MineWork extends RoomWork {
         }
     }
 
-    /** One block out of the rock: ore to the Ore Cart (warpstone to the Heart), stone to the Stone Bin while there is room. */
-    private void cut(ServerLevel level, BlockPos p, boolean noisy) {
+    /**
+     * One block out of the rock: ore to the Ore Cart (the settlement's own currency's ore to its currency, warpstone for the
+     * Heart), stone to the Stone Bin while there is room. Public for the tests.
+     */
+    public void cut(ServerLevel level, BlockPos p, boolean noisy) {
         BlockState s = level.getBlockState(p);
         if (s.isAir()) {
             return;
         }
-        if (Currencies.ore(s)) {
+        if (Currencies.ore(heart, s)) {
             heart.addCurrency(1 + level.random.nextInt(3), "Ore Mine");
             found++;
         } else {
