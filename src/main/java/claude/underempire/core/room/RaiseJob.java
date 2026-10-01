@@ -1110,13 +1110,19 @@ public class RaiseJob extends DigJob {
 
     /** {@link #standFor}, with whether the builder can walk there ({@link Stand}). */
     public Stand stand(ServerLevel level, BlockPos anchor, List<BlockPos> batch, BlockPos near) {
+        long began = MEASURING ? System.nanoTime() : 0;
         LongOpenHashSet mine = new LongOpenHashSet(batch.size());
         for (BlockPos b : batch) {
             mine.add(column(b.getX(), b.getZ()));
         }
         Long2IntOpenHashMap walk = walkable(level, near, anchor);
         BlockPos there = walk == null ? null : scanStands(level, anchor, mine, near, walk);
-        return there != null ? new Stand(there, true) : new Stand(scanStands(level, anchor, mine, near, null), walk == null);
+        Stand out = there != null ? new Stand(there, true) : new Stand(scanStands(level, anchor, mine, near, null), walk == null);
+        if (MEASURING) {
+            STAND_NANOS.add(System.nanoTime() - began);
+            STANDS.increment();
+        }
+        return out;
     }
 
     /**
@@ -1173,6 +1179,30 @@ public class RaiseJob extends DigJob {
      */
     @Nullable
     private static Long2IntOpenHashMap walkable(ServerLevel level, BlockPos from, BlockPos anchor) {
+        if (!MEASURING) {
+            return flood(level, from, anchor);
+        }
+        long began = System.nanoTime();
+        Long2IntOpenHashMap seen = flood(level, from, anchor);
+        FLOOD_NANOS.add(System.nanoTime() - began);
+        FLOODS.increment();
+        FLOOD_CELLS.add(seen == null ? 0 : seen.size());
+        return seen;
+    }
+
+    /** The benchmark (-Pperf) is running: the stands and their walk floods are counted and timed ({@link #FLOODS}). Never in play. */
+    private static final boolean MEASURING = Boolean.getBoolean("underempire.perf");
+    /**
+     * What the benchmark reads (PerfGameTests#sites, surface-builder.md item 18): the walk floods run, the nanoseconds in them and the cells they visited, and
+     * the stands asked for ({@link #stand}: a flood, then the scan of the cells round the work) and the nanoseconds in those. Counted only under -Pperf.
+     */
+    public static final java.util.concurrent.atomic.LongAdder FLOODS = new java.util.concurrent.atomic.LongAdder(),
+            FLOOD_NANOS = new java.util.concurrent.atomic.LongAdder(), FLOOD_CELLS = new java.util.concurrent.atomic.LongAdder(),
+            STANDS = new java.util.concurrent.atomic.LongAdder(), STAND_NANOS = new java.util.concurrent.atomic.LongAdder();
+
+    /** The flood itself ({@link #walkable}). */
+    @Nullable
+    private static Long2IntOpenHashMap flood(ServerLevel level, BlockPos from, BlockPos anchor) {
         int r = STAND_ACROSS + 2;
         int x0 = Math.min(from.getX(), anchor.getX()) - r;
         int x1 = Math.max(from.getX(), anchor.getX()) + r;
