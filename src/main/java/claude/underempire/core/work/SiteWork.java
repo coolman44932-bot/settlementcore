@@ -85,6 +85,9 @@ public final class SiteWork extends RoomWork {
     private int dry;
     /** When each builder was last sent back round to the landing ({@link #backToTheDoor}). */
     private final Map<UUID, Long> sentAt = new HashMap<>();
+    /** The falls {@link SureFooting} took the damage of since the site was begun (or loaded: not saved), and the longest. */
+    private int shoves;
+    private float hardestShove;
 
     public SiteWork(Settlement settlement, RaiseJob job) {
         super(settlement, new Building(job.roomId, job.placement().box(), job.door, job.facing), job.placement());
@@ -94,6 +97,19 @@ public final class SiteWork extends RoomWork {
 
     public RaiseJob job() {
         return job;
+    }
+
+    /**
+     * How many falls of its builders {@link SureFooting} took the damage of (each was more than the builder's safe fall, so each would have hurt
+     * it): the crewed tests fail on any, since a builder shoved off a course isn't hurt and nothing else would say so.
+     */
+    public int shoves() {
+        return shoves;
+    }
+
+    /** The longest of those falls, in blocks (the event's own distance, exact). */
+    public float hardestShove() {
+        return hardestShove;
     }
 
     /** Whether every cell is done: the Works hand it over. */
@@ -276,21 +292,31 @@ public final class SiteWork extends RoomWork {
 
         @SubscribeEvent
         public static void landed(LivingFallEvent e) {
-            if (e.getEntity() instanceof SettlerMob rat && e.getDistance() > rat.getAttributeValue(Attributes.SAFE_FALL_DISTANCE)
-                    && sureFooted(rat)) {
-                e.setCanceled(true);
+            if (e.getEntity() instanceof SettlerMob rat && e.getDistance() > rat.getAttributeValue(Attributes.SAFE_FALL_DISTANCE)) {
+                SiteWork site = footedAt(rat);
+                if (site != null) {
+                    site.shoves++;                               // counted, for the tests: the fall is no harm to anyone, so nothing else shows it
+                    site.hardestShove = Math.max(site.hardestShove, e.getDistance());
+                    e.setCanceled(true);
+                }
             }
         }
 
         /** Whether {@code rat}, on the ground where it is now, is a builder on its own site's footing. */
         public static boolean sureFooted(SettlerMob rat) {
+            return footedAt(rat) != null;
+        }
+
+        /** The site {@code rat} is a builder of, when it stands on that site's footing; else null. */
+        @Nullable
+        private static SiteWork footedAt(SettlerMob rat) {
             if (!rat.isCrew() || rat.level().isClientSide()) {
-                return false;
+                return null;
             }
             Settlement home = rat.settlement();
             SiteWork site = home == null ? null : home.works().siteOf(rat);
             BoundingBox footing = site == null ? null : site.job().footing();
-            return footing != null && footing.isInside(rat.blockPosition());
+            return footing != null && footing.isInside(rat.blockPosition()) ? site : null;
         }
     }
 

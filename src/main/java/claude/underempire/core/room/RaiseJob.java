@@ -178,6 +178,7 @@ public class RaiseJob extends DigJob {
         }
         t.putInt("paid", paid);
         t.putInt("heaved", heaved);
+        t.putInt("spared", spared);                              // the tally the Ledger shows; it began again at 0 on every load before
     }
 
     @Override
@@ -185,6 +186,7 @@ public class RaiseJob extends DigJob {
         planTag = t.contains("reshape") ? t.getCompound("reshape") : null;
         paid = t.getInt("paid");
         heaved = t.getInt("heaved");
+        spared = t.getInt("spared");
     }
 
     // --- the task list -------------------------------------------------------------------------------------------------
