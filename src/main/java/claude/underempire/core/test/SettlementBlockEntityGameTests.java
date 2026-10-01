@@ -67,6 +67,8 @@ public class SettlementBlockEntityGameTests {
         boolean dormant;
         Famine famine = Famine.NONE;
         int rounds;
+        /** Those teeming (up, on neither the roll nor the reserve): -1 leaves the base's own count, the muster's defenders. */
+        int teeming = -1;
         Spawning spawning;
         final List<String> told = new ArrayList<>();
         final List<String> asked = new ArrayList<>();
@@ -149,6 +151,11 @@ public class SettlementBlockEntityGameTests {
         @Override
         public int peopleCap() {
             return peopleCap;
+        }
+
+        @Override
+        protected int teeming() {
+            return teeming >= 0 ? teeming : super.teeming();
         }
 
         /** The raise that cannot be made (a mob needs a registered type with its attributes, and the engine has no mob of its own): asked, and none made. */
@@ -390,6 +397,75 @@ public class SettlementBlockEntityGameTests {
         for (TestSettlement t : List.of(s, fast, still, small, warm)) {
             t.setRemoved();
         }
+        h.succeed();
+    }
+
+    /**
+     * A second runs at most {@link SettlementBlockEntity#MAX_ROUNDS_PER_SECOND} rounds of spawning, and a saved progress is clamped on load: a
+     * progress of a billion, or a clock that was 59 seconds along a round of 60 when the round became 1 second long, makes 4 rounds in its
+     * next second (the backlog is dropped, not caught up on), never a thousand; a billion is kept as an hour, and a negative or a non-number
+     * as none; and the clock still runs a round a second after.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 40, batch = "settlement")
+    public static void theSpawnClockRunsAtMostAFewRoundsASecondAndSavesNothingCorrupt(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        TestSettlement source = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        CompoundTag base = source.saved(level.registryAccess());
+        float[] saved = {1e9f, Float.NaN, -5f, Float.POSITIVE_INFINITY, 12.5f};
+        float[] kept = {SettlementBlockEntity.MAX_SAVED_PROGRESS, 0f, 0f, SettlementBlockEntity.MAX_SAVED_PROGRESS, 12.5f};
+        for (int i = 0; i < saved.length; i++) {
+            CompoundTag tag = base.copy();
+            tag.putFloat("spawn_progress", saved[i]);
+            TestSettlement back = TestSettlement.of(h, new BlockPos(2, 2, 2));
+            back.load(tag, level.registryAccess());
+            float now = back.saved(level.registryAccess()).getFloat("spawn_progress");
+            h.assertTrue(now == kept[i], "a saved progress of " + saved[i] + " was kept as " + now + ", not " + kept[i]);
+            back.setRemoved();
+        }
+
+        CompoundTag tag = base.copy();
+        tag.putFloat("spawn_progress", 1e9f);
+        TestSettlement corrupt = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        corrupt.load(tag, level.registryAccess());
+        corrupt.every = 1;
+        seconds(h, corrupt, 1);
+        h.assertTrue(corrupt.rounds == SettlementBlockEntity.MAX_ROUNDS_PER_SECOND,
+                "a corrupt progress made " + corrupt.rounds + " rounds in its second, not " + SettlementBlockEntity.MAX_ROUNDS_PER_SECOND);
+
+        tag = base.copy();
+        tag.putFloat("spawn_progress", 59f);
+        TestSettlement dropped = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        dropped.load(tag, level.registryAccess());
+        dropped.every = 1;
+        seconds(h, dropped, 1);
+        h.assertTrue(dropped.rounds == SettlementBlockEntity.MAX_ROUNDS_PER_SECOND, "59 seconds along a round that became 1 second long made " + dropped.rounds
+                + " rounds in its second, not " + SettlementBlockEntity.MAX_ROUNDS_PER_SECOND);
+        int made = dropped.rounds;
+        seconds(h, dropped, 3);
+        h.assertTrue(dropped.rounds - made >= 3 && dropped.rounds - made <= 4, "the clock did not come back to a round a second: " + (dropped.rounds - made) + " rounds in 3 seconds more");
+        for (TestSettlement t : List.of(source, corrupt, dropped)) {
+            t.setRemoved();
+        }
+        h.succeed();
+    }
+
+    /**
+     * The population counts those teeming (up and alive, on neither the roll nor the reserve: the muster's defenders), so a round of spawning
+     * makes no room for new people while they are up: 1 on the roll, 2 in the reserve and 3 teeming are 6 under a cap of 10, which leaves a
+     * room of 4, not 7; and with none teeming (the base counts the muster's defenders, none here) it is the roll and the reserve alone.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 40, batch = "settlement")
+    public static void thePopulationCountsThoseTeemingSoTheBroodMakesNoRoomForThem(GameTestHelper h) {
+        TestSettlement s = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        s.cap = 10;
+        s.roll().add(UUID.randomUUID());
+        s.addToReserve(2, 0);
+        h.assertTrue(s.population() == 3 && s.brood(h.getLevel()).room() == 7, "with no one teeming the population was " + s.population() + " and the room " + s.brood(h.getLevel()).room()
+                + ", not 3 and 7");
+        s.teeming = 3;
+        h.assertTrue(s.population() == 6, "with 3 teeming the population was " + s.population() + ", not 6");
+        h.assertTrue(s.brood(h.getLevel()).room() == 4, "with 3 teeming the brood's room was " + s.brood(h.getLevel()).room() + ", not 4");
+        s.setRemoved();
         h.succeed();
     }
 

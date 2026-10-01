@@ -91,6 +91,16 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
     private long ticks;
     /** Seconds of the rooms' clock since the last round of spawning (a settlement whose rooms run faster gains it faster). */
     private float spawnProgress;
+    /**
+     * Rounds of spawning a second may run at most: a {@link #spawnSeconds} that has just dropped (a pool woken, a race's own change) or a
+     * progress saved corrupt would otherwise loop the tick, a round each time, for as many rounds as the progress holds.
+     */
+    public static final int MAX_ROUNDS_PER_SECOND = 4;
+    /**
+     * The most spawn progress a saved settlement keeps: an hour of the rooms' clock. A round comes every few seconds to few minutes, so
+     * more is corrupt (or from a settlement whose rounds were far longer); it is read as an hour, and a non-number or a negative one as none.
+     */
+    public static final float MAX_SAVED_PROGRESS = 3600f;
 
     protected SettlementBlockEntity(BlockEntityType<?> type, BlockPos pos, BlockState state, Keys keys) {
         super(type, pos, state);
@@ -227,17 +237,27 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         setChanged();
     }
 
-    /** A second of the rooms' clock: a round of spawning for each {@link #spawnSeconds} it has gathered. */
+    /**
+     * A second of the rooms' clock: a round of spawning for each {@link #spawnSeconds} it has gathered, at most
+     * {@link #MAX_ROUNDS_PER_SECOND} a second; a backlog past that is dropped, down to one round's worth.
+     */
     private void spawnClock(ServerLevel level) {
         int every = spawnSeconds();
         if (every <= 0) {
             return;
         }
-        spawnProgress += Math.max(0f, workPace());
-        while (spawnProgress >= every) {
+        float pace = workPace();
+        spawnProgress = sane(spawnProgress) + (Float.isFinite(pace) ? Math.max(0f, pace) : 0f);
+        for (int rounds = 0; spawnProgress >= every && rounds < MAX_ROUNDS_PER_SECOND; rounds++) {
             spawnProgress -= every;
             spawning().round(level, this, brood(level));
         }
+        spawnProgress = Math.min(spawnProgress, every);
+    }
+
+    /** {@code progress} as a clock may hold it: none for a negative or a non-number, an hour at most. */
+    static float sane(float progress) {
+        return progress >= 0f ? Math.min(progress, MAX_SAVED_PROGRESS) : 0f;
     }
 
     /** What a round of spawning may do now: within {@link #reserveCap}, at {@link #breedingMultiplier}, its food out of the ration. */
@@ -501,6 +521,22 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         return roll.count();
     }
 
+    /**
+     * How many of its people are up and alive but on neither its roll nor its reserve: the muster's defenders, risen out of the reserve with
+     * {@code teem} (never on the roll) and back in it at the all-clear. {@link #population} counts them, so the brood makes no room for new
+     * people while they are up (Brood#room is the cap less the population) and the reserve is not over its cap when they sink back. A race
+     * with others of its own (the Heart's rats teeming about its god) adds them.
+     */
+    protected int teeming() {
+        return level instanceof ServerLevel sl ? muster.defenders(sl) : 0;
+    }
+
+    /** Its people up, its rooms' crews, its reserve and those teeming ({@link #teeming}). */
+    @Override
+    public int population() {
+        return Settlement.super.population() + teeming();
+    }
+
     /** {@code mob} is up and about for this settlement: on its roll. */
     public void addPerson(SettlerMob mob) {
         if (roll.add(mob.getUUID())) {
@@ -620,6 +656,6 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         for (Tag t : tag.getList("spoils", Tag.TAG_COMPOUND)) {
             ItemStack.parse(registries, t).ifPresent(spoils::add);
         }
-        spawnProgress = tag.getFloat("spawn_progress");
+        spawnProgress = sane(tag.getFloat("spawn_progress"));
     }
 }
