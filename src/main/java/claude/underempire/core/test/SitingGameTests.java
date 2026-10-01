@@ -1276,6 +1276,55 @@ public class SitingGameTests {
     }
 
     /**
+     * A tree whose crown reaches over the pad's edge is felled whole, and the crown of a neighbour that touches it stays (the film of 2026-10-01: an oak
+     * felled in the box, and a clump of its leaves left hanging in the air beside the terraces). An oak with its trunk on the box's east edge and a crown 3
+     * each way (about 100 cells, the east 2 columns of it over the margin, past the berm), and a neighbour's oak rooted outside the pad whose crown touches
+     * its crown. Twice: with every leaf's distance as the world keeps it, and with every leaf's distance 1, as a world that was frozen before its leaves
+     * ticked, a command and a structure's template leave it (the film's oak: the flood believed a leaf's distance, which said "nearer another tree's
+     * logs", and took only the leaves a step from a log). The plan fells every cell of the first and none of the second's, both times.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void aTreeOverThePadsEdgeIsFelledWholeAndANeighboursCrownStays(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            for (int stale = 0; stale <= 1; stale++) {
+                s.lay((x, z) -> s.floor);
+                List<BlockPos> felled = tree(s, s.bx1(), s.floor + 1, s.bz0 + 4, 4, 3, 2);
+                List<BlockPos> neighbour = tree(s, s.bx1() + 6, s.floor + 1, s.bz0 + 4, 4, 2, 2);
+                String which = stale == 0 ? "with every leaf's distance right" : "with every leaf's distance 1";
+                if (stale == 1) {
+                    for (List<BlockPos> cells : List.of(felled, neighbour)) {
+                        for (BlockPos c : cells) {
+                            BlockState b = s.level.getBlockState(c);
+                            if (b.getBlock() instanceof LeavesBlock) {
+                                s.set(c.getX(), c.getY(), c.getZ(), b.setValue(LeavesBlock.DISTANCE, 1));
+                            }
+                        }
+                    }
+                }
+                int edge = s.bx1() + 1;                          // the pad's east edge: the box and its berm
+                h.assertTrue(felled.stream().anyMatch(c -> c.getX() > edge), "the crown doesn't reach over the pad's edge at x " + edge);
+                Plan p = s.expectPlan(s.plan(true), "the site with a tree over its edge, " + which);
+                java.util.Set<Long> got = new java.util.HashSet<>();
+                for (long t : p.trees()) {
+                    got.add(t);
+                }
+                List<BlockPos> missed = felled.stream().filter(c -> !got.contains(c.asLong())).toList();
+                List<BlockPos> taken = neighbour.stream().filter(c -> got.contains(c.asLong())).toList();
+                h.assertTrue(missed.isEmpty(), "the plan " + which + " fells " + (felled.size() - missed.size()) + " of the tree's " + felled.size() + " cells and leaves "
+                        + missed.size() + " of its crown standing, the first at " + (missed.isEmpty() ? "" : missed.get(0).toShortString() + " (" + s.level.getBlockState(missed.get(0)) + ")")
+                        + ": a crown hanging in the air with no trunk");
+                h.assertTrue(taken.isEmpty(), "the plan " + which + " fells " + taken.size() + " cells of the neighbour's tree, the first at " + (taken.isEmpty() ? "" : taken.get(0).toShortString())
+                        + ": its crown stays");
+                h.assertTrue(got.size() == felled.size(), "the plan " + which + " fells " + got.size() + " cells, not the tree's " + felled.size());
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
      * Water in the wall beside a cut berm is walled before the cut opens it (section 9). The site sits 3 under the land, so
      * the berm is cut 3; in the wall east of it a pocket of 2 water sources runs 2 into the ground, 2 over the floor. The
      * plan walls the cell facing the cut (one seal, of the wall's own dirt, in the plinth phase, before any of the berm's
@@ -1521,7 +1570,7 @@ public class SitingGameTests {
      * {@code layers} logs and one layer over them (a plus, for a small crown; a full square for a big one). Each leaf's
      * distance is its real one to the trunk, so none decays. Returns every cell, trunk first.
      */
-    private static List<BlockPos> tree(Site s, int x, int y, int z, int height, int reach, int layers) {
+    public static List<BlockPos> tree(Site s, int x, int y, int z, int height, int reach, int layers) {
         List<BlockPos> cells = new ArrayList<>();
         for (int k = 0; k < height; k++) {
             BlockPos p = new BlockPos(x, y + k, z);

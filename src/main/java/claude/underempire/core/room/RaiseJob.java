@@ -116,6 +116,12 @@ public class RaiseJob extends DigJob {
      * ({@link #hangs}: a lantern under its ceiling, a chain, a hanging vine) and every cell of a vine.
      */
     private final BitSet hanging = new BitSet();
+    /**
+     * The building's own cells, what a teardown takes down and what the price is spread over: the courses' solid cells, and the earthworks made of the
+     * building's blocks and not the land's (the plinth of its ground-layer block under the box). Earth the land had (dirt, grass, the ramps and the
+     * berm) is not: it stays.
+     */
+    private final BitSet building = new BitSet();
     /** Cells a settler's task empties (a cut), and the task. */
     private final Long2IntOpenHashMap cuts = new Long2IntOpenHashMap();
     /** The cuts and fills of the berm, landing and ramp, by column. */
@@ -179,6 +185,10 @@ public class RaiseJob extends DigJob {
         t.putInt("paid", paid);
         t.putInt("heaved", heaved);
         t.putInt("spared", spared);                              // the tally the Ledger shows; it began again at 0 on every load before
+        if (tearing) {                                           // only then: a site being raised saves as it did
+            t.putBoolean("tearing", true);
+            t.putLongArray("torn", torn.toLongArray());
+        }
     }
 
     @Override
@@ -187,6 +197,12 @@ public class RaiseJob extends DigJob {
         paid = t.getInt("paid");
         heaved = t.getInt("heaved");
         spared = t.getInt("spared");
+        tearing = t.getBoolean("tearing");
+        torn.clear();
+        if (tearing) {
+            torn.or(BitSet.valueOf(t.getLongArray("torn")));
+        }
+        tearIdx = null;                                          // listed again from the world and the cells taken out (tearEnsure)
     }
 
     // --- the task list -------------------------------------------------------------------------------------------------
@@ -241,6 +257,7 @@ public class RaiseJob extends DigJob {
         clearEnd = 0;
         fills.clear();
         hanging.clear();
+        building.clear();
         cuts.clear();
         columns.clear();
         cells.clear();
@@ -279,6 +296,9 @@ public class RaiseJob extends DigJob {
                 if (ph[i] == COURSE && waitsOnTheCourses(tasks.get(i).state())) {
                     hanging.set(i);
                 }
+            }
+            if (ph[i] == COURSE || !tasks.get(i).state().isAir() && !Siting.ground(tasks.get(i).state())) {
+                building.set(i);
             }
             boolean inBox = box.isInside(p.getX(), box.minY(), p.getZ());
             if (ph[i] == PLINTH && !inBox) {
@@ -372,6 +392,29 @@ public class RaiseJob extends DigJob {
         return paid;
     }
 
+    /** Whether task {@code i} is done (the tests count the tasks: {@link #taskList}, {@link #phaseOf}). */
+    public boolean done(int i) {
+        return finished(i);
+    }
+
+    /**
+     * {@code paid} in proportion to {@code open} of {@code total}: {@code paid * open / total} to the nearest unit (a half goes up), never more than
+     * {@code paid} and never less than 0. All of it when all is open (or there is nothing to count), none when none is. What a called-off site pays back
+     * ({@link #refundNow}: the price over the building's cells, less those that stayed). Pure, so a test can drive it without a world.
+     */
+    public static int share(int paid, int open, int total) {
+        if (paid <= 0) {
+            return 0;
+        }
+        if (total <= 0 || open >= total) {
+            return paid;
+        }
+        if (open <= 0) {
+            return 0;
+        }
+        return (int) Math.min(paid, (2L * paid * open + total) / (2L * total));
+    }
+
     /** Cells heaved into place because no builder could get to them. */
     public int heaved() {
         return heaved;
@@ -382,14 +425,53 @@ public class RaiseJob extends DigJob {
         return spared;
     }
 
+    /**
+     * The clearing's next cells that hold a block, top-down, at most {@code max} of them, nothing broken: what a builder is sent to cut down
+     * ({@code SiteWork#nextClearChore}). The cells that are free on the way (air over air, off the height of the world) are done as they are passed.
+     */
+    public List<BlockPos> clearNext(ServerLevel level, int max) {
+        ensureLoaded(level);
+        List<BlockPos> out = new ArrayList<>();
+        List<Task> ts = tasks();
+        for (int i = front(); i < clearEnd && out.size() < max; i++) {
+            if (finished(i)) {
+                continue;
+            }
+            BlockPos p = ts.get(i).pos();
+            if (level.isOutsideBuildHeight(p)) {
+                markDone(i);
+                continue;
+            }
+            if (!level.isLoaded(p)) {
+                break;
+            }
+            if (level.getBlockState(p).isAir()) {
+                markDone(i);                                     // air over air: nothing to cut
+                continue;
+            }
+            out.add(p);
+        }
+        return out;
+    }
+
+    /**
+     * The clearing's next cells, top-down, at most {@code changes} of them taking a block out ({@link #gnawChanges}: a tree's logs and leaves, the
+     * cover, whatever stands in the box's air); what gave way, for the dust and the noise. What the site does a tick, once a builder is at it
+     * ({@code SiteWork#tick}); {@link #clear} is the same with no pace, for the tests and the finish.
+     */
+    public List<Crumb> clearSome(ServerLevel level, int changes) {
+        ensureLoaded(level);
+        return gnawChanges(level, changes, clearEnd);
+    }
+
     /** The site clears the land itself: its clearing isn't done yet (and its builders have nothing to do). */
     public boolean clearing() {
-        return tasks() != null && front() < clearEnd;
+        return !tearing && tasks() != null && front() < clearEnd;
     }
 
     /** Its builders have work: the clearing is done and the building isn't. */
     public boolean working() {
-        return tasks() != null && !clearing() && !isDone();
+        return !tearing && tasks() != null && !clearing() && !isDone();
     }
 
     /** The phase the work stands at, the window's ({@link #CLEARING} to {@link #COURSE}), or -1 when done or not begun. */
@@ -469,6 +551,9 @@ public class RaiseJob extends DigJob {
         if (ts == null) {
             return "not begun";
         }
+        if (tearing) {
+            return "pulling the building down";
+        }
         if (isDone()) {
             return "raised";
         }
@@ -478,6 +563,9 @@ public class RaiseJob extends DigJob {
 
     /** What {@code rat}'s batch is, in words ("cutting the ground"), or "building" if it holds none. */
     public String doing(UUID rat) {
+        if (tearing) {
+            return "pulling the building down";
+        }
         int[] c = claimOf(rat);
         return c == null ? "building" : doing(c[0]);
     }
@@ -1131,6 +1219,431 @@ public class RaiseJob extends DigJob {
     private boolean openAt(Long2IntOpenHashMap m, long cell) {
         int i = m.getOrDefault(cell, -1);
         return i >= 0 && !finished(i);
+    }
+
+    // --- being torn down (Works#cancel) ----------------------------------------------------------------------------------
+
+    /** A builder's batch of cells to take down: their task indices, and when the claim lapses. */
+    private record TearClaim(int[] idx, long expires) {
+    }
+
+    /** Whether the site was called off and is coming down: what its builders laid is taken out, top first ({@link #startTearDown}). */
+    private boolean tearing;
+    /** The course cells the site took out; saved only while it is being torn down, so the cells it took out are told from a player's air. */
+    private final BitSet torn = new BitSet();
+    /** The cells to take out, in the order they come down; rebuilt from the world and {@link #torn} ({@link #tearEnsure}); null until then. */
+    @Nullable private int[] tearIdx;
+    /** Cells that no longer hold the block that was laid (someone's now): they stay. Rebuilt with {@link #tearIdx}, never saved. */
+    private final BitSet tearGone = new BitSet();
+    private final BitSet tearClaimed = new BitSet();
+    private final java.util.Map<UUID, TearClaim> tearClaims = new java.util.HashMap<>();
+    /** When a cell last came down, or the teardown began (game time): a site no builder takes down takes itself down after a while. */
+    private long tearLast;
+    /** The site is taking itself down (no builder could): once begun it goes on. Not saved. */
+    private boolean tearSelfPaced;
+
+    /** Whether the site is being torn down. */
+    public boolean tearing() {
+        return tearing;
+    }
+
+    /**
+     * Begins tearing the site down: every course cell it laid that still holds the block it laid comes down (air, and the land's own ground at the floor and
+     * under it: {@link #tearCell}), the earthworks never (the land can't be un-reshaped). The order is the reverse of the laying: the hanging pieces first (a lantern, a vine, a chain: the lowest first, so a column of vines
+     * comes off from its foot), then the courses top-down, and within a course the cells furthest from the door first. Nothing else about the site changes:
+     * the clearing and the courses stop, and its builders' laying batches are let go of by the caller. The plinth under the box, made of the building's own
+     * blocks, comes down last, and the land's own ground goes in its cells; earth the land had stays.
+     */
+    public void startTearDown(ServerLevel level, long now) {
+        ensureLoaded(level);
+        tearing = true;
+        torn.clear();
+        tearLast = now;
+        tearSelfPaced = false;
+        tearIdx = null;
+        tearEnsure(level);
+    }
+
+    /** The cells to take down listed (after a load, from the saved {@link #torn} and the world); at the first call only. */
+    public void tearEnsure(ServerLevel level) {
+        if (!tearing || tearIdx != null) {
+            return;
+        }
+        ensureLoaded(level);
+        List<Task> ts = tasks();
+        tearGone.clear();
+        tearClaimed.clear();
+        tearClaims.clear();
+        List<Integer> list = new ArrayList<>();
+        for (int i = 0; i < ts.size(); i++) {
+            if (!building.get(i) || !finished(i) || torn.get(i)) {
+                continue;
+            }
+            BlockPos p = ts.get(i).pos();
+            if (level.isLoaded(p) && !level.getBlockState(p).is(ts.get(i).state().getBlock())) {
+                tearGone.set(i);                                 // someone's block there now (or the cell was changed since): it stays
+                continue;
+            }
+            list.add(i);
+        }
+        list.sort(Comparator.<Integer>comparingInt(this::tearRank).thenComparing(Comparator.<Integer>naturalOrder().reversed()));
+        tearIdx = list.stream().mapToInt(Integer::intValue).toArray();
+        tearLast = level.getGameTime();
+    }
+
+    /**
+     * Where a cell comes down in the order: a hanging piece by its height up (the foot of a column first), then the courses by their height down, then
+     * the plinth of the building's own blocks that lies under them.
+     */
+    private int tearRank(int i) {
+        if (phase[i] != COURSE) {
+            return 5000;
+        }
+        return hanging.get(i) ? lift[i] : 1000 + (255 - lift[i]);
+    }
+
+    /** The cells still to take down. */
+    public int tearOpen() {
+        int n = 0;
+        if (tearIdx != null) {
+            for (int i : tearIdx) {
+                if (!torn.get(i) && !tearGone.get(i)) {
+                    n++;
+                }
+            }
+        }
+        return n;
+    }
+
+    /** How many cells the teardown has to take down: those it has taken out, and those still to go (a cell found to be someone's now is not one). */
+    public int tearTotal() {
+        return torn.cardinality() + tearOpen();
+    }
+
+    /** How many cells the teardown has taken out. */
+    public int tornCount() {
+        return torn.cardinality();
+    }
+
+    /** The teardown is over: every cell that was to come down has, or was left standing (someone's now). */
+    public boolean tornDown() {
+        return tearing && tearIdx != null && tearOpen() == 0;
+    }
+
+    /** How far the teardown has come, 0 to 1. */
+    public float tearProgress() {
+        int total = tearTotal();
+        return total == 0 ? 1f : torn.cardinality() / (float) total;
+    }
+
+    /** When a cell last came down, or the teardown began (game time). */
+    public long tearLast() {
+        return tearLast;
+    }
+
+    /** Whether the site is taking itself down ({@link #tearSelf}). */
+    public boolean tearSelfPaced() {
+        return tearSelfPaced;
+    }
+
+    /** The building's own cells (the courses' solid cells and the plinth made of its blocks): what the price is spread over. */
+    public int buildingCells() {
+        return building.cardinality();
+    }
+
+    /** Whether task {@code i} is one of the building's own cells (a course's solid cell, or the plinth of its blocks): what a teardown takes down. */
+    public boolean building(int i) {
+        return building.get(i);
+    }
+
+    /** The building's cells laid: those of them done. */
+    public int laidCount() {
+        int n = 0;
+        for (int i = building.nextSetBit(0); i >= 0; i = building.nextSetBit(i + 1)) {
+            if (finished(i)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * What a teardown pays back, once it is over ({@link #share}): the price spread over the building's cells, less the cells that stayed (laid, and not
+     * taken out: a player's block in the cell now, or one that was changed while it came down). All of it when every laid cell came down.
+     */
+    public int refundNow() {
+        int c = buildingCells();
+        return share(paid, c - (laidCount() - torn.cardinality()), c);
+    }
+
+    /**
+     * What a call-off pays back if every cell that still holds the block it laid comes down: the whole price less the share of the laid cells that already
+     * don't (a player's block in the cell). What the bridge says a site would pay back ({@code level} reads the cells now).
+     */
+    public int refundIfCalledOff(ServerLevel level) {
+        List<Task> ts = tasks();
+        int c = buildingCells();
+        if (tearing) {
+            return share(paid, c - (laidCount() - torn.cardinality() - tearOpen()), c);   // what stays: laid, not taken out, and not still to come down
+        }
+        int stayed = 0;
+        for (int i = 0; ts != null && i < ts.size(); i++) {
+            if (building.get(i) && finished(i)) {
+                BlockPos p = ts.get(i).pos();
+                if (level.isLoaded(p) && !level.getBlockState(p).is(ts.get(i).state().getBlock())) {
+                    stayed++;
+                }
+            }
+        }
+        return share(paid, c - stayed, c);
+    }
+
+    private void tearExpire(long now) {
+        tearClaims.entrySet().removeIf(e -> {
+            if (e.getValue().expires() < now) {
+                for (int i : e.getValue().idx()) {
+                    tearClaimed.clear(i);
+                }
+                return true;
+            }
+            return false;
+        });
+    }
+
+    /**
+     * Hands a builder its next cells to take down and returns the one it stands to first, or null when there is nothing for it now (every cell of the
+     * course that is coming down is held by another builder: the next course waits for it). Only the cells of the course the teardown stands at are
+     * handed out, so the building comes down top first whoever is at it: the anchor is the cell nearest {@code near} and away from the others' batches, and
+     * the batch is up to {@code batch} cells of that course within 3 of it.
+     */
+    @Nullable
+    public BlockPos tearClaim(ServerLevel level, UUID rat, int batch, long now, BlockPos near) {
+        tearEnsure(level);
+        if (!tearing || tearIdx == null) {
+            return null;
+        }
+        tearExpire(now);
+        tearRelease(rat);
+        List<Task> ts = tasks();
+        int rank = -1;
+        IntArrayList cand = new IntArrayList();
+        for (int i : tearIdx) {
+            if (torn.get(i) || tearGone.get(i)) {
+                continue;
+            }
+            if (rank < 0) {
+                rank = tearRank(i);                              // the course the teardown stands at: the first cell still up
+            } else if (tearRank(i) != rank) {
+                break;
+            }
+            if (!tearClaimed.get(i) && level.isLoaded(ts.get(i).pos())) {
+                cand.add(i);
+            }
+        }
+        if (cand.isEmpty()) {
+            return null;
+        }
+        List<BlockPos> others = new ArrayList<>(tearClaims.size());
+        for (TearClaim c : tearClaims.values()) {
+            others.add(ts.get(c.idx()[0]).pos());
+        }
+        int best = -1;
+        double bestScore = Double.MAX_VALUE;
+        for (int k = 0; k < cand.size(); k++) {
+            BlockPos p = ts.get(cand.getInt(k)).pos();
+            double score = Math.sqrt(p.distSqr(near));
+            for (BlockPos o : others) {
+                int d = o.distManhattan(p);
+                if (d <= 3) {
+                    score += (4 - d) * 2;
+                }
+            }
+            if (score < bestScore) {
+                bestScore = score;
+                best = k;
+            }
+        }
+        int anchorIdx = cand.getInt(best);
+        BlockPos anchor = ts.get(anchorIdx).pos();
+        IntArrayList mine = new IntArrayList();
+        for (int k = 0; k < cand.size(); k++) {
+            int i = cand.getInt(k);
+            if (i != anchorIdx && ts.get(i).pos().distManhattan(anchor) <= 3) {
+                mine.add(i);
+            }
+        }
+        mine.sort((a, b) -> Integer.compare(ts.get(a).pos().distManhattan(anchor), ts.get(b).pos().distManhattan(anchor)));
+        int[] idx = new int[1 + Math.min(batch - 1, mine.size())];
+        idx[0] = anchorIdx;                                      // the anchor first: the builder stands to it
+        for (int k = 1; k < idx.length; k++) {
+            idx[k] = mine.getInt(k - 1);
+        }
+        for (int i : idx) {
+            tearClaimed.set(i);
+        }
+        tearClaims.put(rat, new TearClaim(idx, now + 600));
+        return anchor;
+    }
+
+    /** The cells of {@code rat}'s batch to take down, the one it stands to first; empty if it holds none. */
+    public List<BlockPos> tearBatch(UUID rat) {
+        TearClaim c = tearClaims.get(rat);
+        if (c == null) {
+            return List.of();
+        }
+        List<BlockPos> out = new ArrayList<>(c.idx().length);
+        for (int i : c.idx()) {
+            out.add(tasks().get(i).pos());
+        }
+        return out;
+    }
+
+    /** Whether {@code rat} holds a batch of cells to take down. */
+    public boolean tearHolds(UUID rat) {
+        return tearClaims.containsKey(rat);
+    }
+
+    /** Part-way through a batch: the first {@code fraction} of the cells come down now, bite by bite. Returns what gave way. */
+    public List<Crumb> tearSome(ServerLevel level, UUID rat, float fraction) {
+        TearClaim c = tearClaims.get(rat);
+        if (c == null) {
+            return List.of();
+        }
+        int n = Math.min(c.idx().length, (int) Math.ceil(c.idx().length * Math.min(1f, fraction)));
+        List<Crumb> out = new ArrayList<>();
+        for (int k = 0; k < n; k++) {
+            Crumb x = tearCell(level, c.idx()[k]);
+            if (x != null) {
+                out.add(x);
+            }
+        }
+        return out;
+    }
+
+    /** The builder is done with its batch: whatever of it is still up comes down. */
+    public List<Crumb> tearComplete(ServerLevel level, UUID rat) {
+        TearClaim c = tearClaims.remove(rat);
+        List<Crumb> out = new ArrayList<>();
+        if (c == null) {
+            return out;
+        }
+        for (int i : c.idx()) {
+            tearClaimed.clear(i);
+            Crumb x = tearCell(level, i);
+            if (x != null) {
+                out.add(x);
+            }
+        }
+        return out;
+    }
+
+    /** A builder is gone: its batch goes back. */
+    public void tearRelease(UUID rat) {
+        TearClaim c = tearClaims.remove(rat);
+        if (c != null) {
+            for (int i : c.idx()) {
+                tearClaimed.clear(i);
+            }
+        }
+    }
+
+    /**
+     * The site takes cells down itself, {@code n} of them in the order they come down, whoever holds them: what it does when no builder can come (an empty
+     * reserve) or none has taken a cell down for a while, so a called-off site is never left half taken down. Once begun it goes on. What gave way.
+     */
+    public List<Crumb> tearSelf(ServerLevel level, int n) {
+        tearEnsure(level);
+        tearSelfPaced = true;
+        List<Crumb> out = new ArrayList<>();
+        if (tearIdx == null) {
+            return out;
+        }
+        for (int i : tearIdx) {
+            if (out.size() >= n) {
+                break;
+            }
+            if (torn.get(i) || tearGone.get(i)) {
+                continue;
+            }
+            Crumb x = tearCell(level, i);
+            if (x != null) {
+                out.add(x);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * What a teardown leaves of the building's box, made level, once it is over (the user, 2026-10-01: "level ground, not a hole"): in its floor layer (the
+     * ground-layer cells of the courses at the floor or under it) that were never laid, a cell that is air over something solid (the corner of a dip a plinth
+     * filled to a block under the floor) gets the land's own ground, as {@link #tearCell} gives the cells that came down; and in the cells above the floor
+     * that were never laid, the land that still stands there (a hump the courses had not got to) is cut, so nothing stands up out of the floor either.
+     * Returns how many cells it changed.
+     */
+    public int levelFloor(ServerLevel level) {
+        ensureLoaded(level);
+        int n = 0;
+        List<Task> ts = tasks();
+        for (int i = 0; plan != null && i < ts.size(); i++) {
+            if (phase[i] != COURSE || finished(i)) {
+                continue;
+            }
+            BlockPos p = ts.get(i).pos();
+            if (!plan.inArea(p.getX(), p.getZ()) || !level.isLoaded(p)) {
+                continue;
+            }
+            BlockState now = level.getBlockState(p);
+            int flags = net.minecraft.world.level.block.Block.UPDATE_CLIENTS | net.minecraft.world.level.block.Block.UPDATE_KNOWN_SHAPE;
+            if (p.getY() <= plan.floor()) {
+                if (now.isAir() && !level.getBlockState(p.below()).getCollisionShape(level, p.below()).isEmpty()) {
+                    level.setBlock(p, plan.look(p.getX(), p.getZ()).at(plan.floor() - p.getY()), flags);
+                    n++;
+                }
+            } else if (Siting.ground(now)) {
+                level.setBlock(p, net.minecraft.world.level.block.Blocks.AIR.defaultBlockState(), flags);
+                n++;
+            }
+        }
+        return n;
+    }
+
+    /**
+     * One cell comes down: air where it was, or, at the floor or under it (the ground layer the building put in the place of the land's own), the ground the
+     * land round it has (the column's own look, sampled when the site was planned: grass on top, its soil under it), so a torn-down site leaves level
+     * ground and no hole. What it held (a barrel's stores) is handed to the settlement's spoils, never dropped. It stays if it no longer holds the block that
+     * was laid. Null (nothing gave way) for a cell that stays, or whose chunk is not loaded (it waits).
+     */
+    @Nullable
+    private Crumb tearCell(ServerLevel level, int i) {
+        if (torn.get(i) || tearGone.get(i)) {
+            return null;
+        }
+        Task t = tasks().get(i);
+        BlockPos p = t.pos();
+        if (!level.isLoaded(p)) {
+            return null;
+        }
+        BlockState was = level.getBlockState(p);
+        if (!was.is(t.state().getBlock())) {
+            tearGone.set(i);                                     // someone's block now: it stays
+            return null;
+        }
+        // SLICE 3 HOOK (surface-builder.md, section 7): a block that was laid from the Hoard goes back to the Hoard here (Bins.insert), not into the air
+        net.minecraft.world.level.block.entity.BlockEntity be = level.getBlockEntity(p);
+        if (sink != null && be != null) {
+            sink.take(level, p, was, be);
+            if (be instanceof net.minecraft.world.Container c) {
+                c.clearContent();                                // its stores went to the settlement, not onto the ground
+            }
+        }
+        BlockState after = net.minecraft.world.level.block.Blocks.AIR.defaultBlockState();
+        if (plan != null && p.getY() <= plan.floor() && plan.inArea(p.getX(), p.getZ())) {
+            after = plan.look(p.getX(), p.getZ()).at(plan.floor() - p.getY());      // the land's own: grass on top, its soil under it
+        }
+        level.setBlock(p, after, net.minecraft.world.level.block.Block.UPDATE_CLIENTS | net.minecraft.world.level.block.Block.UPDATE_KNOWN_SHAPE);
+        torn.set(i);
+        tearLast = level.getGameTime();
+        return new Crumb(p, was);
     }
 
     /** A floor that stays as it is: the site's own finished work, or the ground itself. */

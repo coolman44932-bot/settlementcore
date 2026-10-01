@@ -50,6 +50,15 @@ public class CrewGoal extends Goal {
                 || rat.tickCount < nextTry || !(rat.level() instanceof ServerLevel sl)) {
             return false;
         }
+        if (rat.leaveSpot() != null) {                           // sent home from a building: it walks off it first, whatever its room is now
+            room = room();
+            chore = leave(sl);
+            if (chore == null) {
+                return false;
+            }
+            trace("leave");
+            return true;
+        }
         nextTry = rat.tickCount + 10;                            // a cooldown, never tickCount % n (see DigGoal.nextClaim)
         room = room();
         if (room == null) {
@@ -63,6 +72,30 @@ public class CrewGoal extends Goal {
         room.claim(chore.claim, sl.getGameTime());
         trace("pick");
         return true;
+    }
+
+    /**
+     * The chore of a rat sent home from a building ({@link SettlerMob#leaveVia}): walk to its spot, outside the building on natural ground, and go
+     * home there. Null (and the rat sinks where it stands) when out of time, and when it is at the spot already.
+     */
+    @Nullable
+    private Chore leave(ServerLevel sl) {
+        BlockPos spot = rat.leaveSpot();
+        if (spot == null) {
+            return null;
+        }
+        double dx = rat.getX() - (spot.getX() + 0.5);
+        double dz = rat.getZ() - (spot.getZ() + 0.5);
+        if (sl.getGameTime() >= rat.leaveBy() || dx * dx + dz * dz <= 1.0 && Math.abs(spot.getY() - rat.getBlockY()) <= 2) {
+            rat.clearLeave();
+            rat.goHome();
+            return null;
+        }
+        return new Chore("heading home", spot, 1.0, 2, null, (l, r) -> {
+            r.clearLeave();
+            r.goHome();
+            return null;
+        }).standing(spot);
     }
 
     /** gradlew runGameTestServer -Pcrewtrace: every crew rat's chores to the log (a stall in a room's work shows who stood where). */
@@ -105,7 +138,16 @@ public class CrewGoal extends Goal {
 
     @Override
     public void tick() {
-        if (chore == null || room == null || !(rat.level() instanceof ServerLevel sl)) {
+        if (chore == null || !(rat.level() instanceof ServerLevel sl)) {
+            return;
+        }
+        if (rat.leaveSpot() != null) {
+            if (sl.getGameTime() >= rat.leaveBy()) {
+                rat.clearLeave();
+                rat.goHome();                                    // out of time: it sinks where it stands, and the settlement takes it back all the same
+                return;
+            }
+        } else if (room == null) {
             return;
         }
         if (chore.follow != null) {
@@ -205,6 +247,12 @@ public class CrewGoal extends Goal {
 
     private void done(ServerLevel sl, @Nullable Chore next) {
         Chore was = chore;
+        if (next != null && rat.leaveSpot() != null) {           // sent home while it worked: its room's next batch (already claimed) goes back, and it walks off
+            if (room != null) {
+                room.release(next.claim);
+            }
+            next = null;
+        }
         if (room != null && was != null && (next == null || next.claim != was.claim)) {
             room.release(was.claim);
         }

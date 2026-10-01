@@ -201,6 +201,38 @@ public class DigJob {
         return n;
     }
 
+    /**
+     * {@link #gnawInOrder(ServerLevel, int, List, int)} for a clearing its settlers' neighbours can see: the tasks before {@code end} in order, until
+     * {@code maxChanges} of them have taken a block out (a block that was there and is gone: a cell already as it should be, air over air, is done free
+     * and never counts, and neither does a player's block left standing), so a tree comes down over a second or two and not in a tick. Returns what gave
+     * way, for the dust and the noise ({@link Crumb}); stops, as the other does, at the first cell whose chunk isn't loaded or that its kind of job
+     * won't put yet.
+     */
+    protected List<Crumb> gnawChanges(ServerLevel level, int maxChanges, int end) {
+        ensureLoaded(level);
+        List<Crumb> out = new ArrayList<>();
+        for (int i = finished.nextClearBit(0); i < Math.min(end, tasks.size()) && out.size() < maxChanges; i = finished.nextClearBit(i + 1)) {
+            Task t = tasks.get(i);
+            if (level.isOutsideBuildHeight(t.pos())) {
+                finished.set(i);                                 // over the sky's limit or under the world: nothing to gnaw there, ever
+                continue;
+            }
+            if (!level.isLoaded(t.pos())) {
+                break;
+            }
+            BlockState was = level.getBlockState(t.pos());
+            if (!put(level, i, t)) {
+                break;                                           // not yet (a kind of job's own rule)
+            }
+            finished.set(i);
+            gnawed++;
+            if (!was.isAir() && level.getBlockState(t.pos()) != was) {
+                out.add(new Crumb(t.pos(), was));
+            }
+        }
+        return out;
+    }
+
     public PlanPlacement placement() {
         if (placed == null) {
             placed = PlanPlacement.compute(Rooms.get(roomId), door, facing);   // asked often (is this in the warren?)

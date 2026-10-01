@@ -74,6 +74,12 @@ public final class Works {
     static final int HAUL_EVERY = 5;
     /** A crew lent from outside the reserve (Under-Empire's Warlock Engineer, its Packmaster): another comes this long after one is killed. */
     public static final long LOAN_AGAIN = 20 * 60 * 3;
+    /**
+     * The last of a plan's price line, for the bridge's printout and a race's plan item: a site called off is torn down by its builders and its price
+     * comes back; the earthworks (the ground cleared and levelled, and what grew on it) are never undone.
+     */
+    public static final String CALL_OFF_NOTE = "Called off, its builders tear down what they laid and the price comes back; the earthworks are never undone: "
+            + "the ground cleared and levelled, and what grew on it, do not come back";
 
     private final Settlement heart;
     private final Map<BlockPos, RoomWork> rooms = new LinkedHashMap<>();
@@ -81,6 +87,12 @@ public final class Works {
     private final Map<BlockPos, SiteWork> sites = new LinkedHashMap<>();
     private final Set<BlockPos> opened = new HashSet<>();
     private final Map<UUID, BlockPos> crew = new LinkedHashMap<>();
+    /**
+     * The price of sites a load could not read ({@link #load}: a plan that is broken, a room that is not registered any more, a second
+     * site at one door), still to be paid back: the settlement's currency and the owner are not at hand while the Works load, so it is paid
+     * at the first {@link #sync}. Saved, and only while it is not 0, so the Works' tag of a settlement with none is as it always was.
+     */
+    private int refundDue;
     private final Map<BlockPos, Integer> here = new HashMap<>();
     private final Map<BlockPos, Long> lostAt = new HashMap<>();
     private CompoundTag saved = new CompoundTag();
@@ -150,6 +162,7 @@ public final class Works {
 
     /** The rooms' works, kept in step with the Heart's buildings (and its Watch-Posts). */
     void sync(ServerLevel level) {
+        payBackUnreadSites();
         Set<BlockPos> live = new HashSet<>();
         for (var e : extension.extraRooms(this).entrySet()) {
             BlockPos key = e.getKey();
@@ -253,9 +266,9 @@ public final class Works {
                     && !home.reachInside(ent.blockPosition());
             if (ent instanceof SettlerMob r && r.isAlive() && r.isCrew() && home != null && !strayed) {
                 up.computeIfAbsent(e.getValue(), k -> new ArrayList<>()).add(r);
-            } else if (home == null && ent instanceof SettlerMob r && r.isAlive() && r.isHomeward()) {
-                // on its way down from a building raised into a room with no work (handOver): the settlement takes it back
-                // into the reserve when it gets there (forget), or here, if it is lost on the way (no entity: the branch below)
+            } else if (home == null && ent instanceof SettlerMob r && r.isAlive() && (r.isHomeward() || r.leaveSpot() != null)) {
+                // on its way down from a building raised into a room with no work (handOver), or walking off the building first (sendHome): the
+                // settlement takes it back into the reserve when it gets there (forget), or here, if it is lost on the way (no entity: the branch below)
             } else {
                 if (ent instanceof SettlerMob r && r.isAlive()) {
                     r.discard();
@@ -281,10 +294,10 @@ public final class Works {
             int want = w.crewWanted();
             if (mine.size() < want) {
                 spawnCrew(level, w);
-            } else if (mine.stream().filter(r -> !r.isHomeward()).count() > want + 1) {
+            } else if (mine.stream().filter(r -> !r.isHomeward() && r.leaveSpot() == null).count() > want + 1) {
                 SettlerMob r = surplus(mine);
                 if (r != null) {
-                    r.goHome();                                  // no work for it: back down to the horde
+                    sendHome(level, w.building, r);              // no work for it: back down to the horde (off a building first)
                 }
             }
             here.put(w.key(), mine.size());
@@ -361,19 +374,21 @@ public final class Works {
     }
 
     /**
-     * Which of a room's crew goes home, when it has more than it wants: one that is not on its way already, and one with nothing to do before one
-     * at work. {@code goHome} starts the sinking again (24 ticks against the second's 20), so the last of the crew told every second never got down:
-     * it sank about a block a second and left the crew only once it had strayed 24 below its room, some 20 s on, one rat in all that time, and a site's
-     * surplus builders stood idle on its stairs for minutes (the step platform's flake: the last cell held 400 ticks by a builder that an idle one
-     * blocked from the way up). Null if every rat is on its way home.
+     * Which of a room's crew goes home when it has more than it wants (the trim: one rat a second): one that is not on its way already, and one with
+     * nothing to do before one at work. Passing over a rat already homeward makes each second's pick a new rat, so the crew is cut one a second and not
+     * at the pace of one rat's sinking (24 ticks, against the second's 20); an idle rat goes first, so a builder holding a batch is not the one taken off
+     * it. This was written when {@code goHome} began a sinking rat's descent over each time it was told: the last of the crew, told every second, never
+     * got down, and the crew was cut one rat in 20 s, with a site's surplus builders standing idle on its stairs for minutes (the step platform's flake:
+     * the last cell held 400 ticks by a builder that an idle one blocked from the way up). {@code goHome} returns at once for a rat homeward and sinking
+     * now (9e0c399), so the choice is for the pace and the order only. Null if every rat is on its way home.
      */
     @Nullable
     static SettlerMob surplus(List<SettlerMob> crew) {
         SettlerMob busy = null;
         for (int i = crew.size() - 1; i >= 0; i--) {
             SettlerMob r = crew.get(i);
-            if (r.isHomeward()) {
-                continue;
+            if (r.isHomeward() || r.leaveSpot() != null) {
+                continue;                                        // on its way already: the next one is told, one a second
             }
             if (r.crewDoing().isEmpty()) {
                 return r;
@@ -383,6 +398,53 @@ public final class Works {
             }
         }
         return busy;
+    }
+
+    /** How long, in ticks, a settler sent home from a building has to walk off it before it sinks where it stands. */
+    static final int LEAVE_TICKS = 240;
+
+    /**
+     * A crew settler sent home. From a building on the surface it walks off first (the detail session's note on the film of 2026-10-01: builders sank
+     * through the roof they stood on and read as vanishing): to the building's landing, on natural ground outside its box, and sinks there ({@link
+     * SettlerMob#leaveVia}); it sinks at once from anywhere that isn't the building's top or inside it (a dug room's crew sink where they are, in the
+     * tunnels), and where it stands if it has not got off in {@value #LEAVE_TICKS} ticks. The settlement takes it back all the same.
+     */
+    private void sendHome(ServerLevel level, @Nullable Building b, SettlerMob r) {
+        if (r.leaveSpot() == null && b != null && Rooms.isRaised(b.room()) && b.box().inflatedBy(1).isInside(r.blockPosition())) {
+            BlockPos spot = landing(level, b);
+            if (spot != null) {
+                r.leaveVia(spot, level.getGameTime() + LEAVE_TICKS);
+                return;
+            }
+        }
+        if (r.leaveSpot() == null) {
+            r.goHome();
+        }
+    }
+
+    /** The cell outside a raised building, 2 out from its door on the way in (where its builders come up), that a settler can stand in; null if none. */
+    @Nullable
+    private static BlockPos landing(ServerLevel level, Building b) {
+        if (b.door() == null || b.facing() == null) {
+            return null;
+        }
+        BlockPos at = b.door().relative(b.facing().getOpposite(), 2);
+        for (int r = 0; r <= 3; r++) {
+            for (int dx = -r; dx <= r; dx++) {
+                for (int dz = -r; dz <= r; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
+                        continue;
+                    }
+                    for (int dy : new int[]{0, 1, -1, 2, -2, 3, -3}) {
+                        BlockPos p = at.offset(dx, dy, dz);
+                        if (!b.box().isInside(p) && level.isLoaded(p) && SettlerMob.standable(level, p)) {
+                            return p;
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private void spawnCrew(ServerLevel level, RoomWork w) {
@@ -607,6 +669,113 @@ public final class Works {
         return false;
     }
 
+    /**
+     * What {@link #cancel} did (the owner's line, the bridge's printout, the tests): the site's room, what it cost, what its price comes to if every laid cell
+     * that still holds its block comes down ({@code refund}: the whole price, less the share of the laid cells a player has changed), how many cells are to
+     * come down and how many were laid, how many builders are at it, what the site was at, whether there was nothing to take down (the price was paid back at
+     * once and the site is gone), and whether it was coming down already.
+     */
+    public record Cancelled(String room, int paid, int refund, int toTear, int laid, int builders, String state, boolean atOnce, boolean already) {
+    }
+
+    /**
+     * Calls off the building being raised at {@code door} (surface-builder.md, section 9, "Stopping and undoing": the bridge's {@code raise cancel}, and a
+     * race's plan item later), and its builders tear down what they laid: every cell the job finished that still holds the block it laid comes down, top
+     * first (the reverse of the laying: hanging pieces before their ceilings), each with its dust and sound, a batch at a time by the crew, or, with no
+     * builder to come (an empty reserve) or none taking a cell down for a while, by the site itself at a few cells a second ({@link SiteWork}). A player's
+     * block in a cell, or a cell changed since, stays; the cells at the floor or under it become the land's own ground, not air (a torn-down site leaves
+     * level ground), and the ones above it air. The earthworks stay, as they must (the land can't be un-reshaped: {@link #CALL_OFF_NOTE}). The site
+     * stays among the {@link #sites()} until it is down; then ({@link #finishTeardown}) the price is paid back in the settlement's currency, once: all of
+     * it, less the share of the cells that stayed ({@link RaiseJob#refundNow}); its builders go home and are taken back into the reserve once each; the
+     * floor layer is level ground ({@link RaiseJob#levelFloor}); the owner is told, now and then; and a settlement with no sites saves no {@code sites} list again. A site mid-teardown is saved ({@code tearing},
+     * {@code torn}) and goes on after a load. Null if no site is raised at {@code door}, or it is built and about to be handed over; a site already
+     * coming down answers again ({@code already}) and is left to it.
+     *
+     * <p>SLICE 2 HOOK (section 10, "Never left behind"): strike the scaffold at once here, at the clearing's pace, before the building comes down:
+     * Scaffold does not exist yet. SLICE 3 HOOK (section 7): a block laid from the Hoard goes back to the Hoard as it comes down ({@code RaiseJob#tearCell}).
+     */
+    @Nullable
+    public Cancelled cancel(ServerLevel level, BlockPos door) {
+        SiteWork s = sites.get(door);
+        if (s == null || s.raised()) {
+            return null;
+        }
+        RaiseJob job = s.job();
+        job.ensureLoaded(level);
+        boolean already = job.tearing();
+        String the = Settlement.the(s.room().displayName());
+        if (!already) {
+            for (var e : crew.entrySet()) {
+                if (e.getValue().equals(door)) {
+                    letGo(door, e.getKey());                     // each builder's laying batch goes back: its next chore is the teardown's
+                }
+            }
+            job.startTearDown(level, level.getGameTime());
+        }
+        boolean atOnce = job.tearOpen() == 0;
+        Cancelled out = new Cancelled(s.room().displayName(), job.paid(), job.refundIfCalledOff(level), job.tearTotal(), job.laidCount(), crewOf(level, door).size(),
+                job.state(), atOnce, already);
+        if (!already) {
+            if (atOnce) {
+                sites.remove(door);
+                finishTeardown(level, s);
+            } else {
+                heart.tellOwner(cap(the) + " is called off: your builders are pulling it down, and its price will come back. The earthworks stay.",
+                        net.minecraft.ChatFormatting.YELLOW);
+            }
+            heart.setChanged();
+        }
+        return out;
+    }
+
+    /**
+     * A site called off is down: its price is paid back, once ({@link RaiseJob#refundNow}), its builders go home (each is taken back into the reserve once,
+     * when it gets there: {@link #forget}; the site is no room any more), and the owner is told. The caller has taken it out of {@link #sites}.
+     */
+    private void finishTeardown(ServerLevel level, SiteWork s) {
+        RaiseJob job = s.job();
+        BlockPos door = s.key();
+        int paid = job.paid();
+        int refund = job.refundNow();
+        String the = Settlement.the(s.room().displayName());
+        List<SettlerMob> builders = crewOf(level, door);
+        job.levelFloor(level);                                   // no hole in the floor layer where it was never laid: level ground
+        rooms.remove(door);
+        opened.remove(door);
+        here.remove(door);
+        saved.remove(Long.toString(door.asLong()));
+        for (SettlerMob r : builders) {
+            sendHome(level, s.building, r);                      // off the site first, then sinks; Works#second, with no room for them, waits for it
+        }
+        if (refund > 0) {
+            heart.addCurrency(refund, "Raising " + the + " (pulled down)");
+        }
+        heart.tellOwner(cap(the) + " is down" + (paid > 0 ? ": " + refund + " of the " + paid + " it cost " + (refund == 1 ? "is" : "are") + " paid back"
+                + (refund < paid ? " (the rest stays with what was left standing)" : "") : "") + ". The earthworks stay.", net.minecraft.ChatFormatting.YELLOW);
+        heart.setChanged();
+    }
+
+    /**
+     * The price of the sites a load could not read, paid back at the first {@link #sync} (the level and the currency are at hand then, and
+     * not in {@link #load}); the owner is told. Never again: it is saved only while it is owed.
+     */
+    private void payBackUnreadSites() {
+        if (refundDue <= 0) {
+            return;
+        }
+        int n = refundDue;
+        refundDue = 0;
+        heart.addCurrency(n, "a building that could not be read (paid back)");
+        heart.tellOwner("A building being raised could not be read when the world loaded, so its price, " + n + " of the settlement's currency, is paid back. "
+                + "What was built of it stands.", net.minecraft.ChatFormatting.YELLOW);
+        heart.setChanged();
+    }
+
+    /** The currency still owed for sites a load could not read (the tests). */
+    public int refundDue() {
+        return refundDue;
+    }
+
     /** The settlement for siting a new building: its own rooms and heart, and every cell the sites being raised work. */
     private RoomShoring.Warren withSites() {
         return new RoomShoring.Warren() {
@@ -646,7 +815,7 @@ public final class Works {
         };
     }
 
-    /** Sites whose every cell is done, handed over: see {@link #handOver}. */
+    /** Sites whose every cell is done, handed over (see {@link #handOver}), and sites called off that are down, paid back ({@link #finishTeardown}). */
     private void finishSites(ServerLevel level) {
         if (sites.isEmpty()) {
             return;
@@ -656,6 +825,9 @@ public final class Works {
             if (s.raised() && level.isLoaded(s.box().getCenter())) {
                 it.remove();
                 handOver(level, s);
+            } else if (s.job().tornDown() && level.isLoaded(s.box().getCenter())) {
+                it.remove();                                     // called off, and down
+                finishTeardown(level, s);
             }
         }
     }
@@ -684,7 +856,7 @@ public final class Works {
         }
         if (next == null || !next.crewFromHorde() || next.crewType() != s.crewType()) {
             for (SettlerMob r : crewOf(level, key)) {
-                r.goHome();
+                sendHome(level, s.building, r);
             }
         }
         heart.tellOwner(cap(Settlement.the(s.room().displayName())) + " is raised.", net.minecraft.ChatFormatting.GREEN);
@@ -1123,6 +1295,9 @@ public final class Works {
             st.put(Long.toString(w.key().asLong()), w.save());
         }
         t.put("rooms", st);
+        if (refundDue > 0) {                                     // only while it is owed, like 'sites': a settlement with none saves as it did
+            t.putInt("refundDue", refundDue);
+        }
         if (!sites.isEmpty()) {                                  // only then: a settlement with none saves as it did
             ListTag sl = new ListTag();
             for (SiteWork s : sites.values()) {
@@ -1154,10 +1329,15 @@ public final class Works {
         saved = t.getCompound("rooms");
         rooms.clear();
         sites.clear();
+        refundDue = Math.max(0, t.getInt("refundDue"));
         for (Tag x : t.getList("sites", Tag.TAG_COMPOUND)) {
             RaiseJob job = RaiseJob.load((CompoundTag) x);
             if (job != null && !sites.containsKey(job.door)) {
                 sites.put(job.door, new SiteWork(heart, job));  // its builders come up again once it is loaded (sync)
+            } else {
+                // dropped (a plan or room that can't be read, a second site at a door): the price it was paid goes back at the first sync,
+                // not here, where there is no level and no currency yet; what was built of it stands
+                refundDue = (int) Math.min(Integer.MAX_VALUE, (long) refundDue + Math.max(0, ((CompoundTag) x).getInt("paid")));
             }
         }
         crew.clear();

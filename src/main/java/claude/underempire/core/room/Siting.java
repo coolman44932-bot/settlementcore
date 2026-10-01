@@ -1387,7 +1387,10 @@ public final class Siting {
                     }
                     loaded(n);
                     BlockState s = level.getBlockState(n);
-                    if (!wildLeaf(s) || d + 1 > s.getValue(LeavesBlock.DISTANCE)) {
+                    if (!wildLeaf(s)) {
+                        continue;
+                    }
+                    if (d + 1 > s.getValue(LeavesBlock.DISTANCE) && nearerLog(n, d, tree)) {
                         continue;                                // nearer another tree's logs: that tree's leaf
                     }
                     depth.put(n.asLong(), d + 1);
@@ -1403,6 +1406,43 @@ public final class Siting {
                 throw refuse("The logs at " + seed.getX() + " " + seed.getY() + " " + seed.getZ() + " have no leaves: they are someone's, not a tree,"
                         + " and only trees are felled for " + the, seed);
             }
+        }
+
+        /**
+         * Whether a log that isn't {@code tree}'s stands within {@code limit} steps of the leaf at {@code from}, through leaves (the distance a leaf's
+         * property keeps). A leaf's distance says it is nearer another tree's logs than this tree's, but the world doesn't keep it right: leaves set
+         * by a command, placed with a structure, or left in a world that was frozen before they ticked, hold whatever they were given (the film of
+         * 2026-10-01: an oak with every leaf at distance 1 was felled with its crown left hanging in the air). So it is believed only where a log
+         * really is that near.
+         */
+        boolean nearerLog(BlockPos from, int limit, LongOpenHashSet tree) {
+            ArrayDeque<BlockPos> q = new ArrayDeque<>();
+            Long2IntOpenHashMap steps = new Long2IntOpenHashMap();
+            q.add(from);
+            steps.put(from.asLong(), 0);
+            while (!q.isEmpty()) {
+                BlockPos p = q.poll();
+                int k = steps.get(p.asLong());
+                if (k >= limit) {
+                    continue;
+                }
+                for (Direction dir : Direction.values()) {
+                    BlockPos n = p.relative(dir);
+                    if (steps.containsKey(n.asLong()) || level.isOutsideBuildHeight(n)) {
+                        continue;
+                    }
+                    loaded(n);
+                    BlockState s = level.getBlockState(n);
+                    if (log(s) && !tree.contains(n.asLong())) {
+                        return true;                             // k + 1 steps, within the limit
+                    }
+                    if (s.getBlock() instanceof LeavesBlock) {
+                        steps.put(n.asLong(), k + 1);
+                        q.add(n);
+                    }
+                }
+            }
+            return false;
         }
 
         Refused tooBig(String which, BlockPos first) {

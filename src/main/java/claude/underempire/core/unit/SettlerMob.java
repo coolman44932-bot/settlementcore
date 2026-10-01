@@ -60,6 +60,9 @@ public abstract class SettlerMob extends PathfinderMob {
     public int gnawedOut;
     /** How often, with nothing to do, it has walked off about its room (CrewGoal.Idle: test reports; never on a site). */
     public int milled;
+    /** Told to go home by walking off its building first ({@link #leaveVia}): where to, and by when (game time); null when it isn't. Never saved: a rat never is. */
+    @Nullable private BlockPos leaveSpot;
+    private long leaveBy;
 
     protected SettlerMob(EntityType<? extends SettlerMob> type, Level level) {
         super(type, level);
@@ -71,6 +74,34 @@ public abstract class SettlerMob extends PathfinderMob {
 
     public String crewDoing() {
         return crewDoing;
+    }
+
+    /**
+     * Sent home from a building on the surface: it walks to {@code spot} first (the building's landing, on natural ground outside its box) and sinks
+     * there, never on the roof or inside a course; {@code by} (game time) is how long it has: then it sinks where it stands, and the settlement takes
+     * it back all the same. CrewGoal does the walking. Told again, it keeps its first spot and its time.
+     */
+    public void leaveVia(BlockPos spot, long by) {
+        if (leaveSpot == null) {
+            leaveSpot = spot;
+            leaveBy = by;
+        }
+    }
+
+    /** Where it is walking off to before it goes home, or null. */
+    @Nullable
+    public BlockPos leaveSpot() {
+        return leaveSpot;
+    }
+
+    /** When, in game time, it stops walking and sinks where it stands. */
+    public long leaveBy() {
+        return leaveBy;
+    }
+
+    /** It is where it was walking to (or out of time): the order is spent. */
+    public void clearLeave() {
+        leaveSpot = null;
     }
 
     /** Out on the surface: nothing solid overhead all the way up. Heightmap-based, so it holds before lighting settles. */
