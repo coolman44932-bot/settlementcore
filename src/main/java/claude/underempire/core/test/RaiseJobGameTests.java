@@ -479,6 +479,8 @@ public class RaiseJobGameTests {
     public static final String LAMPS = "raise_test_lamps";
     /** A flat apron, for the template tests: given by hand, dropped and given again. */
     public static final String RESTORED = "raise_test_restored";
+    /** A flat apron of dirt, 2 high: a ground layer that is the land's own kind of block (a plinth of it is {@code Siting.ground}, no part of the building). */
+    public static final String GROUND_APRON = "raise_test_groundapron";
     /** A closed hall with one door, its walls at the box's edge and its roof 4 over its floor: the way in is a long walk from outside its back wall. */
     public static final String ONE_DOOR = "raise_test_onedoor";
 
@@ -643,6 +645,11 @@ public class RaiseJobGameTests {
     /** A flat apron and nothing else, 2 high: a template to give by hand, drop and give again. */
     private static synchronized Rooms.Room restorable() {
         return handBuilt(RESTORED, "Test Restored Apron", 2, c -> c.box(0, 0, 0, 8, 0, 8, BRICK));
+    }
+
+    /** A flat apron of dirt and nothing else, 2 high: its plinth is dirt, the land's own kind of block. */
+    private static synchronized Rooms.Room groundApron() {
+        return handBuilt(GROUND_APRON, "Test Ground Apron", 2, c -> c.box(0, 0, 0, 8, 0, 8, Blocks.DIRT.defaultBlockState()));
     }
 
     /**
@@ -1227,6 +1234,54 @@ public class RaiseJobGameTests {
                 h.assertTrue(stage == 3 ? standing : level.getBlockState(hump).isAir() && level.getBlockState(hump.below()).isAir(), done + ": the hump at " + hump.toShortString()
                         + (stage == 3 ? " was cut (" : " still stands (") + level.getBlockState(hump) + ", " + level.getBlockState(hump.below()) + ") "
                         + (stage == 3 ? "by a building that never rose: there is nothing of it left standing among its cells to level" : "though the building rose: nothing stands up out of its floor"));
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * A site whose plinth is the land's own kind of block is levelled all the same when it is called off after its plinth and before its first course (the review of P1:
+     * the floor was levelled only once a cell of the building was laid, and a plinth of dirt, gravel, stone, tuff or mud is {@code Siting.ground}, so it is no part of the building and
+     * is never counted: a 1-deep notch was left over each dip column that the old code levelled). A hand-built apron of dirt on land with a dip of 2 under four columns of its box: the
+     * earthworks are laid (the plinth fills the dip with dirt up to the floor's cell), no cell of a course, the site is torn down at once and its floor levelled: the floor cell over each
+     * of the four is the land's ground, and the box is level. The test room's plinth is stone bricks and so is counted; this is the one that is not.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 200, batch = "raise")
+    public static void aSiteWhoseOwnPlinthIsTheLandsIsLevelledWhenCalledOffBeforeItsFirstCourse(GameTestHelper h) {
+        Rooms.Room room = groundApron();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> x >= s.bx0 + 3 && x <= s.bx0 + 4 && z >= s.bz0 + 3 && z <= s.bz0 + 4 ? s.floor - 2 : s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "a dip under a dirt apron");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            int firstCourse = 0;
+            while (firstCourse < job.taskList().size() && job.phaseOf(firstCourse) != RaiseJob.COURSE) {
+                firstCourse++;
+            }
+            job.gnawInOrder(level, firstCourse, new ArrayList<>());
+            BlockPos notch = new BlockPos(s.bx0 + 3, s.floor, s.bz0 + 3);
+            h.assertTrue(level.getBlockState(notch).isAir() && level.getBlockState(notch.below()).is(Blocks.DIRT) && !level.getBlockState(notch.below(2)).isAir(),
+                    "the scene has no plinth of dirt under a floor cell still to be laid at " + notch.toShortString() + ": " + level.getBlockState(notch) + " over " + level.getBlockState(notch.below()));
+            h.assertTrue(job.laidCount() == 0, "a plinth of dirt is the land's, not the building's: " + job.laidCount() + " cells of the building are laid");
+            job.startTearDown(level, level.getGameTime());
+            h.assertTrue(job.tornDown(), "nothing of the building was laid, so nothing is to come down");
+            int notches = 0;
+            for (int x = s.bx0; x <= s.bx0 + 8; x++) {
+                for (int z = s.bz0; z <= s.bz0 + 8; z++) {
+                    BlockPos c = new BlockPos(x, s.floor, z);
+                    notches += level.getBlockState(c).isAir() && !level.getBlockState(c.below()).isAir() ? 1 : 0;
+                }
+            }
+            int n = job.levelFloor(level);
+            h.assertTrue(notches == 4 && n == notches, "the plinth of dirt is laid under 4 floor cells, which are 1-deep notches in the box; levelFloor made " + n + " level (the world calls for " + notches + ")");
+            for (int x = s.bx0; x <= s.bx0 + 8; x++) {
+                for (int z = s.bz0; z <= s.bz0 + 8; z++) {
+                    h.assertTrue(Siting.ground(level.getBlockState(new BlockPos(x, s.floor, z))), "the floor of the box at " + x + " " + z + " is " + level.getBlockState(new BlockPos(x, s.floor, z))
+                            + ": a notch left where the dip was");
+                }
             }
             s.clear();
             h.succeed();
