@@ -93,17 +93,12 @@ public final class Works {
      * at the first {@link #sync}. Saved, and only while it is not 0, so the Works' tag of a settlement with none is as it always was.
      */
     private int refundDue;
-    /** A line the owner was not about to hear ({@link #tell}), kept until they are. */
-    private record Owed(String line, net.minecraft.ChatFormatting color) {
-    }
-
     /**
      * What the owner was told about their buildings while they were away (a site came down, or a load paid one back, with the owner off the server):
-     * the gold is paid back at once and only the line would have been lost. Told at the first second they are about ({@link #tellOwed}), the oldest let go
-     * past {@value #OWED_MAX}. Saved, and only while any is owed, so the Works' tag of a settlement with none is as it always was.
+     * the gold is paid back at once and only the line would have been lost. Told at the first second they are about ({@link #tellOwed}); identical lines are one with a count, and
+     * "X is raised." never pushes out a refund line ({@link OwedLines}). Saved, and only while any is owed, so the Works' tag of a settlement with none is as it always was.
      */
-    private final List<Owed> owed = new ArrayList<>();
-    static final int OWED_MAX = 12;
+    private final OwedLines owed = new OwedLines();
     private final Map<BlockPos, Integer> here = new HashMap<>();
     private final Map<BlockPos, Long> lostAt = new HashMap<>();
     private CompoundTag saved = new CompoundTag();
@@ -174,29 +169,31 @@ public final class Works {
     /**
      * A line to the owner about a building (the raise's: called off, down and paid back, a site a load could not read, raised): said at once when they are
      * about, else kept ({@link #owed}) and said when they next are, so a refund that came while they were off the server is not a refund nobody heard of.
-     * A settlement with no owner says nothing, as {@code tellOwner} does.
+     * What was kept comes first, so a line made on the second they come back (a load paying a site back) is not said before the older ones.
+     * {@code routine}: good news with no gold in it ("is raised"), the first a full queue lets go. A settlement with no owner says nothing, as {@code tellOwner} does.
      */
-    private void tell(String line, net.minecraft.ChatFormatting color) {
+    private void tell(String line, net.minecraft.ChatFormatting color, boolean routine) {
         if (heart.ownerPlayer() != null || heart.owner() == null) {
+            tellOwed();
             heart.tellOwner(line, color);
             return;
         }
-        if (owed.size() >= OWED_MAX) {
-            owed.remove(0);
-        }
-        owed.add(new Owed(line, color));
+        owed.add(line, color, routine);
         heart.setChanged();
     }
 
-    /** The lines kept for an owner who was away, said now that they are about (once a second: the first after they come back, with the settlement loaded). */
+    /** {@link #tell(String, net.minecraft.ChatFormatting, boolean)} of a line that matters. */
+    private void tell(String line, net.minecraft.ChatFormatting color) {
+        tell(line, color, false);
+    }
+
+    /** The lines kept for an owner who was away, said now that they are about (once a second: the first after they come back, with the settlement loaded), oldest first. */
     private void tellOwed() {
         if (owed.isEmpty() || heart.ownerPlayer() == null) {
             return;
         }
-        List<Owed> now = new ArrayList<>(owed);
-        owed.clear();
-        for (Owed o : now) {
-            heart.tellOwner(o.line(), o.color());
+        for (OwedLines.Line l : owed.take()) {
+            heart.tellOwner(l.said(), l.color());
         }
         heart.setChanged();
     }
@@ -204,6 +201,11 @@ public final class Works {
     /** How many lines are kept for an owner who is away (the tests). */
     public int owedLines() {
         return owed.size();
+    }
+
+    /** The lines kept for an owner who is away, oldest first (the tests). */
+    public List<OwedLines.Line> owedLineList() {
+        return owed.lines();
     }
 
     /** The rooms' works, kept in step with the Heart's buildings (and its Watch-Posts). */
@@ -906,7 +908,7 @@ public final class Works {
                 sendHome(level, s.building, r);
             }
         }
-        tell(cap(Settlement.the(s.room().displayName())) + " is raised.", net.minecraft.ChatFormatting.GREEN);
+        tell(cap(Settlement.the(s.room().displayName())) + " is raised.", net.minecraft.ChatFormatting.GREEN, true);
         heart.setChanged();
     }
 
@@ -1346,14 +1348,7 @@ public final class Works {
             t.putInt("refundDue", refundDue);
         }
         if (!owed.isEmpty()) {                                   // likewise: lines an owner who was away is still to hear
-            ListTag told = new ListTag();
-            for (Owed o : owed) {
-                CompoundTag c = new CompoundTag();
-                c.putString("line", o.line());
-                c.putString("color", o.color().getName());
-                told.add(c);
-            }
-            t.put("told", told);
+            t.put("told", owed.save());
         }
         if (!sites.isEmpty()) {                                  // only then: a settlement with none saves as it did
             ListTag sl = new ListTag();
@@ -1387,14 +1382,7 @@ public final class Works {
         rooms.clear();
         sites.clear();
         refundDue = Math.max(0, t.getInt("refundDue"));
-        owed.clear();
-        for (Tag x : t.getList("told", Tag.TAG_COMPOUND)) {
-            CompoundTag c = (CompoundTag) x;
-            net.minecraft.ChatFormatting color = net.minecraft.ChatFormatting.getByName(c.getString("color"));
-            if (!c.getString("line").isEmpty() && owed.size() < OWED_MAX) {
-                owed.add(new Owed(c.getString("line"), color == null ? net.minecraft.ChatFormatting.YELLOW : color));
-            }
-        }
+        owed.load(t.getList("told", Tag.TAG_COMPOUND));
         for (Tag x : t.getList("sites", Tag.TAG_COMPOUND)) {
             RaiseJob job = RaiseJob.load((CompoundTag) x);
             if (job != null && !sites.containsKey(job.door)) {

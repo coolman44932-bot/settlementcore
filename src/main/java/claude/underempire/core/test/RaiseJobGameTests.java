@@ -1289,6 +1289,67 @@ public class RaiseJobGameTests {
     }
 
     /**
+     * The owed lines of an owner who was away ({@link claude.underempire.core.work.OwedLines}; the review of P1), with no world: a line the same as one kept is counted, not kept again,
+     * and said once with its count in the place of the first; the queue holds at most {@link claude.underempire.core.work.OwedLines#MAX}, and a routine line ("X is raised.") never pushes
+     * out one that matters: when the queue is full the oldest routine line goes first, a new routine line is dropped when there is none to make room by, and only a full queue of lines that
+     * matter drops its oldest; they come out oldest first; and a save round-trips them with their counts and which are routine.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "raise")
+    public static void theOwedLinesCollapseKeepWhatMattersAndComeOutOldestFirst(GameTestHelper h) {
+        h.runAfterDelay(1, () -> {
+            net.minecraft.ChatFormatting y = net.minecraft.ChatFormatting.YELLOW;
+            net.minecraft.ChatFormatting g = net.minecraft.ChatFormatting.GREEN;
+            claude.underempire.core.work.OwedLines q = new claude.underempire.core.work.OwedLines();
+            q.add("The Warp-Orchard is raised.", g, true);
+            q.add("The Hoard is down: 10 of the 10 it cost are paid back.", y, false);
+            q.add("The Warp-Orchard is raised.", g, true);
+            q.add("The Warp-Orchard is raised.", g, true);
+            q.add("The Warp-Orchard is raised.", y, true);            // the same words in another colour are another line
+            var got = q.lines();
+            h.assertTrue(got.size() == 3 && got.get(0).count() == 3 && got.get(0).said().equals("The Warp-Orchard is raised. (x3)") && got.get(1).count() == 1
+                            && got.get(1).said().equals("The Hoard is down: 10 of the 10 it cost are paid back.") && got.get(2).color() == y,
+                    "identical lines were not collapsed into the place of the first, with a count: " + got);
+            // a full queue: 12 lines that matter, then a routine line, then one more that matters
+            claude.underempire.core.work.OwedLines full = new claude.underempire.core.work.OwedLines();
+            for (int i = 0; i < claude.underempire.core.work.OwedLines.MAX; i++) {
+                full.add("Refund " + i, y, false);
+            }
+            full.add("The Hoard is raised.", g, true);
+            h.assertTrue(full.size() == 12 && full.lines().stream().noneMatch(l -> l.routine()) && full.lines().get(0).text().equals("Refund 0"),
+                    "a routine line pushed a line that matters out of a full queue: " + full.lines().stream().map(l -> l.text()).toList());
+            full.add("Refund 12", y, false);
+            h.assertTrue(full.size() == 12 && full.lines().get(0).text().equals("Refund 1") && full.lines().get(11).text().equals("Refund 12"),
+                    "a full queue of lines that matter keeps the newest and lets its oldest go: " + full.lines().stream().map(l -> l.text()).toList());
+            // routine lines make room for what matters, oldest first
+            claude.underempire.core.work.OwedLines mixed = new claude.underempire.core.work.OwedLines();
+            for (int i = 0; i < 6; i++) {
+                mixed.add("Refund " + i, y, false);              // the oldest are the ones that matter
+            }
+            for (int i = 0; i < 6; i++) {
+                mixed.add("Room " + i + " is raised.", g, true);
+            }
+            mixed.add("Refund 6", y, false);                       // 13th: the oldest routine line, "Room 0", makes the room, not the oldest line
+            mixed.add("Refund 7", y, false);                       // and the next
+            var texts = mixed.lines().stream().map(l -> l.text()).toList();
+            h.assertTrue(mixed.size() == 12 && !texts.contains("Room 0 is raised.") && !texts.contains("Room 1 is raised.") && texts.contains("Room 2 is raised.")
+                            && texts.contains("Refund 0") && texts.contains("Refund 7") && texts.get(0).equals("Refund 0"),
+                    "the oldest routine lines should make room for lines that matter, and nothing else go: " + texts);
+            for (int i = 0; i < 4; i++) {
+                mixed.add("Late " + i + " is raised.", g, true);   // routine into a queue with room made only by routine lines: the oldest routine goes, never a refund
+            }
+            texts = mixed.lines().stream().map(l -> l.text()).toList();
+            h.assertTrue(texts.contains("Refund 0") && texts.contains("Refund 7") && texts.stream().filter(t -> t.startsWith("Refund")).count() == 8,
+                    "a routine line pushed a line that matters out: " + texts);
+            // saved and read back: counts, colours and which are routine; oldest first; capped
+            var back = new claude.underempire.core.work.OwedLines();
+            back.load(q.save());
+            h.assertTrue(back.lines().equals(q.lines()), "the save didn't read back the same: " + back.lines() + " against " + q.lines());
+            h.assertTrue(q.take().size() == 3 && q.isEmpty() && q.take().isEmpty(), "taking the lines doesn't empty the queue");
+            h.succeed();
+        });
+    }
+
+    /**
      * Why task {@code t} could not go in now, or null: a block with nothing under it; a cut with something solid over it (it
      * would leave that floating), or with no neighbour at most a block over the new ground (a pit).
      */
