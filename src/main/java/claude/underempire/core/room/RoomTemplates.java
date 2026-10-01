@@ -62,25 +62,40 @@ public final class RoomTemplates {
      * A room's template for a reader that may be a client's (Siting#preview): a server's level reads it as {@link #get} does, from the
      * server's resources; any other level reads it from the jar of the mod that registered the room, which a client has as well
      * ({@code data/<namespace>/structure/room/<id>.nbt}: a mod's data folder is not in a client's resource manager, and a dedicated
-     * server's resources are not the client's). Empty when it is nowhere to be found, and then not remembered.
+     * server's resources are not the client's). Empty when it is nowhere to be found.
      */
     public static List<Entry> lookup(Level level, String id) {
         if (level instanceof ServerLevel server) {
             return get(server, id);
         }
+        return lookupFromMods(id);
+    }
+
+    /**
+     * A client's {@link #lookup}: what the mods' jars hold of {@code id}, read once and remembered, until {@link #clear} or {@link #forget}. An
+     * empty read is remembered too (a room with no template anywhere, or one that would not read, and said so in the log once): a plan held on
+     * a client asks every tick, and a missing template must not go through ModList and the jars' files each time.
+     */
+    public static List<Entry> lookupFromMods(String id) {
         List<Entry> held = CLIENT_CACHE.get(id);
         if (held != null) {
             return held;
         }
         List<Entry> read = readFromMods(id);
-        if (!read.isEmpty()) {
-            CLIENT_CACHE.put(id, read);
-        }
+        CLIENT_CACHE.put(id, read);
         return read;
+    }
+
+    private static final Map<String, Integer> MOD_READS = new ConcurrentHashMap<>();
+
+    /** Tests: how many times {@link #readFromMods} has gone looking in the mods' jars for {@code id}. */
+    public static int modReads(String id) {
+        return MOD_READS.getOrDefault(id, 0);
     }
 
     /** The template of {@code id} from the data folder of the mod jar that registered the room, or empty. */
     public static List<Entry> readFromMods(String id) {
+        MOD_READS.merge(id, 1, Integer::sum);
         for (String ns : Rooms.namespacesFor(id)) {
             IModFileInfo mod = ModList.get().getModFileById(ns);
             if (mod == null) {

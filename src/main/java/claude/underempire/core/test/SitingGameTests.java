@@ -1571,6 +1571,32 @@ public class SitingGameTests {
         h.succeed();
     }
 
+    /**
+     * A room with no template anywhere is looked for once on a client, not every tick (the review of 20da67f: {@code lookup} remembered only a read
+     * that found something, so a plan held on a client for such a room went through ModList and the mods' jars every tick): the first lookup of an
+     * id nobody registered reads the jars once and is empty, and the next three read nothing and are the same empty answer; once the id is
+     * forgotten it is looked for again.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "siting")
+    public static void aTemplateThatIsNotThereIsLookedForOnceOnAClient(GameTestHelper h) {
+        String missing = "no_such_room_for_a_client_lookup";
+        RoomTemplates.forget(missing);
+        int before = RoomTemplates.modReads(missing);
+        List<RoomTemplates.Entry> first = RoomTemplates.lookupFromMods(missing);
+        h.assertTrue(first.isEmpty() && RoomTemplates.modReads(missing) == before + 1, "the first look for a missing template made " + (RoomTemplates.modReads(missing) - before)
+                + " reads and found " + first.size() + " cells, not 1 read and none");
+        for (int i = 0; i < 3; i++) {
+            List<RoomTemplates.Entry> again = RoomTemplates.lookupFromMods(missing);
+            h.assertTrue(again.isEmpty() && RoomTemplates.modReads(missing) == before + 1, "look " + (i + 2) + " for a missing template read the mods' jars again: " + (RoomTemplates.modReads(missing) - before)
+                    + " reads in all, not 1");
+        }
+        RoomTemplates.forget(missing);
+        RoomTemplates.lookupFromMods(missing);
+        h.assertTrue(RoomTemplates.modReads(missing) == before + 2, "a forgotten missing template was not looked for again: " + (RoomTemplates.modReads(missing) - before) + " reads, not 2");
+        RoomTemplates.forget(missing);
+        h.succeed();
+    }
+
 
     /** The site was refused, saying {@code words}, at {@code spot}, and naming it. */
     private static void refusedAt(GameTestHelper h, Site s, Siting.Result r, String scene, String words, BlockPos spot) {
