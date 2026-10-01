@@ -188,16 +188,37 @@ public final class Muster {
     /** The foes in the warren now: in (or just round) its rooms and tunnels, or near the Heart. */
     static List<Mob> intruders(ServerLevel level, Settlement h) {
         Set<Mob> out = new LinkedHashSet<>();
+        BoundingBox ring = ring(h);
         List<BoundingBox> boxes = new ArrayList<>(h.settlementBoxes());
-        boxes.add(new BoundingBox(h.getBlockPos()).inflatedBy(h.reach()));
+        boxes.add(ring);
         for (BoundingBox b : boxes) {
             AABB area = AABB.of(b).inflate(3);
             if (!level.hasChunksAt((int) area.minX, (int) area.minZ, (int) area.maxX, (int) area.maxZ)) {
                 continue;
             }
-            out.addAll(level.getEntitiesOfClass(Mob.class, area, m -> foe(m) && h.inSettlement(m.blockPosition())));
+            out.addAll(level.getEntitiesOfClass(Mob.class, area, m -> foe(m) && defends(h, ring, m.blockPosition())));
         }
         return new ArrayList<>(out);
+    }
+
+    /**
+     * The ground about the heart the muster looks in and defends, whether or not the settlement calls it its own: {@link Settlement#reach} each way
+     * across, and no higher or lower than {@link Settlement#HEART_REACH} (a race that holds a wide plain does not hold a wider sky and bedrock). The
+     * Warren Heart's reach is its own {@code inSettlement}'s cube about the heart, so this adds nothing to it.
+     */
+    static BoundingBox ring(Settlement h) {
+        BlockPos c = h.getBlockPos();
+        int across = Math.max(0, h.reach());
+        int high = Math.min(across, Settlement.HEART_REACH);
+        return new BoundingBox(c.getX() - across, c.getY() - high, c.getZ() - across, c.getX() + across, c.getY() + high, c.getZ() + across);
+    }
+
+    /**
+     * Whether the muster defends {@code p}: it is in the settlement, or within the settlement's {@link Settlement#reach} of its heart ({@code ring}, from
+     * {@link #ring}). The one rule for what counts as a foe, where a defender comes up and who takes heart from the fight.
+     */
+    static boolean defends(Settlement h, BoundingBox ring, BlockPos p) {
+        return h.inSettlement(p) || ring.isInside(p);
     }
 
     // ------------------------------------------------------------------ the horde rises
@@ -227,15 +248,18 @@ public final class Muster {
 
     /**
      * Where a defender comes up: between the foe nearest the Heart and the Heart, a few blocks towards the Heart (a clanrat
-     * a few more, behind the slaves), in the warren, on standable ground under cover (unless the settlement
-     * {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders stand in the open), a tunnel's
-     * narrow floor before a room's. Null if there is nowhere. Public for the engine's tests.
+     * a few more, behind the slaves), in the warren (or within the settlement's {@link Settlement#reach} of its heart), on standable
+     * ground under cover (unless the settlement {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders
+     * stand in the open, at the first cell found, there being no tunnel to look on for), a tunnel's narrow floor before a room's.
+     * Null if there is nowhere. Public for the engine's tests.
      */
     @Nullable
     public static BlockPos cell(ServerLevel level, Settlement h, Mob head, boolean clanrat) {
         Vec3 from = head.position();
         Vec3 dir = Vec3.atCenterOf(h.getBlockPos()).subtract(from);
         dir = dir.lengthSqr() < 1 ? new Vec3(1, 0, 0) : dir.normalize();
+        BoundingBox ring = ring(h);
+        boolean sky = h.mustersUnderSky();
         BlockPos open = null;
         for (int t = 0; t < 48; t++) {
             double d = (clanrat ? 6 : 3) + level.random.nextDouble() * 4 + t / 12.0;
@@ -244,12 +268,12 @@ public final class Muster {
             for (int dy = 0; dy <= 6; dy++) {
                 for (int s : new int[]{dy, -dy}) {
                     BlockPos q = base.above(s);
-                    if (!level.isLoaded(q) || !h.inSettlement(q) || !SettlerMob.standable(level, q)
-                            || (!h.mustersUnderSky() && SettlerMob.underOpenSky(level, q))) {
+                    if (!level.isLoaded(q) || !defends(h, ring, q) || !SettlerMob.standable(level, q)
+                            || (!sky && SettlerMob.underOpenSky(level, q))) {
                         continue;
                     }
-                    if (tight(level, q)) {
-                        return q;                           // a tunnel: the killing ground
+                    if (sky || tight(level, q)) {
+                        return q;                           // a tunnel: the killing ground; in the open there is no tunnel to look on for, the first cell will do
                     }
                     if (open == null) {
                         open = q;
@@ -284,14 +308,14 @@ public final class Muster {
     /** The clan's rats about the fight hit harder in their own warren (hardest in a tunnel), and take heart. */
     private void buff(ServerLevel level, Settlement h, List<Mob> in) {
         Set<UUID> now = new HashSet<>();
+        BoundingBox ring = ring(h);
         for (Mob foe : in) {
             for (SettlerMob r : level.getEntitiesOfClass(SettlerMob.class, foe.getBoundingBox().inflate(FIGHT),
                     r -> r.isAlive() && r.settlement() == h && !r.isRogue())) {
                 if (!now.add(r.getUUID())) {
                     continue;
                 }
-                boolean inWarren = h.inSettlement(r.blockPosition());
-                if (!inWarren) {
+                if (!defends(h, ring, r.blockPosition())) {
                     continue;
                 }
                 boolean tunnel = tight(level, r.blockPosition());

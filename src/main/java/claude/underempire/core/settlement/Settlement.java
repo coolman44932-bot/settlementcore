@@ -96,8 +96,10 @@ public interface Settlement extends RoomShoring.Warren {
     List<BoundingBox> settlementBoxes();
 
     /**
-     * How far round its heart the muster looks for foes besides {@link #settlementBoxes} (a box about the heart this wide
-     * each way): {@link #HEART_REACH}, the Warren Heart's, until a race says. A race that holds open ground may widen it.
+     * How far round its heart the muster looks for foes, and defends, besides {@link #settlementBoxes}: a foe within this of the heart
+     * (a box about it this wide each way across, and {@link #HEART_REACH} at most up and down) counts whether or not {@link #inSettlement}
+     * says the ground is the settlement's, and a defender may come up and fight there. {@link #HEART_REACH}, the Warren Heart's, until a
+     * race says. A race that holds open ground may widen it.
      */
     default int reach() {
         return HEART_REACH;

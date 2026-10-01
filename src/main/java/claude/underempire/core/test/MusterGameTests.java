@@ -197,4 +197,99 @@ public class MusterGameTests {
         }
         h.succeed();
     }
+
+    /**
+     * A race's reach widens what the muster defends, not only where it looks (the review of 20da67f: {@code intruders} widened its search by the
+     * reach and then kept only the foes {@code inSettlement} called the settlement's, so the reach changed nothing for a race whose ground was
+     * narrower). A settlement that holds nothing but its heart's own cell: with the default reach of 16 a foe 17 off is no one's business; with a
+     * reach of 18 it is seen, the alarm goes up and the defenders are asked up on the open ground between it and the heart, within the reach.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aRaceWhoseReachIsWiderThanItsGroundStillDefendsWhatIsWithinIt(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            var foe = foeAt(level, middle.offset(17, 0, 0), true);
+            List<BlockPos> asked = new ArrayList<>();
+            Muster narrow = new Muster();
+            Muster wide = new Muster();
+            narrow.second(level, city(middle, middle, new ArrayList<>()).answer("inSettlement", a -> a[0].equals(middle)).is("mustersUnderSky", true).settlement());
+            wide.second(level, city(middle, middle, asked).answer("inSettlement", a -> a[0].equals(middle)).is("mustersUnderSky", true).is("reach", 18).settlement());
+            h.assertTrue(narrow.lastSeen == 0 && !narrow.alarmed(), "the default reach of 16 saw the foe 17 off, in no ground of the settlement's (" + narrow.lastSeen + ")");
+            h.assertTrue(wide.lastSeen == 1 && wide.alarmed(), "a reach of 18 missed the foe 17 off (" + wide.lastSeen + "): the reach only widened the search");
+            h.assertTrue(asked.size() == Muster.STEP, "the settlement that reaches 18 was asked for " + asked.size() + " defenders, not " + Muster.STEP
+                    + ": none may come up on ground that is within its reach and not its own");
+            for (BlockPos at : asked) {
+                h.assertTrue(SettlerMob.standable(level, at) && SettlerMob.underOpenSky(level, at) && near(at, middle, 18),
+                        "a defender was to come up at " + at.toShortString() + ", not standable, not in the open, or past the reach of 18");
+            }
+            foe.discard();
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * The muster looks no higher or lower than the heart's reach, however far it looks across (the review of 20da67f: the box was a cube of the
+     * reach, so a wide plain's muster looked as far into the sky and the rock). A foe on the ground in a settlement that reaches 20 across is seen
+     * from a heart 10 over it, and not from a heart 22 over it: 16 is as far up or down as the muster looks, whatever the reach.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void theMusterLooksNoFurtherUpOrDownThanTheHeartsReachWhateverItsReachAcross(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            var foe = foeAt(level, middle.offset(5, 0, 0), true);
+            Muster low = new Muster();
+            Muster high = new Muster();
+            low.second(level, city(middle, middle.above(10), new ArrayList<>()).is("reach", HALF).settlement());
+            high.second(level, city(middle, middle.above(22), new ArrayList<>()).is("reach", HALF).settlement());
+            h.assertTrue(low.lastSeen == 1 && low.alarmed(), "a heart 10 over the foe, reaching 20 across, missed it (" + low.lastSeen + ")");
+            h.assertTrue(high.lastSeen == 0 && !high.alarmed(), "a heart 22 over the foe saw it (" + high.lastSeen + "): the box is a cube of the reach, not flat");
+            foe.discard();
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * {@code Muster.cell} stops at the first open cell for a settlement that musters under the sky (the review of 20da67f: every one of its 48 tries
+     * of 14 cells was looked through though any open cell was as good as another), where the default settlement, the Warren Heart's, still looks
+     * through them all for a tunnel. Counted by how often each is asked whether a cell is its own: the surface settlement at most a few times, the
+     * default one on every cell it looks at (672 when all are loaded; well over a hundred is enough here).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aSurfaceSettlementTakesTheFirstOpenCellAndTheDefaultOneLooksThroughAllItsTries(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            var foe = foeAt(level, middle.offset(12, 0, 3), false);
+            int[] open = {0};
+            int[] covered = {0};
+            Settlement surface = city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true)
+                    .answer("inSettlement", a -> {
+                        open[0]++;
+                        return near((BlockPos) a[0], middle, HALF);
+                    }).settlement();
+            Settlement tunnels = city(middle, middle, new ArrayList<>())
+                    .answer("inSettlement", a -> {
+                        covered[0]++;
+                        return near((BlockPos) a[0], middle, HALF);
+                    }).settlement();
+            for (int i = 0; i < 10; i++) {
+                open[0] = 0;
+                BlockPos at = Muster.cell(level, surface, foe, i % 2 == 1);
+                h.assertTrue(at != null && SettlerMob.underOpenSky(level, at), "the surface settlement was given no open cell (round " + i + ")");
+                h.assertTrue(open[0] <= 5, "the surface settlement asked " + open[0] + " times whether a cell was its own before it took one (round " + i
+                        + "): it looks on after the first open cell");
+            }
+            h.assertTrue(Muster.cell(level, tunnels, foe, false) == null, "the default settlement was given a cell on open ground");
+            h.assertTrue(covered[0] > 100, "the default settlement looked at " + covered[0] + " cells: its search was cut short, and the Warren Heart's with it");
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
 }
