@@ -249,7 +249,7 @@ public final class Muster {
     /**
      * Where a defender comes up: between the foe nearest the Heart and the Heart, a few blocks towards the Heart (a clanrat
      * a few more, behind the slaves), in the warren (or within the settlement's {@link Settlement#reach} of its heart), on standable
-     * ground under cover (unless the settlement {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders
+     * ground with a way out ({@link #opens}: never a pocket shut in on every side) under cover (unless the settlement {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders
      * stand in the open, at the first cell found, there being no tunnel to look on for), a tunnel's narrow floor before a room's.
      * Null if there is nowhere. Public for the engine's tests.
      */
@@ -268,7 +268,7 @@ public final class Muster {
             for (int dy = 0; dy <= 6; dy++) {
                 for (int s : new int[]{dy, -dy}) {
                     BlockPos q = base.above(s);
-                    if (!level.isLoaded(q) || !defends(h, ring, q) || !SettlerMob.standable(level, q)
+                    if (!level.isLoaded(q) || !defends(h, ring, q) || !SettlerMob.standable(level, q) || !opens(level, q)
                             || (!sky && SettlerMob.underOpenSky(level, q))) {
                         continue;
                     }
@@ -282,6 +282,23 @@ public final class Muster {
             }
         }
         return open;
+    }
+
+    /**
+     * A way out of {@code q}: a side of it with two free cells a rat can walk into. A cell shut in on every side (a trap's pocket, a
+     * hollow in the rock, a foe sealed in stone) is no tunnel, but {@link #tight} counts it the tightest there is, so a defender came
+     * up in it, on top of the foe shut there (aRatGivesUpAFoeItCannotReach: a husk sealed in a stone cell died in one run in about
+     * ninety).
+     */
+    static boolean opens(Level level, BlockPos q) {
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            BlockPos n = q.relative(d);
+            if (level.getBlockState(n).getCollisionShape(level, n).isEmpty()
+                    && level.getBlockState(n.above()).getCollisionShape(level, n.above()).isEmpty()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** A tunnel no wider than {@link #TIGHT} across one way or the other, at {@code p}. */

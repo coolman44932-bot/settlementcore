@@ -292,4 +292,51 @@ public class MusterGameTests {
         }
         h.succeed();
     }
+
+    /**
+     * A defender never comes up in a cell shut in on every side (Muster#opens). A foe sealed in a stone cell made the tightest "tunnel"
+     * there is, and the alarm brought defenders up in it, on top of the foe (the Warren Heart's aRatGivesUpAFoeItCannotReach: a husk
+     * shut in stone died in one of its runs in about ninety). The foe stands in the pocket of a stone block, the heart 3 under it and
+     * 4 off as in that test, and the cell is asked for 1500 times, as the alarm asks: none may be the pocket. With a side of it opened
+     * (the control) the same asking finds it, so the sealed none is the rule's doing and not the ground's (before the rule: about 2 in
+     * 100 asks of the sealed one too).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aDefenderNeverComesUpInACellShutInOnEverySide(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos pocket = middle.offset(-1, 3, 4);
+            for (int dx = -1; dx <= 1; dx++) {
+                for (int dy = -1; dy <= 2; dy++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        boolean air = dx == 0 && dz == 0 && (dy == 0 || dy == 1);
+                        level.setBlock(pocket.offset(dx, dy, dz), air ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
+                    }
+                }
+            }
+            var foe = foeAt(level, pocket, false);
+            Settlement tunnels = city(middle, middle, new ArrayList<>()).settlement();
+            int sealed = 0;
+            for (int i = 0; i < 1500; i++) {
+                if (pocket.equals(Muster.cell(level, tunnels, foe, false))) {           // (the ground under the block is a cell too, a wide one)
+                    sealed++;
+                }
+            }
+            h.assertTrue(sealed == 0, "a defender was to come up " + sealed + " times of 1500 in a cell shut in on every side, at " + pocket.toShortString());
+            level.setBlock(pocket.east(), Blocks.AIR.defaultBlockState(), 2);        // the control: a way out of the pocket
+            level.setBlock(pocket.east().above(), Blocks.AIR.defaultBlockState(), 2);
+            int opened = 0;
+            for (int i = 0; i < 1500; i++) {
+                BlockPos at = Muster.cell(level, tunnels, foe, false);
+                if (pocket.equals(at) || pocket.east().equals(at)) {
+                    opened++;
+                }
+            }
+            h.assertTrue(opened > 0, "the pocket with a way out was never asked for in 1500 asks: the ground gives none a cell, so the sealed none proves nothing");
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
 }
