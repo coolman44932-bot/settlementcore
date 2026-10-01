@@ -80,7 +80,9 @@ public class EngineWordsGameTests {
             h.assertTrue(outside != null && outside.contains("outside the settlement"), "a door outside the settlement was not refused for that: " + outside);
             said.add(outside);
             t.holds = true;
-            Rooms.Room dugRoom = BuildingBookGameTests.cellsRoom();
+            Rooms.Room dugRoom = new Rooms.Room("engine_words_dug_room", "Test Dug Room", 0, Rooms.Function.HALL, "A dug room of the engine-words test, registered nowhere.",
+                    3, 3, 3, 0, 1, 1, List.of(), List.of(), List.of());
+            h.assertTrue(!Rooms.isRaised(dugRoom.id()), "no dug room to try: " + dugRoom.id() + " is a raised building");
             String dug = works.raise(level, PlanPlacement.compute(dugRoom, door, Direction.EAST), true, true);
             h.assertTrue(dug != null && dug.contains("dug, not raised"), "a dug room was not refused for that: " + dug);
             said.add(dug);
