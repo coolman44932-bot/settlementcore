@@ -1,5 +1,6 @@
 package claude.underempire.core.work;
 
+import claude.underempire.core.Core;
 import claude.underempire.core.room.DigJob;
 import claude.underempire.core.room.RaiseJob;
 import claude.underempire.core.room.Siting;
@@ -13,11 +14,15 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.LevelEvent;
 import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.event.entity.living.LivingFallEvent;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
@@ -40,6 +45,9 @@ import java.util.UUID;
  *
  * <p>Never saved as a room ({@link Works#save} writes its job under {@code sites}); a builder's claim is keyed by who holds it
  * and which of its batches the chore is for ({@link SiteClaim}), so a chore's end never lets go of the batch it chained on to.
+ *
+ * <p>Its builders are sure-footed ({@link SureFooting}, the user's pick 4): crowding can still shove one off a course, and a
+ * builder who falls inside {@link RaiseJob#footing} takes no damage.
  */
 public final class SiteWork extends RoomWork {
 
@@ -55,8 +63,9 @@ public final class SiteWork extends RoomWork {
     public static final int CLEAR_PER_SECOND = 256;
     /**
      * The site's seconds (counted only while it is worked: a site no one is near keeps no clock) with builders up, none holding
-     * a batch and no open cell to hand out: then its lowest open cell is heaved into place, so nothing stalls for good (a cell
-     * whose hold was broken under it, a cell set aside as out of reach with nothing else left).
+     * a batch and no open cell to hand out: then the window's lead, its lowest open cell that isn't a hanging one, is heaved into
+     * place ({@link RaiseJob#heaveFront}), so nothing stalls for good (a cell whose hold was broken under it, a cell set aside as
+     * out of reach with nothing else left).
      */
     public static final int DRY_SECONDS = 3;
 
@@ -208,6 +217,44 @@ public final class SiteWork extends RoomWork {
             SoundType st = now.getSoundType();
             level.playSound(null, p, st.getPlaceSound(), SoundSource.BLOCKS, (st.getVolume() + 1f) / 2f, st.getPitch() * 0.8f);
             level.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, now), p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5, 3, 0.3, 0.3, 0.3, 0.02);
+        }
+    }
+
+    // --- sure footing --------------------------------------------------------------------------------------------------
+
+    /**
+     * No fall damage for a builder on its own site (the user's pick 4, 2026-09-30: "no fall damage"; LivingEntity#causeFallDamage fires
+     * {@code LivingFallEvent}, and cancelling it is no fall). The builder must be a settler who is crew of a site still being raised, and
+     * lands inside that site's {@link RaiseJob#footing}: its whole area, 2 wider all round. Players and every other mob fall as ever,
+     * and so does a builder anywhere else.
+     *
+     * <p>Cheap at horde scale: nearly every landing in the world is not a builder's, and is let go by an {@code instanceof} and a
+     * field; a fall that does no damage anyway ends before any lookup; and the site is found by the builder's own id and its door
+     * (two map lookups in the settlement's Works), never by a scan of the sites.
+     */
+    @EventBusSubscriber(modid = Core.MODID)
+    public static final class SureFooting {
+
+        private SureFooting() {
+        }
+
+        @SubscribeEvent
+        public static void landed(LivingFallEvent e) {
+            if (e.getEntity() instanceof SettlerMob rat && e.getDistance() > rat.getAttributeValue(Attributes.SAFE_FALL_DISTANCE)
+                    && sureFooted(rat)) {
+                e.setCanceled(true);
+            }
+        }
+
+        /** Whether {@code rat}, on the ground where it is now, is a builder on its own site's footing. */
+        public static boolean sureFooted(SettlerMob rat) {
+            if (!rat.isCrew() || rat.level().isClientSide()) {
+                return false;
+            }
+            Settlement home = rat.settlement();
+            SiteWork site = home == null ? null : home.works().siteOf(rat);
+            BoundingBox footing = site == null ? null : site.job().footing();
+            return footing != null && footing.isInside(rat.blockPosition());
         }
     }
 

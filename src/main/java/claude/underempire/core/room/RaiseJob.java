@@ -8,6 +8,7 @@ import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.longs.LongSets;
@@ -58,9 +59,14 @@ import java.util.UUID;
  *
  * <p>Hanging things in a course (a hanging lantern, a hanging chain, vines by their top face: {@link #hangs}) are held by what is
  * over them, or by their own column laid over them, else as any block is, by eaves ({@link #held}). They wait on the courses over
- * them, so they never hold the course window down ({@link #windowCourse}), and what they hang from never waits for them
- * ({@link #underToCome}). A cell over the build height, or under the world, is done with nothing put (as a dig's is), and
- * nothing ever loads a chunk to lay a cell.
+ * them, and so does every cell of a vine (a column's lower cells are held by the vine over them: {@link #waitsOnTheCourses}), so
+ * they never hold the course window down ({@link #windowCourse}), and what they hang from never waits for them
+ * ({@link #underToCome}). The site's stall rule heaves the window's lead, the lowest open cell that isn't one of them
+ * ({@link #heaveFront}), and its words (the Ledger's course line) follow the window ({@link #windowCell}), not the lowest open
+ * cell, which may be a lantern waiting for its roof. A cell over the build height, or under the world, is done with nothing put
+ * (as a dig's is), and nothing ever loads a chunk to lay a cell.
+ *
+ * <p>Its builders are sure-footed on it ({@link #footing}): a fall inside it does no harm (SiteWork.SureFooting).
  */
 public class RaiseJob extends DigJob {
 
@@ -76,6 +82,13 @@ public class RaiseJob extends DigJob {
     public static final double PER_LIFT = 6;
     /** How far a builder stands from the first cell of its batch, at most, across; and up or down. */
     public static final int STAND_ACROSS = 4, STAND_UP = 3;
+    /** The footing ({@link #footing}) is the site's area this much wider all round, and this much higher than its highest cell. */
+    public static final int FOOTING_MARGIN = 2, FOOTING_ABOVE = 4;
+    /**
+     * How far a builder is walked to a stand ({@link #standFor}), in steps, and the most cells that flood visits. A vanilla path reaches only
+     * so far (FOLLOW_RANGE 20, also its node budget), and round a wall its search gives out well short of that.
+     */
+    public static final int WALK_STEPS = 12, WALK_CELLS = 3000;
 
     @Nullable private Siting.Plan plan;
     /** A loaded job's saved plan, until the level is at hand to read the template ({@link #buildTasks}). */
@@ -98,7 +111,10 @@ public class RaiseJob extends DigJob {
     private int[] courseEnd = new int[0];
     /** Cells a task fills (a block, not air), and the last task that does. */
     private final Long2IntOpenHashMap fills = new Long2IntOpenHashMap();
-    /** The course's cells that hang from what is over them ({@link #hangs}): a lantern under its ceiling, a chain, a hanging vine. */
+    /**
+     * The course's cells that wait on the courses over them ({@link #waitsOnTheCourses}): what hangs from what is over it
+     * ({@link #hangs}: a lantern under its ceiling, a chain, a hanging vine) and every cell of a vine.
+     */
     private final BitSet hanging = new BitSet();
     /** Cells a settler's task empties (a cut), and the task. */
     private final Long2IntOpenHashMap cuts = new Long2IntOpenHashMap();
@@ -106,6 +122,8 @@ public class RaiseJob extends DigJob {
     private final Long2ObjectOpenHashMap<IntArrayList> columns = new Long2ObjectOpenHashMap<>();
     private final LongOpenHashSet cells = new LongOpenHashSet();
     @Nullable private BoundingBox footprint;
+    /** Where its builders' falls do no harm ({@link #footing}); made with the footprint. */
+    @Nullable private BoundingBox footing;
     /** The first task not done (monotone: a task once done stays done). */
     private int front;
     /** The first task not done that is not one of the {@link #hanging} (monotone as well): where the course window stands. */
@@ -256,7 +274,7 @@ public class RaiseJob extends DigJob {
                 cuts.put(k, i);
             } else {
                 fills.put(k, i);
-                if (ph[i] == COURSE && hangs(tasks.get(i).state())) {
+                if (ph[i] == COURSE && waitsOnTheCourses(tasks.get(i).state())) {
                     hanging.set(i);
                 }
             }
@@ -281,6 +299,7 @@ public class RaiseJob extends DigJob {
             courseEnd[c] = Math.max(courseEnd[c], c == 0 ? phaseEnd[RAMP] : courseEnd[c - 1]);
         }
         footprint = new BoundingBox(x0, y0, z0, x1, y1, z1);
+        footing = new BoundingBox(x0 - FOOTING_MARGIN, y0, z0 - FOOTING_MARGIN, x1 + FOOTING_MARGIN, y1 + FOOTING_ABOVE, z1 + FOOTING_MARGIN);
     }
 
     private static long column(int x, int z) {
@@ -317,6 +336,27 @@ public class RaiseJob extends DigJob {
         return lead < ts.size() ? lift[lead] : Integer.MAX_VALUE / 2;
     }
 
+    /**
+     * The cell the course window stands at: the lowest open cell that isn't one of the {@link #hanging} (the first task not done,
+     * when only those are left). Where the site's words are ({@link #state}, {@link #courseNow}, {@link #phaseNow}) and where its stall
+     * rule heaves ({@link #heaveFront}): the lowest open cell can be a lantern, waiting for the roof the window has yet to reach.
+     * Needs the tasks built, and the site not done.
+     */
+    private int windowCell() {
+        windowCourse();                                          // brings the lead up to the first open cell that doesn't hang
+        return lead < tasks().size() ? lead : front;
+    }
+
+    /**
+     * Whether a cell of a course waits on the courses over it, and so never holds the window down: what hangs from what is over it
+     * ({@link #hangs}), and every cell of a vine. A column of three or more plain vines (each held by the vine over it, only the top one
+     * by a wall or a ceiling) pinned the window: its lowest cell, the window's, waited for the vine over it, which the window let
+     * nothing past one course over it hand out.
+     */
+    private static boolean waitsOnTheCourses(BlockState s) {
+        return hangs(s) || s.getBlock() instanceof net.minecraft.world.level.block.VineBlock;
+    }
+
     // --- where it stands ---------------------------------------------------------------------------------------------
 
     /** The site's plan (null only before a loaded site's tasks are built). */
@@ -350,16 +390,19 @@ public class RaiseJob extends DigJob {
         return tasks() != null && !clearing() && !isDone();
     }
 
-    /** The phase of the lowest open task ({@link #CLEARING} to {@link #COURSE}), or -1 when done or not begun. */
+    /** The phase the work stands at, the window's ({@link #CLEARING} to {@link #COURSE}), or -1 when done or not begun. */
     public int phaseNow() {
         List<Task> ts = tasks();
         int f = front();
-        return ts == null || f >= ts.size() ? -1 : phase[f];
+        return ts == null || f >= ts.size() ? -1 : phase[windowCell()];
     }
 
-    /** The lowest open course (the template's local y), or -1 while the land is worked, or when done. */
+    /**
+     * The course the work stands at (the template's local y): the window's, not the lowest open cell's, which may be a lantern
+     * waiting for its roof. -1 while the land is worked, or when done.
+     */
     public int courseNow() {
-        return phaseNow() == COURSE ? lift[front()] : -1;
+        return phaseNow() == COURSE ? lift[windowCell()] : -1;
     }
 
     /** Every cell the site works (its earthworks and its building), packed: another site's keep-out. Built with the tasks. */
@@ -371,6 +414,18 @@ public class RaiseJob extends DigJob {
     @Nullable
     public BoundingBox footprint() {
         return footprint;
+    }
+
+    /**
+     * Where its builders are sure-footed (the user's pick 4, SiteWork.SureFooting: a builder of the site who falls here takes no
+     * damage): the whole area the site works, its box and the earthworks' margin (and a scaffold's tiers, which are cells of the
+     * site), {@value #FOOTING_MARGIN} wider all round, from its lowest cell up to its highest and {@value #FOOTING_ABOVE} more. The
+     * earthworks can leave a bank of 20 or more where the land is steep and the builders stand on the ramp beside it, so it covers
+     * the area, not only the box. Null before the tasks are built.
+     */
+    @Nullable
+    public BoundingBox footing() {
+        return footing;
     }
 
     /** The whole task list, as built (the tests: a reload builds the same). */
@@ -416,7 +471,7 @@ public class RaiseJob extends DigJob {
             return "raised";
         }
         int f = front();
-        return f < clearEnd ? "clearing the site" : doing(f);
+        return f < clearEnd ? "clearing the site" : doing(windowCell());
     }
 
     /** What {@code rat}'s batch is, in words ("cutting the ground"), or "building" if it holds none. */
@@ -803,11 +858,17 @@ public class RaiseJob extends DigJob {
         return n;
     }
 
-    /** The lowest open cell heaved into place (the site has stalled: builders up, none at work, nothing to hand them). */
+    /**
+     * The window's lead heaved into place: the lowest open cell that isn't one of the {@link #hanging} (the lowest open cell, when
+     * only those are left). The site has stalled: builders up, none at work, nothing to hand them. A hanging cell waiting for its
+     * roof is waiting correctly, and heaving it would leave the real blocker where it was: the blocker is the window's.
+     */
     public boolean heaveFront(ServerLevel level) {
         ensureLoaded(level);
-        int f = front();
-        return f < tasks().size() && heave(level, f);
+        if (front() >= tasks().size()) {
+            return false;
+        }
+        return heave(level, windowCell());
     }
 
     private boolean heave(ServerLevel level, int i) {
@@ -894,6 +955,13 @@ public class RaiseJob extends DigJob {
      * on its cells), never in a cell the site will fill or on ground it will cut. Best: a block or two from the work, level
      * with it or a block over (the course under it, when laying a course), on finished work or the ground itself, near the
      * builder. A bounded scan (9 by 9 columns, 7 high, the first cell one can stand in from the top of each); null if none.
+     *
+     * <p>Only a cell the builder at {@code near} can walk to ({@link #walkable}: within {@value #WALK_STEPS} steps, up a block at a time and
+     * down as far as 3), the cell nearest by those steps and not by the crow's flight: the finished top of a closed hall's roof, with no way
+     * up to it, was the best cell for the last roof cells (the review of 30f4859's hanging pieces' test, 1 raise in 4), and a cell inside
+     * the walls, for a builder outside, was a walk through the door that a vanilla path gave out on; the builder stood out its 400 ticks at
+     * the foot of a wall. A column's cells under one that can't be walked to are looked at too. With none, or when the builder stands
+     * where one can't tell, the best cell as before (nothing is known better).
      */
     @Nullable
     public BlockPos standFor(ServerLevel level, BlockPos anchor, List<BlockPos> batch, BlockPos near) {
@@ -901,6 +969,18 @@ public class RaiseJob extends DigJob {
         for (BlockPos b : batch) {
             mine.add(column(b.getX(), b.getZ()));
         }
+        Long2IntOpenHashMap walk = walkable(level, near, anchor);
+        BlockPos there = walk == null ? null : scanStands(level, anchor, mine, near, walk);
+        return there != null ? there : scanStands(level, anchor, mine, near, null);
+    }
+
+    /**
+     * The best cell to stand in ({@link #standFor}); with {@code walk} (a cell and how many steps to it), only a cell in it, scored by its
+     * steps, and the cells under a cell not in it in its column are looked at too (the old rule is the highest cell in each column, scored by
+     * its distance from {@code near}).
+     */
+    @Nullable
+    private BlockPos scanStands(ServerLevel level, BlockPos anchor, LongOpenHashSet mine, BlockPos near, @Nullable Long2IntOpenHashMap walk) {
         BlockPos best = null;
         double bestScore = Double.MAX_VALUE;
         BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
@@ -920,20 +1000,100 @@ public class RaiseJob extends DigJob {
                     if (!SettlerMob.standable(level, p)) {
                         continue;
                     }
-                    if (stays(p) && !pit(level, p)) {
+                    boolean walks = walk == null || walk.containsKey(p.asLong());
+                    if (walks && stays(p) && !pit(level, p)) {
                         double h = Math.sqrt(across);
                         double score = (h - 1.5) * (h - 1.5) + Math.abs(dy - 0.5) * 2 + (steady(level, p.below()) ? 0 : 3)
-                                + Math.sqrt(p.distSqr(near)) * 0.25;
+                                + (walk == null ? Math.sqrt(p.distSqr(near)) : walk.get(p.asLong())) * 0.25;
                         if (score < bestScore) {
                             bestScore = score;
                             best = p.immutable();
                         }
                     }
-                    break;                                       // the highest cell in reach in this column
+                    if (walks) {
+                        break;                                   // the highest cell in reach in this column (that can be walked to)
+                    }
                 }
             }
         }
         return best;
+    }
+
+    /**
+     * The cells {@code from} (a cell its builder stands in) can be walked to within {@value #WALK_STEPS} steps, each with its number of
+     * steps, on the way to a stand near {@code anchor}: a flood over {@link SettlerMob#standable} cells, one step on level ground, up a
+     * block (with the cell over its head free) or down as far as 3 (with the way down free), as vanilla's ground paths go, in a box round
+     * both and 6 more, of at most {@value #WALK_CELLS} cells. Null when it can't tell (the builder isn't in a cell one can stand in, or it
+     * is far from the work): then any stand is as good.
+     */
+    @Nullable
+    private static Long2IntOpenHashMap walkable(ServerLevel level, BlockPos from, BlockPos anchor) {
+        int r = STAND_ACROSS + 2;
+        int x0 = Math.min(from.getX(), anchor.getX()) - r;
+        int x1 = Math.max(from.getX(), anchor.getX()) + r;
+        int z0 = Math.min(from.getZ(), anchor.getZ()) - r;
+        int z1 = Math.max(from.getZ(), anchor.getZ()) + r;
+        int y0 = Math.min(from.getY(), anchor.getY()) - STAND_UP - 3;
+        int y1 = Math.max(from.getY(), anchor.getY()) + STAND_UP + 2;
+        if (x1 - x0 > 40 || z1 - z0 > 40 || !level.isLoaded(from) || !SettlerMob.standable(level, from)) {
+            return null;
+        }
+        Long2IntOpenHashMap seen = new Long2IntOpenHashMap();
+        LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+        seen.put(from.asLong(), 0);
+        queue.enqueue(from.asLong());
+        BlockPos.MutableBlockPos n = new BlockPos.MutableBlockPos();
+        while (!queue.isEmpty() && seen.size() < WALK_CELLS) {
+            long k = queue.dequeueLong();
+            int steps = seen.get(k);
+            if (steps >= WALK_STEPS) {
+                continue;
+            }
+            int x = BlockPos.getX(k);
+            int y = BlockPos.getY(k);
+            int z = BlockPos.getZ(k);
+            boolean headroom = free(level, n.set(x, y + 2, z));
+            for (Direction d : Direction.Plane.HORIZONTAL) {
+                int nx = x + d.getStepX();
+                int nz = z + d.getStepZ();
+                if (nx < x0 || nx > x1 || nz < z0 || nz > z1) {
+                    continue;
+                }
+                for (int dy = headroom ? 1 : 0; dy >= -3; dy--) {
+                    n.set(nx, y + dy, nz);
+                    if (n.getY() < y0 || n.getY() > y1 || !level.isLoaded(n)) {
+                        break;
+                    }
+                    if (!SettlerMob.standable(level, n)) {
+                        continue;
+                    }
+                    if (dy < 0 && !fallFree(level, nx, y, nz, y + dy)) {
+                        break;                                   // a wall of the way down: no stepping off the edge here
+                    }
+                    if (!seen.containsKey(n.asLong())) {
+                        seen.put(n.asLong(), steps + 1);
+                        queue.enqueue(n.asLong());
+                    }
+                    break;                                       // the highest cell it can step to in that direction
+                }
+            }
+        }
+        return seen;
+    }
+
+    /** Whether the cells a builder passes stepping off a ledge at {@code y} into the column (x, z) down to its feet at {@code feet} are free. */
+    private static boolean fallFree(ServerLevel level, int x, int y, int z, int feet) {
+        BlockPos.MutableBlockPos c = new BlockPos.MutableBlockPos();
+        for (int cy = y + 1; cy >= feet + 2; cy--) {
+            if (!free(level, c.set(x, cy, z))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean free(ServerLevel level, BlockPos p) {
+        return level.getBlockState(p).getCollisionShape(level, p).isEmpty();
     }
 
     /** A pit: every neighbour of {@code feet} stands 2 or more over it (the cell over its feet is solid all round). */

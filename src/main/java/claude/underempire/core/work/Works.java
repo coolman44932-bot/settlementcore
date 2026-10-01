@@ -496,6 +496,21 @@ public final class Works {
         return new ArrayList<>(sites.values());
     }
 
+    /**
+     * The site {@code rat} is crew of, or null (not crew, or crew of a room that is raised): its id's door, then the sites by door,
+     * two lookups and no scan (the fall subscriber asks this of every crew settler that lands, SiteWork.SureFooting).
+     */
+    @Nullable
+    public SiteWork siteOf(SettlerMob rat) {
+        BlockPos door = crew.get(rat.getUUID());
+        return door == null ? null : sites.get(door);
+    }
+
+    /** Whether crew settler {@code id} came out of the reserve, and goes back into it wherever it ends (the tests). */
+    public boolean cameFromReserve(UUID id) {
+        return fromReserve.contains(id);
+    }
+
     /** A builder of a site is gone: its batch goes back. */
     private void letGo(BlockPos room, UUID id) {
         SiteWork s = sites.get(room);
@@ -625,8 +640,9 @@ public final class Works {
      * the next second opens (its {@code opened()} runs once, as any room's). The builders are keyed to that door, so they are
      * the room's crew now. A room with no work (none registered for its kind, or none made for it), or whose crew is lent from
      * outside the reserve (the Workshop's Warlock Engineer: {@code crewFromHorde()} false: slaves are not its crew, and while they
-     * filled it his own would never come up), sends them home, and each is taken back into the reserve when it gets there
-     * (#forget; {@code toReserve}: by where it came from, not by the room it was the crew of), once.
+     * filled it his own would never come up), or whose crew is another kind than the builders' (a soldier room, a barracks: its
+     * clanrats would never come up while slaves filled the crew), sends them home, and each is taken back into the reserve when it
+     * gets there (#forget; {@code toReserve}: by where it came from, not by the room it was the crew of), once.
      */
     private void handOver(ServerLevel level, SiteWork s) {
         BlockPos key = s.key();
@@ -639,7 +655,7 @@ public final class Works {
         if (next != null) {
             rooms.put(key, next);
         }
-        if (next == null || !next.crewFromHorde()) {
+        if (next == null || !next.crewFromHorde() || next.crewType() != s.crewType()) {
             for (SettlerMob r : crewOf(level, key)) {
                 r.goHome();
             }
@@ -1123,13 +1139,15 @@ public final class Works {
         for (Tag x : t.getList("crew", Tag.TAG_COMPOUND)) {
             CompoundTag c = (CompoundTag) x;
             if (c.hasUUID("id")) {
-                NbtUtils.readBlockPos(c, "room").ifPresent(p -> crew.put(c.getUUID("id"), p));
-                if (c.getBoolean("clanrat")) {
-                    clanratCrew.add(c.getUUID("id"));
-                }
-                if (c.getBoolean("reserve")) {
-                    fromReserve.add(c.getUUID("id"));
-                }
+                NbtUtils.readBlockPos(c, "room").ifPresent(p -> {   // an entry with no room is no crew: it leaves no id in either set
+                    crew.put(c.getUUID("id"), p);
+                    if (c.getBoolean("clanrat")) {
+                        clanratCrew.add(c.getUUID("id"));
+                    }
+                    if (c.getBoolean("reserve")) {
+                        fromReserve.add(c.getUUID("id"));
+                    }
+                });
             }
         }
     }

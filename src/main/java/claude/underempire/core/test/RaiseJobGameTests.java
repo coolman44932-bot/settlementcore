@@ -326,6 +326,12 @@ public class RaiseJobGameTests {
     public static final String HANGERS = "raise_test_hangers";
     /** Wall vines, a chain between two pillars and a cobweb in a corner (under open sky), and vine columns hanging from beams. */
     public static final String VINES = "raise_test_vines";
+    /** A hall under a roof with a lantern on chains under one roof cell, and a block hanging in the air in the way. */
+    public static final String BLOCKED = "raise_test_blocked";
+    /** A closed hall whose roof is 4 over its floor, with hanging lanterns under it: every cell in a builder's reach from the floor. */
+    public static final String LAMPS = "raise_test_lamps";
+    /** A flat apron, for the template tests: given by hand, dropped and given again. */
+    public static final String RESTORED = "raise_test_restored";
 
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
     private static final BlockState BRICK = Blocks.STONE_BRICKS.defaultBlockState();
@@ -360,18 +366,27 @@ public class RaiseJobGameTests {
 
         /** The apron (the ground layer, whole in every column), the walls up to y 4, and the door gap at (0,1,4) and (0,2,4). */
         void room() {
+            room(4);
+        }
+
+        /** The apron, the walls up to y {@code top}, and the door gap at (0,1,4) and (0,2,4). */
+        void room(int top) {
             box(0, 0, 0, 8, 0, 8, BRICK);
-            box(0, 1, 0, 8, 4, 0, BRICK);
-            box(0, 1, 8, 8, 4, 8, BRICK);
-            box(0, 1, 0, 0, 4, 8, BRICK);
-            box(8, 1, 0, 8, 4, 8, BRICK);
+            box(0, 1, 0, 8, top, 0, BRICK);
+            box(0, 1, 8, 8, top, 8, BRICK);
+            box(0, 1, 0, 0, top, 8, BRICK);
+            box(8, 1, 0, 8, top, 8, BRICK);
             box(0, 1, 4, 0, 2, 4, AIR);
         }
     }
 
-    /** A 9x{@code sizeY}x9 building of {@code cells}, door (0,1,4), registered under the engine's namespace once, its template handed in. */
+    /**
+     * A 9x{@code sizeY}x9 building of {@code cells}, door (0,1,4), registered under the engine's namespace once, its template handed in
+     * whenever the cache lacks it: the first time, and again after a server stop in the dev client (it drops every template,
+     * UnderEmpire#onServerStopped, and keeps the rooms registered: the building would have come back with no cells).
+     */
     private static synchronized Rooms.Room handBuilt(String id, String name, int sizeY, java.util.function.Consumer<Cells> furnish) {
-        if (Rooms.get(id) == null) {
+        if (!RoomTemplates.has(id)) {
             Cells c = new Cells(9, sizeY, 9);
             furnish.accept(c);
             List<RoomTemplates.Entry> entries = new ArrayList<>();
@@ -379,6 +394,8 @@ public class RaiseJobGameTests {
                 entries.add(new RoomTemplates.Entry(e.getKey(), e.getValue(), null));
             }
             RoomTemplates.put(id, entries);
+        }
+        if (Rooms.get(id) == null) {
             Rooms.Room r = new Rooms.Room(id, name, 0, Rooms.Function.of("RAISE_TEST"), "A hand-built test building: " + name, 9, sizeY, 9, 0, 1, 4,
                     List.of(), List.of(), List.of());
             Rooms.register(Core.NAMESPACE, new Rooms.Catalog(List.of(), List.of(), List.of(), java.util.Set.of(), 0, List.of(r)));
@@ -392,6 +409,11 @@ public class RaiseJobGameTests {
 
     private static BlockState wallVine(net.minecraft.world.level.block.state.properties.BooleanProperty face) {
         return Blocks.VINE.defaultBlockState().setValue(face, true);
+    }
+
+    /** A vine of a column that hangs free: a face, and nothing beside it but the vine over it. */
+    private static BlockState plainVine() {
+        return wallVine(VineBlock.NORTH);
     }
 
     /** Stone pillars, 1 to {@code top} high, at (x, z). */
@@ -411,12 +433,69 @@ public class RaiseJobGameTests {
     }
 
     /**
-     * Under open sky: three wall vines up the south wall; a cobweb in the north-west corner; a chain between two pillars' tops; and
-     * two beams on pillars, one with a column of cave vines hanging from it (two plants and their head), one with weeping vines.
+     * A hall under a roof (y 5) with a lantern on two chains under one roof cell (the lantern at y 2, the chains at y 3 and 4), and a
+     * block hanging in the air at y 3 with nothing under it or beside it: never held, so it keeps the course window at its course for
+     * good, and the roof two courses over it is never handed out.
+     */
+    public static synchronized Rooms.Room blocked() {
+        return handBuilt(BLOCKED, "Test Blocked Lamp", 7, c -> {
+            c.room();
+            c.box(0, 5, 0, 8, 5, 8, BRICK);                      // the roof
+            c.set(3, 4, 6, Blocks.CHAIN.defaultBlockState());    // two chains under the roof cell (3,5,6), and a lantern on them
+            c.set(3, 3, 6, Blocks.CHAIN.defaultBlockState());
+            c.set(3, 2, 6, hangingLantern());
+            c.set(5, 3, 3, BRICK);                               // the blocker
+        });
+    }
+
+    /**
+     * A closed hall, 7 by 7 with its walls (x and z 1 to 7) in a courtyard of apron, its roof 4 over its floor (walls 3 high, the roof the
+     * course over them): every cell is in a builder's reach from the floor ({@link RaiseJob#STAND_UP} is 3). A door gap 2 high in the middle
+     * of each wall; a hanging lantern under one roof cell, and a lantern on a chain under another, both clear of the walls.
+     *
+     * <p>Built for the walking of its builders: a stand is chosen only within {@value RaiseJob#WALK_STEPS} steps of a builder
+     * ({@link RaiseJob#standFor}), and a vanilla path gives out round walls, so a builder outside a hall with one door cannot be sent to a stand
+     * deep inside it (a hall of 9 by 9 with one door stalled 1 raise in 20, on its last roof cells). With a door in each wall every stand is
+     * a short walk from anywhere round the hall. The lanterns hang clear of the walls because the eaves hold a hanging lantern beside a wall
+     * (RaiseJob#held) before its chain and roof are laid: it hangs from nothing for a while.
+     */
+    public static synchronized Rooms.Room lamps() {
+        return handBuilt(LAMPS, "Test Lamp Hall", 5, c -> {
+            c.box(0, 0, 0, 8, 0, 8, BRICK);                      // the apron, the courtyard round the hall
+            c.box(1, 1, 1, 7, 3, 1, BRICK);                      // the walls
+            c.box(1, 1, 7, 7, 3, 7, BRICK);
+            c.box(1, 1, 1, 1, 3, 7, BRICK);
+            c.box(7, 1, 1, 7, 3, 7, BRICK);
+            c.box(1, 1, 4, 1, 2, 4, AIR);                        // a door gap in each wall
+            c.box(7, 1, 4, 7, 2, 4, AIR);
+            c.box(4, 1, 1, 4, 2, 1, AIR);
+            c.box(4, 1, 7, 4, 2, 7, AIR);
+            c.box(1, 4, 1, 7, 4, 7, BRICK);                      // the roof
+            c.set(3, 3, 3, hangingLantern());                    // under the roof cell (3,4,3)
+            c.set(5, 3, 5, Blocks.CHAIN.defaultBlockState());    // a chain under (5,4,5), and a lantern on it
+            c.set(5, 2, 5, hangingLantern());
+        });
+    }
+
+    /** A flat apron and nothing else, 2 high: a template to give by hand, drop and give again. */
+    private static synchronized Rooms.Room restorable() {
+        return handBuilt(RESTORED, "Test Restored Apron", 2, c -> c.box(0, 0, 0, 8, 0, 8, BRICK));
+    }
+
+    /**
+     * Under open sky: three wall vines up the south wall; a cobweb in the north-west corner; a chain between two pillars' tops; two
+     * beams on pillars, one with a column of cave vines hanging from it (two plants and their head), one with weeping vines; and, off
+     * the west wall's top, a strip of two bricks with a column of three plain vines hanging free under its end: the top one by its top
+     * face, the two under it only by the vine over each, with nothing beside them (the review of 30f4859: a column of three or more
+     * pinned the course window, its lowest vine the lowest open course and the top one three courses over it, out of the window).
      */
     public static synchronized Rooms.Room vines() {
         return handBuilt(VINES, "Test Vines", 7, c -> {
             c.room();
+            c.box(1, 4, 3, 2, 4, 3, BRICK);                      // a strip off the west wall's top (held as eaves)
+            c.set(2, 3, 3, Blocks.VINE.defaultBlockState().setValue(VineBlock.UP, true));
+            c.set(2, 2, 3, plainVine());                         // plain vines: a face, and the vine over it to hold it
+            c.set(2, 1, 3, plainVine());
             for (int y = 2; y <= 4; y++) {
                 c.set(2, y, 7, wallVine(VineBlock.SOUTH));       // against the south wall (z 8)
             }
@@ -523,6 +602,170 @@ public class RaiseJobGameTests {
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
     public static void aWallVineAChainBetweenWallsAndAVineColumnAreLaidWithoutAHeave(GameTestHelper h) {
         raisedWithoutAStall(h, vines(), "wall vines, a cobweb in a corner, a chain between pillars, and vine columns hanging from beams");
+    }
+
+    /**
+     * The stall rule heaves the cell that holds the window, not a hanging cell that is waiting correctly (the review of 30f4859:
+     * heaveFront heaved the lowest open cell, which can be a lantern waiting for its roof, and left the real blocker where it was).
+     * In the hall of {@link #blocked()} (a lantern on two chains under the roof, a block hanging in the air a course over the
+     * lantern): everything else is laid, and then the site stalls: the blocker is never held, so the course window stays at its
+     * course, the roof two courses over it is never handed out, and the lantern, the lowest open cell, waits for the roof. At the
+     * stall: the lantern is the lowest open cell, and the site's words (courseNow, state, phaseNow: the Ledger's course line) are the
+     * window's, the blocker's course, not the lantern's. The first heave must go to the blocker, with the lantern's cell still open;
+     * then the roof is laid, the chains and the lantern under it, and nothing more is heaved.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aStalledSiteHeavesTheBlockerNotALanternWaitingForItsRoof(GameTestHelper h) {
+        Rooms.Room room = blocked();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "a hall with a lantern waiting for its roof and a blocker");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            BlockPos lantern = s.pl.world(new BlockPos(3, 2, 6));
+            BlockPos blocker = s.pl.world(new BlockPos(5, 3, 3));
+            UUID builder = new UUID(0x5a17eL, 4L);
+            BlockPos near = s.pl.door();
+            boolean stalled = false;
+            for (int rounds = 0; !job.isDone(); rounds++) {
+                h.assertTrue(rounds < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size()
+                        + " done; open: " + job.openReport(level, 8));
+                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                if (anchor != null) {
+                    job.gnawSome(level, builder, 1f);
+                    job.complete(level, builder);
+                    near = anchor;
+                    continue;
+                }
+                h.assertTrue(!stalled, "the site stalled a second time, after the blocker was heaved: " + firstOpen(level, job) + " [" + job.openReport(level, 6) + "]");
+                h.assertTrue(!job.anyClaimable(level) && !job.anyOut(level.getGameTime()), "claim handed out nothing, but the site could: " + job.openReport(level, 8));
+                stalled = true;
+                String first = firstOpen(level, job);
+                h.assertTrue(first.startsWith(lantern.toShortString() + " "), "the site's lowest open cell isn't the lantern waiting for its roof, at "
+                        + lantern.toShortString() + ": " + first);
+                h.assertTrue(job.phaseNow() == RaiseJob.COURSE && job.courseNow() == 3 && job.state().equals("laying the 4th course"),
+                        "the site's words follow its lowest open cell (the lantern's course 2), not the course window (the blocker's course 3): phase "
+                                + job.phaseNow() + ", course " + job.courseNow() + ", \"" + job.state() + "\"");
+                h.assertTrue(job.heaveFront(level) && job.heaved() == 1, "the stalled site heaved nothing: " + job.openReport(level, 8));
+                h.assertTrue(level.getBlockState(blocker) == BRICK && level.getBlockState(lantern).isAir(),
+                        "the first heave went to the lantern waiting for its roof, not to the blocker: the blocker at " + blocker.toShortString() + " is "
+                                + level.getBlockState(blocker) + ", the lantern at " + lantern.toShortString() + " is " + level.getBlockState(lantern));
+            }
+            h.assertTrue(stalled && job.heaved() == 1, "the hall was raised with " + job.heaved() + " cells heaved and " + (stalled ? "a stall" : "no stall at all")
+                    + " (one stall, the blocker's, is the scene)");
+            for (RoomTemplates.Entry e : s.template) {
+                BlockPos w = s.pl.world(e.local());
+                BlockState now = level.getBlockState(w);
+                h.assertTrue(now == e.state().rotate(s.pl.rotation()), "the " + room.id() + "'s cell " + e.local() + " at " + w.toShortString()
+                        + " is " + now + ", not " + e.state());
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * A template given by hand is refused for a registered room (the review of 30f4859: RoomTemplates.put was unguarded, and a test
+     * giving a real room's id swapped its template under every dig and raise of it), and a building of the tests' own is given again
+     * once the cache has lost it: the dev client drops every template at a server stop (UnderEmpire#onServerStopped) and keeps the
+     * rooms registered, and handBuilt gave the template only when the room wasn't registered, so the building came back with no cells.
+     * The engine's test platform (a registered room with a file of its own) is refused and keeps its template; a hand-built apron is
+     * dropped, as a server stop drops it, and given again by the same call that gave it first.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "raise")
+    public static void aHandGivenTemplateIsRefusedForARoomAndGivenAgainForABuildingOfTheTests(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        Rooms.Room platform = SitingGameTests.platform();
+        List<RoomTemplates.Entry> real = RoomTemplates.get(level, platform.id());
+        boolean refused = false;
+        try {
+            RoomTemplates.put(platform.id(), List.of());
+        } catch (IllegalStateException e) {
+            refused = true;
+        }
+        if (!refused) {
+            RoomTemplates.forget(platform.id());                 // put it back from its file: a failure leaves the other tests their platform
+        }
+        h.assertTrue(refused, "put took a template for the registered room " + platform.id() + ": every dig and raise of it would read the one given by hand");
+        h.assertTrue(RoomTemplates.get(level, platform.id()) == real && real.size() == 9 * 5 * 9, "the refused put changed the platform's template: "
+                + RoomTemplates.get(level, platform.id()).size() + " cells, not " + real.size());
+        Rooms.Room apron = restorable();
+        int cells = RoomTemplates.get(level, apron.id()).size();
+        h.assertTrue(cells == 9 * 2 * 9 && RoomTemplates.has(apron.id()), "the hand-built apron has " + cells + " cells, not " + 9 * 2 * 9);
+        RoomTemplates.forget(apron.id());                        // a server stop drops it, and the room stays registered
+        h.assertTrue(!RoomTemplates.has(apron.id()) && Rooms.get(apron.id()) == apron, "the apron's template wasn't dropped, or its room went with it");
+        Rooms.Room again = restorable();
+        h.assertTrue(again == apron && RoomTemplates.has(apron.id()) && RoomTemplates.get(level, apron.id()).size() == cells,
+                "after a server stop the hand-built apron's template wasn't given again: " + RoomTemplates.get(level, apron.id()).size() + " cells, not " + cells);
+        h.succeed();
+    }
+
+    /**
+     * A builder is sent to stand where it can walk to (the crewed test of the hanging pieces, aLampHallHasItsLanternsHungByBuilders, failed 1 run
+     * in 4: the finished roof of a closed hall was the best cell to lay its last roof cells from, with no way up to it, and its builder stood out
+     * its 400 ticks at the foot of a wall on a path to nowhere, the cell shelved and then heaved). In the hall of {@link #lamps()} (a roof 4 over the
+     * floor, the walls 3 high: the roof is in reach from the floor, never from a step): the claims lay the hall up to its last few cells, a roof's;
+     * then for the next cell of the roof a builder standing in the doorway is given a cell on the floor under the roof, never one on the roof.
+     * The control, so the test can fail: for a builder who stands on the roof the best cell is on the roof (so it is the best by the old rule).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aBuilderIsSentToStandWhereItCanWalkTo(GameTestHelper h) {
+        Rooms.Room room = lamps();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "the lamp hall");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 5L);
+            BlockPos near = s.pl.door();
+            for (int rounds = 0; job.taskList().size() - job.finishedCount() > 12; rounds++) {
+                h.assertTrue(rounds < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size()
+                        + " done; open: " + job.openReport(level, 8));
+                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                h.assertTrue(anchor != null, "nothing could be handed out: " + job.openReport(level, 8));
+                job.gnawSome(level, builder, 1f);
+                job.complete(level, builder);
+            }
+            BlockPos anchor = null;                              // a roof cell still to be laid (the lanterns, the last cells of all, are not)
+            for (DigJob.Task t : job.taskList()) {
+                if (anchor == null && t.pos().getY() == s.floor + 4 && job.fillsOpen(t.pos())) {
+                    anchor = t.pos();
+                }
+            }
+            h.assertTrue(anchor != null, "no roof cell is left to be laid (4 over the floor): " + job.openReport(level, 12));
+            List<BlockPos> cells = List.of(anchor);
+            BlockPos roofTop = null;
+            for (int dx = -3; dx <= 3 && roofTop == null; dx++) {
+                for (int dz = -3; dz <= 3 && roofTop == null; dz++) {
+                    BlockPos c = anchor.offset(dx, 1, dz);
+                    if ((dx != 0 || dz != 0) && claude.underempire.core.unit.SettlerMob.standable(level, c)) {
+                        roofTop = c;
+                    }
+                }
+            }
+            h.assertTrue(roofTop != null, "no finished roof by the cell " + anchor.toShortString() + " to stand on: the scene is wrong");
+            BlockPos onRoof = job.standFor(level, anchor, cells, roofTop);
+            h.assertTrue(onRoof != null && onRoof.getY() == s.floor + 5, "for a builder on the roof, the cell " + anchor.toShortString() + " isn't laid from the roof: "
+                    + (onRoof == null ? "no cell" : onRoof.toShortString()) + " (the control: the roof's top is the best cell by the old rule)");
+            BlockPos stand = job.standFor(level, anchor, cells, near);
+            h.assertTrue(stand != null && stand.getY() <= s.floor + 2 && anchor.getY() - stand.getY() <= RaiseJob.STAND_UP,
+                    "for a builder in the doorway the roof cell " + anchor.toShortString() + " is laid from " + (stand == null ? "no cell" : stand.toShortString()
+                            + " (the floor is at " + (s.floor + 1) + ", the roof's top at " + (s.floor + 5) + ")") + ": a builder is sent where no path goes");
+            s.clear();
+            h.succeed();
+        }));
     }
 
     /**

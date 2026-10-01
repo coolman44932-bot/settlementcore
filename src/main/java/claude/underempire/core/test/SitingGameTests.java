@@ -126,6 +126,11 @@ public class SitingGameTests {
             this(h, up, platform());
         }
 
+        /** A site of another building ({@link #Site(GameTestHelper, int, Rooms.Room)}) at the usual height: the root project's crewed tests. */
+        public Site(GameTestHelper h, Rooms.Room room) {
+            this(h, UP, room);
+        }
+
         /**
          * A site of another building (a hand-built one, {@link RoomTemplates#put}): 9 wide and deep like the platform, its door
          * at (0,1,4), any height, its template every cell of the box.

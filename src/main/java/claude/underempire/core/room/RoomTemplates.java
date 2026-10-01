@@ -19,9 +19,11 @@ import org.slf4j.Logger;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Loads room templates (data/underempire/structure/room/&lt;id&gt;.nbt) straight from the server's
@@ -36,9 +38,16 @@ public final class RoomTemplates {
     }
 
     private static final Map<String, List<Entry>> CACHE = new HashMap<>();
+    /** The ids {@link #put} was given: a hand-built room's, which survive {@link #clear} (the room stays registered). */
+    private static final Set<String> HAND = new HashSet<>();
 
     public static List<Entry> get(ServerLevel level, String id) {
         return CACHE.computeIfAbsent(id, k -> load(level, k));
+    }
+
+    /** Whether the template of {@code id} is in hand (read, or given by {@link #put}), until {@link #clear} or {@link #forget}. */
+    public static boolean has(String id) {
+        return CACHE.containsKey(id);
     }
 
     public static void clear() {
@@ -47,10 +56,26 @@ public final class RoomTemplates {
     }
 
     /**
+     * One room's template dropped, as {@link #clear} drops every one (the tests: the dev client drops them all at a server stop and
+     * keeps the rooms registered, so a hand-built building's template has to be given again).
+     */
+    public static void forget(String id) {
+        CACHE.remove(id);
+        PRINTS.remove(id);
+    }
+
+    /**
      * A room's template given by hand, for the tests: a small building no .nbt holds, read as a loaded one is (every cell, air
-     * too) until {@link #clear}.
+     * too) until {@link #clear}. Refused (thrown) for the id of a registered room whose template is its own file's: this would
+     * swap the template under every dig and raise of it. A hand-built building is given before it is registered, and again, once
+     * {@link #clear} has dropped it, while it stays registered: an id already given by hand may be given again.
      */
     public static void put(String id, List<Entry> entries) {
+        if (Rooms.get(id) != null && !HAND.contains(id)) {
+            throw new IllegalStateException("Settlement Core: the room " + id + " is registered, so its template is its own file's: a template is "
+                    + "given by hand only for a building of the tests' own");
+        }
+        HAND.add(id);
         CACHE.put(id, List.copyOf(entries));
         PRINTS.remove(id);
     }
