@@ -461,6 +461,26 @@ public class SettlementBlockEntityGameTests {
     }
 
     /**
+     * A round longer than the hour the clock is kept to still comes (the review of 20da67f: the clock was clamped to an hour every second, so a
+     * {@code spawnSeconds} of more never gathered it): a round of 7200 seconds at a pace of 1000 a second, 8 seconds, is not made at the 7th and
+     * is at the 8th, and the next at the 15th. A clamp of an hour alone holds the clock at 4600 for ever.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 40, batch = "settlement")
+    public static void aRoundLongerThanTheHourTheClockIsKeptToStillComes(GameTestHelper h) {
+        TestSettlement s = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        s.every = 2 * (int) SettlementBlockEntity.MAX_SAVED_PROGRESS;
+        s.pace = 1000f;
+        seconds(h, s, 7);
+        h.assertTrue(s.rounds == 0, "7 seconds at a pace of 1000 made " + s.rounds + " rounds of a round of " + s.every + ": 7000 is not 7200");
+        seconds(h, s, 1);
+        h.assertTrue(s.rounds == 1, "8 seconds at a pace of 1000 made " + s.rounds + " rounds of a round of " + s.every + ", not 1: the clock is held under the round");
+        seconds(h, s, 7);
+        h.assertTrue(s.rounds == 2, "15 seconds at a pace of 1000 made " + s.rounds + " rounds of a round of " + s.every + ", not 2");
+        s.setRemoved();
+        h.succeed();
+    }
+
+    /**
      * The population counts those teeming (up and alive, on neither the roll nor the reserve: the muster's defenders), so a round of spawning
      * makes no room for new people while they are up: 1 on the roll, 2 in the reserve and 3 teeming are 6 under a cap of 10, which leaves a
      * room of 4, not 7; and with none teeming (the base counts the muster's defenders, none here) it is the roll and the reserve alone.

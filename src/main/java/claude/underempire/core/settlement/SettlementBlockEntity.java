@@ -247,7 +247,7 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
             return;
         }
         float pace = workPace();
-        spawnProgress = sane(spawnProgress) + (Float.isFinite(pace) ? Math.max(0f, pace) : 0f);
+        spawnProgress = sane(spawnProgress, every) + (Float.isFinite(pace) ? Math.max(0f, pace) : 0f);
         for (int rounds = 0; spawnProgress >= every && rounds < MAX_ROUNDS_PER_SECOND; rounds++) {
             spawnProgress -= every;
             spawning().round(level, this, brood(level));
@@ -255,9 +255,18 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         spawnProgress = Math.min(spawnProgress, every);
     }
 
-    /** {@code progress} as a clock may hold it: none for a negative or a non-number, an hour at most. */
+    /**
+     * {@code progress} as a clock may hold it: none for a negative or a non-number, and at most an hour or one whole round of {@code every}
+     * seconds, whichever is longer. A cap of an hour alone, kept each second, held a clock under the round of a race whose rounds are longer
+     * than an hour and it never came.
+     */
+    static float sane(float progress, int every) {
+        return progress >= 0f ? Math.min(progress, Math.max(MAX_SAVED_PROGRESS, every)) : 0f;
+    }
+
+    /** {@link #sane(float, int)} for a load, which cannot ask the race how long its round is (the level is not set yet): an hour at most. */
     static float sane(float progress) {
-        return progress >= 0f ? Math.min(progress, MAX_SAVED_PROGRESS) : 0f;
+        return sane(progress, 0);
     }
 
     /** What a round of spawning may do now: within {@link #reserveCap}, at {@link #breedingMultiplier}, its food out of the ration. */
