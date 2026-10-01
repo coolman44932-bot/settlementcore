@@ -111,7 +111,12 @@ public final class SiteWork extends RoomWork {
     /** How many cells the clearing had done when the site last looked, and when that last changed (game time): a clearing that goes nowhere is the site's own. */
     private int clearSeen = -1;
     private long clearAt = -1;
-    /** The site has begun to clear the land itself (no builder came, or none got on): once begun it goes on, 20 cells a second, and is not given back to a builder (not saved). */
+    /**
+     * The site's builders were up and got nowhere for {@link #CLEAR_PATIENCE} ticks, and it has begun to clear the land itself: once begun it goes on, 20 cells a second (its own
+     * cells change the count the patience watches, which began the 400 ticks again after each 20). The cutter, if there is one, goes on cutting alongside: both fell the
+     * cells in the job's order. Not saved. An empty reserve doesn't set it: that is the site's own clearing for as long as the reserve is empty, and a builder takes the clearing back
+     * when it refills.
+     */
     private boolean clearSelf;
     /** When each builder was last sent back round to the landing ({@link #backToTheDoor}). */
     private final Map<UUID, Long> sentAt = new HashMap<>();
@@ -228,8 +233,8 @@ public final class SiteWork extends RoomWork {
                 clearSeen = done;
                 clearAt = now;
             }
-            if (clearSelf || crewHere == 0 && heart.reserveWorkers() <= 0 || now - clearAt >= CLEAR_PATIENCE) {
-                clearSelf = true;                                // its own cells change the count the patience watches, which began the 400 ticks again after each 20
+            clearSelf |= now - clearAt >= CLEAR_PATIENCE;        // builders up that got nowhere: the site is stuck, and it stays its own
+            if (clearSelf || crewHere == 0 && heart.reserveWorkers() <= 0) {
                 effects(level, job.clearSome(level, CLEAR_SELF_PER_SECOND));
             }
         }
