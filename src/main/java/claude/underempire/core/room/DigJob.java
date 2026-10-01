@@ -697,7 +697,7 @@ public class DigJob {
                 c.clearContent();                                // its contents went to the Heart, not onto the floor
             }
         }
-        apply(level, t);
+        apply(level, t, this::cellTaken);
         if (shores && RoomShoring.open(t.state())) {
             shoring.around(level, t.pos());                      // a cave, a drop, water, loose gravel beside it: walled up
         }
@@ -722,7 +722,19 @@ public class DigJob {
     }
 
     private static void apply(ServerLevel level, Task t) {
-        Clearance.before(level, t.pos(), t.state());             // a wall over a cave's open cell is no wall over a rat at the face
+        apply(level, t, null);
+    }
+
+    /**
+     * Whether {@code p} is a cell this job is still to put a block in or out of, which nobody who must be set down clear of the block going in
+     * is set down in while another spot will do (Clearance#before): none for a dug room, whose rats work inside the rock.
+     */
+    protected boolean cellTaken(BlockPos p) {
+        return false;
+    }
+
+    private static void apply(ServerLevel level, Task t, @Nullable java.util.function.Predicate<BlockPos> taken) {
+        Clearance.before(level, t.pos(), t.state(), taken);      // a wall over a cave's open cell is no wall over a rat at the face
         // template states are already shaped (stairs, fences, bars), so skip neighbour shape updates
         level.setBlock(t.pos(), t.state(), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
         if (t.nbt() != null) {

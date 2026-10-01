@@ -68,6 +68,11 @@ public final class SiteWork extends RoomWork {
      * out of reach with nothing else left).
      */
     public static final int DRY_SECONDS = 3;
+    /**
+     * How long, in ticks, a builder that was sent round to the landing ({@link #backToTheDoor}) and still has no stand it can walk to is let try the
+     * best stand there is, before it is sent round again.
+     */
+    public static final int LEG_WINDOW = 600;
 
     /** A builder's claim on the site: the chore for its {@code serial}th batch. */
     public record SiteClaim(UUID rat, int serial) {
@@ -78,6 +83,8 @@ public final class SiteWork extends RoomWork {
     private int serial;
     /** Its worked seconds in a row with builders up and nothing to hand them. */
     private int dry;
+    /** When each builder was last sent back round to the landing ({@link #backToTheDoor}). */
+    private final Map<UUID, Long> sentAt = new HashMap<>();
 
     public SiteWork(Settlement settlement, RaiseJob job) {
         super(settlement, new Building(job.roomId, job.placement().box(), job.door, job.facing), job.placement());
@@ -183,7 +190,14 @@ public final class SiteWork extends RoomWork {
         for (DigJob.Task t : batch) {
             cells.add(t.pos());
         }
-        BlockPos stand = job.standFor(level, anchor, cells, rat.blockPosition());
+        RaiseJob.Stand where = job.stand(level, anchor, cells, rat.blockPosition());
+        if (!where.walkable()) {
+            Chore leg = backToTheDoor(level, rat);
+            if (leg != null) {
+                return leg;
+            }
+        }
+        BlockPos stand = where.at();
         int work = Math.max(4, Math.round(TICKS_PER_BLOCK * Math.max(1, batch.size()) / rat.tempo()));
         double reach = 2.2;
         if (stand != null) {
@@ -198,6 +212,28 @@ public final class SiteWork extends RoomWork {
             job.complete(l, r.getUUID());                        // a cell not ready yet is left open, and handed out again
             return nextChore(l, r);                              // the next batch, near where it stands
         }).standing(stand).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction)));
+    }
+
+    /**
+     * A builder that has no stand it can walk to for the batch it was handed ({@link RaiseJob#stand}: outside the back wall of a closed hall with
+     * one door, the way in is more than {@value RaiseJob#WALK_STEPS} steps off) gives the batch back at once, and is sent round to the landing, the
+     * way the builders come in: from there the walk to the work inside is short, and whoever can walk to the batch may take it meanwhile. Before, it
+     * took the batch and stood out its 400 ticks (CrewGoal's give-up) on a path to nowhere, the cells were set aside, and the site's stall rule heaved
+     * them (the last roof cells of a closed hall with one door, whenever a builder was outside its back wall then). Null when it was sent already within the last {@value #LEG_WINDOW}
+     * ticks, or there is no landing: it then tries the best stand there is, as before.
+     */
+    @Nullable
+    private Chore backToTheDoor(ServerLevel level, SettlerMob rat) {
+        UUID id = rat.getUUID();
+        long now = level.getGameTime();
+        Long was = sentAt.get(id);
+        BlockPos landing = comeUpAt(level);
+        if (landing == null || was != null && now - was < LEG_WINDOW) {
+            return null;
+        }
+        job.release(id);
+        sentAt.put(id, now);
+        return new Chore("heading round to the door", landing, 1.5, 2, null, (l, r) -> nextChore(l, r)).standing(landing);
     }
 
     /** The blocks that went in on a swing: a cut's dust and sound, a laid block's sound and a puff of it. */
@@ -289,6 +325,7 @@ public final class SiteWork extends RoomWork {
     /** A builder is gone (killed, sent home, dismissed): whatever batch it held goes back. */
     public void let(UUID id) {
         serials.remove(id);
+        sentAt.remove(id);
         job.release(id);
     }
 

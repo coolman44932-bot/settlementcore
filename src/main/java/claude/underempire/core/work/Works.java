@@ -281,9 +281,11 @@ public final class Works {
             int want = w.crewWanted();
             if (mine.size() < want) {
                 spawnCrew(level, w);
-            } else if (mine.size() > want + 1) {
-                SettlerMob r = mine.get(mine.size() - 1);
-                r.goHome();                                      // no work for it: back down to the horde
+            } else if (mine.stream().filter(r -> !r.isHomeward()).count() > want + 1) {
+                SettlerMob r = surplus(mine);
+                if (r != null) {
+                    r.goHome();                                  // no work for it: back down to the horde
+                }
             }
             here.put(w.key(), mine.size());
             for (int i = 0; i <= extra; i++) {
@@ -356,6 +358,31 @@ public final class Works {
             }
         }
         return n;
+    }
+
+    /**
+     * Which of a room's crew goes home, when it has more than it wants: one that is not on its way already, and one with nothing to do before one
+     * at work. {@code goHome} starts the sinking again (24 ticks against the second's 20), so the last of the crew told every second never got down:
+     * it sank about a block a second and left the crew only once it had strayed 24 below its room, some 20 s on, one rat in all that time, and a site's
+     * surplus builders stood idle on its stairs for minutes (the step platform's flake: the last cell held 400 ticks by a builder that an idle one
+     * blocked from the way up). Null if every rat is on its way home.
+     */
+    @Nullable
+    static SettlerMob surplus(List<SettlerMob> crew) {
+        SettlerMob busy = null;
+        for (int i = crew.size() - 1; i >= 0; i--) {
+            SettlerMob r = crew.get(i);
+            if (r.isHomeward()) {
+                continue;
+            }
+            if (r.crewDoing().isEmpty()) {
+                return r;
+            }
+            if (busy == null) {
+                busy = r;
+            }
+        }
+        return busy;
     }
 
     private void spawnCrew(ServerLevel level, RoomWork w) {

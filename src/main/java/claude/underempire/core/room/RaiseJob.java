@@ -965,13 +965,26 @@ public class RaiseJob extends DigJob {
      */
     @Nullable
     public BlockPos standFor(ServerLevel level, BlockPos anchor, List<BlockPos> batch, BlockPos near) {
+        return stand(level, anchor, batch, near).at();
+    }
+
+    /**
+     * A stand ({@link #standFor}), and whether its builder can walk to it. Not when the flood ran and found no cell in reach of the work that it can
+     * walk to: {@code at} is then the old best, which no path may reach (a builder outside the back wall of a closed hall with one door is more
+     * than {@value #WALK_STEPS} steps from it). It is when the flood found one, and when it could not tell (nothing is known better).
+     */
+    public record Stand(@Nullable BlockPos at, boolean walkable) {
+    }
+
+    /** {@link #standFor}, with whether the builder can walk there ({@link Stand}). */
+    public Stand stand(ServerLevel level, BlockPos anchor, List<BlockPos> batch, BlockPos near) {
         LongOpenHashSet mine = new LongOpenHashSet(batch.size());
         for (BlockPos b : batch) {
             mine.add(column(b.getX(), b.getZ()));
         }
         Long2IntOpenHashMap walk = walkable(level, near, anchor);
         BlockPos there = walk == null ? null : scanStands(level, anchor, mine, near, walk);
-        return there != null ? there : scanStands(level, anchor, mine, near, null);
+        return there != null ? new Stand(there, true) : new Stand(scanStands(level, anchor, mine, near, null), walk == null);
     }
 
     /**
@@ -1098,13 +1111,13 @@ public class RaiseJob extends DigJob {
 
     /** A pit: every neighbour of {@code feet} stands 2 or more over it (the cell over its feet is solid all round). */
     public static boolean pit(ServerLevel level, BlockPos feet) {
-        for (Direction d : Direction.Plane.HORIZONTAL) {
-            BlockPos n = feet.relative(d).above();
-            if (!level.isLoaded(n) || level.getBlockState(n).getCollisionShape(level, n).isEmpty()) {
-                return false;
-            }
-        }
-        return true;
+        return Clearance.pit(level, feet, null);
+    }
+
+    /** The cells the site is still to fill or cut under: a builder is set down in one last ({@link Clearance#before}), it would be built in or dropped. */
+    @Override
+    protected boolean cellTaken(BlockPos p) {
+        return !stays(p);
     }
 
     /** Whether one standing at {@code p} stays standing: nothing the site fills where it is, and no cut under it. */

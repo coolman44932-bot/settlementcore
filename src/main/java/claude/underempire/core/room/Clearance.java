@@ -15,6 +15,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Predicate;
 
 /**
  * Nobody is built into a wall (the user's new world, 2026-09-29: slaves "suffocated in a wall" while the horde dug).
@@ -27,6 +28,11 @@ import java.util.List;
  * <p>{@link #before} is called ahead of every whole block those put down: a mob whose body is in the cell is set down in the
  * nearest clear, dry spot beside it. {@link #clearOf} is the same for a settler that has clawed up out of the earth into a
  * cell that was walled while it climbed (SettlerMob#emergeAt: it comes up 24 ticks after it was told where).
+ *
+ * <p>Never into a pit, when there is any other spot ({@link #pit}), and not into a cell the job is still to fill (its {@code taken}) before
+ * a spot it is not: a builder on a half-laid course stands where the next block goes in, and the nearest dry floor can be an open cell of
+ * the layer it is laying, a hole that fills up round it (the step platform's crewed test, about 1 copy in 300: a builder set down in the last
+ * open cell of a course was walled in by the blocks of its own batch, and could not climb out until the cell it stood in was laid).
  */
 public final class Clearance {
 
@@ -43,6 +49,11 @@ public final class Clearance {
      * cell, and a slab or a lamp is no wall. Returns how many were moved.
      */
     public static int before(ServerLevel level, BlockPos pos, BlockState now) {
+        return before(level, pos, now, null);
+    }
+
+    /** {@link #before(ServerLevel, BlockPos, BlockState)}; {@code taken}: the cells the job is still to put a block in (a spot is set down there last). */
+    public static int before(ServerLevel level, BlockPos pos, BlockState now, @Nullable Predicate<BlockPos> taken) {
         if (!now.isSuffocating(level, pos) || level.getBlockState(pos).isSuffocating(level, pos)) {
             return 0;
         }
@@ -53,7 +64,7 @@ public final class Clearance {
                 && !m.isSpectator());
         int moved = 0;
         for (LivingEntity m : in) {
-            Vec3 to = spot(level, m, pos, cell);
+            Vec3 to = spot(level, m, pos, cell, pos, taken);
             if (to != null) {
                 m.teleportTo(to.x, to.y, to.z);
                 if (m instanceof Mob mob) {
@@ -103,9 +114,24 @@ public final class Clearance {
      */
     @Nullable
     public static Vec3 spot(ServerLevel level, Entity e, BlockPos around, @Nullable AABB avoid) {
+        return spot(level, e, around, avoid, null, null);
+    }
+
+    /**
+     * {@link #spot(ServerLevel, Entity, BlockPos, AABB)} that passes over a spot with no way out ({@link #pit}, with {@code filled}, the cell a
+     * block is about to go into, counted as a wall), and a cell the job is still to fill ({@code taken}), for any farther one within {@link #REACH}
+     * that is neither; with none, the nearest taken one of the first ring that has any, else the nearest pit of the first ring that has any.
+     */
+    @Nullable
+    public static Vec3 spot(ServerLevel level, Entity e, BlockPos around, @Nullable AABB avoid, @Nullable BlockPos filled,
+                            @Nullable Predicate<BlockPos> taken) {
         EntityDimensions size = e.getDimensions(Pose.STANDING);
+        Vec3 onTaken = null;
+        Vec3 pitted = null;
         for (int r = 0; r <= REACH; r++) {
             List<BlockPos> fits = new ArrayList<>();
+            List<BlockPos> takens = new ArrayList<>();
+            List<BlockPos> pits = new ArrayList<>();
             for (int dx = -r; dx <= r; dx++) {
                 for (int dz = -r; dz <= r; dz++) {
                     if (Math.max(Math.abs(dx), Math.abs(dz)) != r) {
@@ -121,24 +147,52 @@ public final class Clearance {
                         if ((avoid == null || !box.intersects(avoid))
                                 && level.getBlockState(below).isFaceSturdy(level, below, Direction.UP)
                                 && level.noCollision(e, box) && !level.containsAnyLiquid(box)) {
-                            fits.add(p);
+                            (pit(level, p, filled) ? pits : taken != null && taken.test(p) ? takens : fits).add(p);
                         }
                     }
                 }
             }
             if (!fits.isEmpty()) {
-                BlockPos best = fits.get(0);
-                double bestD = Double.MAX_VALUE;
-                for (BlockPos p : fits) {
-                    double d = e.distanceToSqr(Vec3.atBottomCenterOf(p));
-                    if (d < bestD) {
-                        bestD = d;
-                        best = p;
-                    }
-                }
-                return Vec3.atBottomCenterOf(best);
+                return nearest(e, fits);
+            }
+            if (onTaken == null && !takens.isEmpty()) {
+                onTaken = nearest(e, takens);
+            }
+            if (pitted == null && !pits.isEmpty()) {
+                pitted = nearest(e, pits);
             }
         }
-        return null;
+        return onTaken != null ? onTaken : pitted;
+    }
+
+    /** The bottom centre of the cell of {@code cells} nearest {@code e}. */
+    private static Vec3 nearest(Entity e, List<BlockPos> cells) {
+        BlockPos best = cells.get(0);
+        double bestD = Double.MAX_VALUE;
+        for (BlockPos p : cells) {
+            double d = e.distanceToSqr(Vec3.atBottomCenterOf(p));
+            if (d < bestD) {
+                bestD = d;
+                best = p;
+            }
+        }
+        return Vec3.atBottomCenterOf(best);
+    }
+
+    /**
+     * A pit: every neighbour of {@code feet} stands 2 or more over it (the cell over its feet is solid all round), so a body in it can't get out,
+     * and the cell {@code filled} (a block about to go in, or null) counts as solid.
+     */
+    public static boolean pit(ServerLevel level, BlockPos feet, @Nullable BlockPos filled) {
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            BlockPos n = feet.relative(d).above();
+            if (n.equals(filled)) {
+                continue;
+            }
+            if (!level.isLoaded(n) || level.getBlockState(n).getCollisionShape(level, n).isEmpty()) {
+                return false;
+            }
+        }
+        return true;
     }
 }

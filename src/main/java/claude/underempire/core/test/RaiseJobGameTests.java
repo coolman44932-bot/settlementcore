@@ -211,7 +211,7 @@ public class RaiseJobGameTests {
      * ground the earthworks and the first course are laid by hand; then a mock player stands in a cell of the 2nd course (on
      * the ground layer, in the first step's cell by the door) and the rest of the building is laid a cell at a time as a
      * builder's swings lay it. After every block the player is not inside one; its cell is laid; and it was set down clear of
-     * it, on a floor it fits on.
+     * it, on a floor it fits on, and not in a cell the building is still to fill.
      */
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
     public static void aPlayerInTheNextCourseIsSetDownClear(GameTestHelper h) {
@@ -250,6 +250,7 @@ public class RaiseJobGameTests {
                 h.assertTrue(player.blockPosition().equals(cell), "the player stands at " + player.blockPosition().toShortString() + ", not in the cell "
                         + cell.toShortString());
                 boolean setDown = false;
+                BlockPos[] last = {cell};
                 for (int round = 0; !job.isDone(); round++) {
                     h.assertTrue(round < 2000, "the building never finished: " + job.state());
                     BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
@@ -261,6 +262,13 @@ public class RaiseJobGameTests {
                                     + player.blockPosition().toShortString() + " is inside a block (" + level.getBlockState(player.blockPosition())
                                     + ") once " + level.getBlockState(c.pos()) + " went in at " + c.pos().toShortString());
                             setDown |= !player.blockPosition().equals(cell);
+                            BlockPos nowAt = player.blockPosition();
+                            if (!nowAt.equals(last[0])) {        // set down by the block that just went in: not in a cell the building is still to fill
+                                h.assertTrue(!job.fillsOpen(nowAt) && !job.fillsOpen(nowAt.above()), "the player was set down at " + nowAt.toShortString()
+                                        + " by the block that went into " + c.pos().toShortString() + ", a cell the building is still to fill (a hole that the courses "
+                                        + "close round it)");
+                                last[0] = nowAt;
+                            }
                         }
                     }
                     job.complete(level, builder);
@@ -273,6 +281,128 @@ public class RaiseJobGameTests {
                         + at.toShortString() + " over " + level.getBlockState(at.below()));
             } finally {
                 level.getServer().getPlayerList().remove(player);
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * Nobody is set down in a pit when there is anywhere else (the crewed step platform's flake, about 1 copy in 500: a builder standing in the cell
+     * a block goes into was set down in the open cell beside it, a hole in the layer under with a block on every side once that block was in, and
+     * could not climb out). On flat ground: a layer of stone bricks 1 over the ground with a hole in it, and over that a layer with the cell over
+     * the hole and the cell beside it (F) still open and every other cell laid. A pig stands in both cells, as a builder does laying its batch, and
+     * the block is put in F ({@code Clearance#before}): the pig is set down clear of F, and not in the hole, which is the nearest dry floor to it and
+     * a pit once F is laid (the control: the old rule sets it down there).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "raise")
+    public static void aMobSetDownByABlockGoingInIsNotSetDownInAPit(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            int x0 = s.px0 + 8;
+            int z0 = s.pz0 + 8;
+            int g = s.floor;
+            for (int x = 0; x <= 6; x++) {
+                for (int z = 0; z <= 6; z++) {
+                    s.set(x0 + x, g + 1, z0 + z, BRICK);         // the layer over the ground
+                }
+            }
+            BlockPos hole = new BlockPos(x0 + 3, g + 1, z0 + 3);
+            s.set(hole.getX(), hole.getY(), hole.getZ(), AIR);   // with a hole in it
+            for (int x = 1; x <= 5; x++) {
+                for (int z = 1; z <= 5; z++) {
+                    s.set(x0 + x, g + 2, z0 + z, BRICK);         // the layer over that
+                }
+            }
+            BlockPos over = hole.above();
+            BlockPos f = over.west();                            // the cell the block goes into, beside the cell over the hole
+            s.set(over.getX(), over.getY(), over.getZ(), AIR);
+            s.set(f.getX(), f.getY(), f.getZ(), AIR);
+            net.minecraft.world.entity.animal.Pig pig = net.minecraft.world.entity.EntityType.PIG.create(level);
+            h.assertTrue(pig != null, "no pig to set down");
+            try {
+                pig.setNoAi(true);
+                pig.moveTo(x0 + 3.12, g + 2, z0 + 3.5, 0f, 0f);  // over the layer's edge: its body in both cells, as a builder's at its work
+                level.addFreshEntity(pig);
+                h.assertTrue(pig.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f)) && level.noCollision(pig),
+                        "the pig at " + pig.position() + " isn't standing free in the cell " + f.toShortString() + " and the cell over the hole");
+                int moved = claude.underempire.core.room.Clearance.before(level, f, BRICK);
+                level.setBlock(f, BRICK, 3);
+                h.assertTrue(moved == 1, "the block going into " + f.toShortString() + " moved " + moved + " mobs, not the pig");
+                h.assertTrue(RaiseJob.pit(level, hole), "the control's hole at " + hole.toShortString() + " isn't a pit once " + f.toShortString() + " is laid");
+                h.assertTrue(!pig.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f)) && level.noCollision(pig),
+                        "the pig at " + pig.position() + " wasn't set down clear of the cell " + f.toShortString());
+                h.assertTrue(!RaiseJob.pit(level, pig.blockPosition()), "the pig was set down at " + pig.blockPosition().toShortString() + " (" + pig.position()
+                        + "), a pit once " + f.toShortString() + " was laid: every cell round it 2 over its feet is a block, and it can't climb out");
+            } finally {
+                pig.discard();
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * Nobody is set down in a cell the job is still to fill when another spot will do (the crewed step platform's flake again, once the pit rule
+     * was in: a builder was set down in the last open cell of the course it was laying, and the blocks of its own batch walled it in). On flat
+     * ground, a layer of stone bricks 1 over the ground, and over it a layer with two open cells side by side, F (the block goes into it) and A, the
+     * nearest dry floor to the pig that stands in both. With A one of the job's cells still to fill ({@code Clearance#before}'s {@code taken}) the pig
+     * is set down clear of F on the finished layer, not in A. The control, so the test can fail: with no cell taken it is set down in A.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "raise")
+    public static void aMobSetDownByABlockGoingInIsNotSetDownInACellTheJobStillFills(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            int x0 = s.px0 + 8;
+            int z0 = s.pz0 + 8;
+            int g = s.floor;
+            for (int x = 0; x <= 6; x++) {
+                for (int z = 0; z <= 6; z++) {
+                    s.set(x0 + x, g + 1, z0 + z, BRICK);         // the layer over the ground
+                }
+            }
+            for (int x = 1; x <= 5; x++) {
+                for (int z = 1; z <= 5; z++) {
+                    s.set(x0 + x, g + 2, z0 + z, BRICK);         // the layer over that
+                }
+            }
+            BlockPos f = new BlockPos(x0 + 3, g + 2, z0 + 3);    // the cell the block goes into
+            BlockPos a = f.east();                               // and the open cell beside it
+            s.set(f.getX(), f.getY(), f.getZ(), AIR);
+            s.set(a.getX(), a.getY(), a.getZ(), AIR);
+            net.minecraft.world.entity.animal.Pig pig = net.minecraft.world.entity.EntityType.PIG.create(level);
+            h.assertTrue(pig != null, "no pig to set down");
+            try {
+                pig.setNoAi(true);
+                for (int round = 0; round < 2; round++) {
+                    boolean taken = round == 1;
+                    s.set(f.getX(), f.getY(), f.getZ(), AIR);
+                    pig.moveTo(x0 + 3.9, g + 2, z0 + 3.5, 0f, 0f);   // over the edge of F, in A
+                    if (round == 0) {
+                        level.addFreshEntity(pig);
+                    }
+                    h.assertTrue(pig.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f)) && level.noCollision(pig),
+                            "the pig at " + pig.position() + " isn't standing free in the cells " + f.toShortString() + " and " + a.toShortString());
+                    int moved = claude.underempire.core.room.Clearance.before(level, f, BRICK, taken ? p -> p.equals(a) : null);
+                    level.setBlock(f, BRICK, 3);
+                    BlockPos at = pig.blockPosition();
+                    h.assertTrue(moved == 1 && !pig.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f)) && level.noCollision(pig),
+                            "the block going into " + f.toShortString() + " moved " + moved + " mobs, and left the pig at " + pig.position() + (taken ? "" : " (the control)"));
+                    if (taken) {
+                        h.assertTrue(!at.equals(a), "the pig was set down at " + at.toShortString() + ", the cell " + a.toShortString() + " the job is still to fill");
+                    } else {
+                        h.assertTrue(at.equals(a), "the control: with no cell taken the pig is set down at " + at.toShortString() + ", not in the nearest dry floor, the cell "
+                                + a.toShortString());
+                        s.set(a.getX(), a.getY(), a.getZ(), AIR);
+                        s.set(f.getX(), f.getY(), f.getZ(), AIR);
+                    }
+                }
+            } finally {
+                pig.discard();
             }
             s.clear();
             h.succeed();
@@ -332,6 +462,8 @@ public class RaiseJobGameTests {
     public static final String LAMPS = "raise_test_lamps";
     /** A flat apron, for the template tests: given by hand, dropped and given again. */
     public static final String RESTORED = "raise_test_restored";
+    /** A closed hall with one door, its walls at the box's edge and its roof 4 over its floor: the way in is a long walk from outside its back wall. */
+    public static final String ONE_DOOR = "raise_test_onedoor";
 
     private static final BlockState AIR = Blocks.AIR.defaultBlockState();
     private static final BlockState BRICK = Blocks.STONE_BRICKS.defaultBlockState();
@@ -474,6 +606,20 @@ public class RaiseJobGameTests {
             c.set(3, 3, 3, hangingLantern());                    // under the roof cell (3,4,3)
             c.set(5, 3, 5, Blocks.CHAIN.defaultBlockState());    // a chain under (5,4,5), and a lantern on it
             c.set(5, 2, 5, hangingLantern());
+        });
+    }
+
+    /**
+     * A closed hall, 9 by 9, its walls (3 high) on the box's edge and its roof the course over them (4 over the floor, so every cell is in reach of a
+     * builder on the floor), with one door gap 2 high in the middle of the west wall, and nothing hanging. The way a builder walks in is round the hall:
+     * from outside the back wall it is more than {@value RaiseJob#WALK_STEPS} steps, and the roof's middle cells are in reach of no stand outside
+     * ({@link RaiseJob#STAND_ACROSS} is 4, the walls are on the edge): they can be laid from inside only (the finding 2 of f12928d's review, and the
+     * old lamp hall of 9 by 9 with one door, which stalled 1 raise in 20 on its last roof cells).
+     */
+    public static synchronized Rooms.Room oneDoor() {
+        return handBuilt(ONE_DOOR, "Test One-Door Hall", 5, c -> {
+            c.room(3);                                           // the apron, the walls to y 3 on the edge, the door gap (0,1,4) and (0,2,4)
+            c.box(0, 4, 0, 8, 4, 8, BRICK);                      // the roof
         });
     }
 
@@ -763,6 +909,57 @@ public class RaiseJobGameTests {
             h.assertTrue(stand != null && stand.getY() <= s.floor + 2 && anchor.getY() - stand.getY() <= RaiseJob.STAND_UP,
                     "for a builder in the doorway the roof cell " + anchor.toShortString() + " is laid from " + (stand == null ? "no cell" : stand.toShortString()
                             + " (the floor is at " + (s.floor + 1) + ", the roof's top at " + (s.floor + 5) + ")") + ": a builder is sent where no path goes");
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * A builder who can't walk to any stand is told so (the one-door stall, finding 2 of f12928d's review: {@code RaiseJob#standFor} then fell back to the
+     * old best, a stand inside the hall's walls, and the builder stood out its 400 ticks on a path to nowhere; SiteWork now gives the batch back and sends
+     * the builder round to the door). In {@link #oneDoor()}: the claims lay the apron and the walls; then for the roof's middle cell a builder in the
+     * doorway has a stand on the floor under the roof and can walk to it, and a builder outside the back wall has the same best stand (the old rule's
+     * answer) and can not: {@link RaiseJob.Stand#walkable()} is false.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aBuilderOutsideAHallWithOneDoorCannotWalkToAnyStand(GameTestHelper h) {
+        Rooms.Room room = oneDoor();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "the one-door hall");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 6L);
+            BlockPos near = s.pl.door();
+            for (int rounds = 0; job.courseNow() < 4; rounds++) {
+                h.assertTrue(rounds < 4000 && !job.isDone(), "the walls never finished: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size()
+                        + " done; open: " + job.openReport(level, 8));
+                BlockPos claimed = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                h.assertTrue(claimed != null, "nothing could be handed out: " + job.openReport(level, 8));
+                job.gnawSome(level, builder, 1f);
+                job.complete(level, builder);
+            }
+            BlockPos anchor = new BlockPos(s.bx0 + 4, s.floor + 4, s.bz0 + 4);   // the roof's middle cell, the whole roof still to be laid
+            h.assertTrue(job.fillsOpen(anchor) && level.getBlockState(anchor).isAir(), "the roof's middle cell " + anchor.toShortString() + " isn't an open cell of the site: "
+                    + level.getBlockState(anchor) + ", " + job.openReport(level, 8));
+            List<BlockPos> cells = List.of(anchor);
+            RaiseJob.Stand inDoor = job.stand(level, anchor, cells, s.pl.door());
+            h.assertTrue(inDoor.at() != null && inDoor.walkable() && s.pl.box().isInside(inDoor.at()) && inDoor.at().getY() <= s.floor + 2,
+                    "for a builder in the doorway the roof cell " + anchor.toShortString() + " is laid from " + inDoor + ", not a cell on the floor it can walk to");
+            BlockPos outside = new BlockPos(s.bx0 + 11, s.floor + 1, s.bz0 + 4);
+            h.assertTrue(claude.underempire.core.unit.SettlerMob.standable(level, outside), "the builder's place outside the back wall, " + outside.toShortString()
+                    + ", isn't a cell to stand in");
+            RaiseJob.Stand out = job.stand(level, anchor, cells, outside);
+            h.assertTrue(out.at() != null && !out.walkable(), "for a builder outside the back wall at " + outside.toShortString() + " the roof cell " + anchor.toShortString()
+                    + " has the stand " + out + ", which it can walk to: the way in is round the hall, over " + RaiseJob.WALK_STEPS + " steps");
+            h.assertTrue(out.at().equals(job.standFor(level, anchor, cells, outside)), "standFor is not the stand's cell: " + job.standFor(level, anchor, cells, outside)
+                    + " and " + out);
             s.clear();
             h.succeed();
         }));
