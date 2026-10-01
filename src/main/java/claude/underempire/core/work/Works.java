@@ -684,7 +684,7 @@ public final class Works {
             return "Something is being raised at " + at + " already";
         }
         if (!heart.inSettlement(door) && !besideSite(door)) {
-            return cap(the) + "'s door at " + at + " is outside the settlement: raise it near its heart, or beside what it has built";
+            return cap(the) + "'s door at " + at + " is outside the settlement: raise it near its " + heart.centreName() + ", or beside what it has built";
         }
         Siting.Result sited = Siting.plan(level, pl, withSites(), reshape);
         if (sited instanceof Siting.Refusal no) {

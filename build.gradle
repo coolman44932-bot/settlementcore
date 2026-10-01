@@ -6,7 +6,7 @@ plugins {
 
 // Settlement Core, the settlement engine every race mod builds on (docs/plans/core-step2.md). It has no runs of its own:
 // the root project's runs load it beside the Under-Empire (the root's neoForge { mods { settlementcore } }).
-version = '0.2.0'
+version = '0.3.0'
 group = 'claude.underempire'
 base { archivesName = 'settlementcore' }
 

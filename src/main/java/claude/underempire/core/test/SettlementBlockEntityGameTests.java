@@ -13,6 +13,7 @@ import claude.underempire.core.settlement.SettlementSpawns;
 import claude.underempire.core.settlement.Spawning;
 import claude.underempire.core.unit.SettlerMob;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.gametest.framework.GameTest;
@@ -69,6 +70,10 @@ public class SettlementBlockEntityGameTests {
         int rounds;
         /** Those teeming (up, on neither the roll nor the reserve): -1 leaves the base's own count, the muster's defenders. */
         int teeming = -1;
+        /** Whether everything is in the settlement ({@link #inSettlement}): a building is raised only inside it, or beside what it has built. */
+        boolean holds;
+        /** The lines it told its owner: it has none, so they are kept here. */
+        final List<String> heard = new ArrayList<>();
         Spawning spawning;
         final List<String> told = new ArrayList<>();
         final List<String> asked = new ArrayList<>();
@@ -165,14 +170,20 @@ public class SettlementBlockEntityGameTests {
             return null;
         }
 
+        /** No mob type: the engine has none, and the reserve of the tests that ask is empty, so nothing is ever made (Works#spawnCrew compares the two types and stops at the empty reserve). */
         @Override
         public EntityType<? extends SettlerMob> workerType() {
-            throw new UnsupportedOperationException("the test's settlement makes its people itself (makePerson)");
+            return null;
         }
 
         @Override
         public EntityType<? extends SettlerMob> soldierType() {
-            throw new UnsupportedOperationException("the test's settlement makes its people itself (makePerson)");
+            return null;
+        }
+
+        @Override
+        public void tellOwner(String msg, ChatFormatting color) {
+            heard.add(msg);
         }
 
         @Override
@@ -187,7 +198,7 @@ public class SettlementBlockEntityGameTests {
 
         @Override
         public boolean inSettlement(BlockPos p) {
-            return false;
+            return holds;
         }
 
         @Override

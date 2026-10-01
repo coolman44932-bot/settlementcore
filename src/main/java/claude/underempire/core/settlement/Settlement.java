@@ -115,6 +115,14 @@ public interface Settlement extends RoomShoring.Warren {
     /** What part of the settlement {@code p} is in, for the ledger ("the Clan Hoard", "the tunnels"). */
     String placeOf(BlockPos p);
 
+    /**
+     * What a line to the player calls the settlement's centre, in "raise it near its centre": neutral until a race names it (the engine's
+     * words name no race: the test of core/test/EngineWordsGameTests reads every line of a raise).
+     */
+    default String centreName() {
+        return "centre";
+    }
+
     /** Whether {@code bed} is in one of its dens (core/work/Den). */
     boolean inDen(BlockPos bed);
 
