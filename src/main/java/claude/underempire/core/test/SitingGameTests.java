@@ -1466,6 +1466,112 @@ public class SitingGameTests {
         }));
     }
 
+    /**
+     * What a held plan shows (Siting#preview, B9 of the Great Plan's plan) is the plan's own reading of the same ground, on four of them: flat
+     * ground (the floor reaches the ground: no plinth), a slope under the box (a plinth 0 to 4 deep), a pit 12 deep under the box's corner
+     * (refused: the ground falls away, and its columns are over SKIRT_MAX) and lava in the box (refused, naming the lava). Where the plan
+     * refuses, the preview's refusal is the same words at the same spot; where it sites, there is none; the plinth's columns are the
+     * 81 under the box, each with the ground's height and the plinth's depth that the land has (the lava's column read down to the ground
+     * under it); the preview with the land not reshaped agrees with the plan not reshaped; and neither preview changes a block.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void aPreviewAgreesWithThePlanForTheSameGround(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            Land[] grounds = {
+                    (x, z) -> s.floor,
+                    (x, z) -> s.floor - 1 - Math.min(4, Math.max(0, x - s.bx0)),
+                    pit(s, 12),
+                    (x, z) -> s.floor,
+            };
+            String[] names = {"flat ground", "a slope under the box", "a pit 12 deep under the corner", "lava in the box"};
+            BlockPos lava = new BlockPos(s.bx0 + 4, s.floor, s.bz0 + 4);
+            int sited = 0, refused = 0;
+            for (int g = 0; g < grounds.length; g++) {
+                s.lay(grounds[g]);
+                if (g == 3) {
+                    s.set(lava.getX(), lava.getY(), lava.getZ(), Blocks.LAVA.defaultBlockState());
+                }
+                Land land = grounds[g];
+                Map<Long, BlockState> before = s.snapshot((x, z) -> x >= s.bx0 - 6 && x <= s.bx1() + 6 && z >= s.bz0 - 6 && z <= s.bz1() + 6);
+                for (boolean reshape : new boolean[]{true, false}) {
+                    Siting.Result plan = s.plan(reshape);
+                    Siting.Preview preview = Siting.preview(s.level, s.pl, reshape);
+                    if (plan instanceof Refusal no) {
+                        h.assertTrue(preview.refusal() != null && preview.refusal().why().equals(no.why()) && preview.refusal().spot().equals(no.spot()),
+                                names[g] + " (reshape " + reshape + "): the plan was refused \"" + no.why() + "\" at " + no.spot() + ", the preview's refusal is " + preview.refusal()
+                                        + (preview.refusal() == null ? "" : " \"" + preview.refusal().why() + "\" at " + preview.refusal().spot()));
+                        if (reshape) {
+                            refused++;
+                        }
+                    } else {
+                        h.assertTrue(preview.refusal() == null, names[g] + " (reshape " + reshape + "): the plan was sited and the preview is refused: \"" + preview.refusal() + "\"");
+                        if (reshape) {
+                            sited++;
+                        }
+                    }
+                    h.assertTrue(preview.box().equals(s.pl.box()) && preview.door().equals(s.pl.door()) && preview.floor() == s.floor,
+                            names[g] + ": the preview's box " + preview.box() + ", door " + preview.door() + " or floor " + preview.floor() + " is not the placement's");
+                    h.assertTrue(preview.columns().size() == 81, names[g] + ": the preview has " + preview.columns().size() + " plinth columns, not the 81 under the box");
+                    java.util.Set<Long> seen = new java.util.HashSet<>();
+                    for (Siting.Column c : preview.columns()) {
+                        h.assertTrue(s.inBox(c.x(), c.z()) && seen.add(BlockPos.asLong(c.x(), 0, c.z())), names[g] + ": the column " + c + " is not one of the box's, or twice");
+                        h.assertTrue(c.tooDeep() == (c.depth() > Siting.SKIRT_MAX) && c.depth() == s.floor - 1 - c.ground(),
+                                names[g] + ": the column " + c + " has a depth that is not the floor less the ground");
+                        int expected = g == 3 && c.x() == lava.getX() && c.z() == lava.getZ() ? s.floor - 1 : land.at(c.x(), c.z());
+                        h.assertTrue(c.ground() == expected, names[g] + ": the column " + c + " reads the ground at " + c.ground() + ", the land is at " + expected);
+                    }
+                }
+                h.assertTrue(g != 2 || Siting.preview(s.level, s.pl).columns().stream().filter(Siting.Column::tooDeep).count() == 9,
+                        names[g] + ": not the pit's 9 columns are over the most the plinth may be");
+                String moved = s.changed(before);
+                h.assertTrue(moved == null, names[g] + ": the previews changed the world: " + moved);
+            }
+            h.assertTrue(sited >= 1 && refused >= 2, "the four grounds were sited " + sited + " times and refused " + refused + ": the test does not reach both");
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * A plinth column's colour (core/client/OutlineShade, which the plan outline draws): none where there is no plinth, shading from blue
+     * for a thin one to yellow at the deepest the plan allows, and red past it; the shades never go back as the plinth deepens.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "siting")
+    public static void thePlinthsColumnsAreShadedByDepthAndRedPastTheMost(GameTestHelper h) {
+        h.assertTrue(claude.underempire.core.client.OutlineShade.of(0) == null && claude.underempire.core.client.OutlineShade.of(-3) == null,
+                "a column with no plinth has a colour");
+        float[] thin = claude.underempire.core.client.OutlineShade.of(1);
+        float[] deepest = claude.underempire.core.client.OutlineShade.of(Siting.SKIRT_MAX);
+        float[] over = claude.underempire.core.client.OutlineShade.of(Siting.SKIRT_MAX + 1);
+        h.assertTrue(thin[2] > thin[0] && deepest[0] > deepest[2] && deepest[1] > 0.5f, "a thin plinth is not blue, or the deepest allowed is not yellow: " + java.util.Arrays.toString(thin) + ", "
+                + java.util.Arrays.toString(deepest));
+        h.assertTrue(over[0] == 1f && over[1] < 0.3f && over[2] < 0.3f, "a plinth past the most is not red: " + java.util.Arrays.toString(over));
+        for (int d = 1; d < Siting.SKIRT_MAX; d++) {
+            float[] a = claude.underempire.core.client.OutlineShade.of(d), b = claude.underempire.core.client.OutlineShade.of(d + 1);
+            h.assertTrue(b[0] >= a[0] && b[2] <= a[2], "the shade went back between a plinth of " + d + " and " + (d + 1));
+        }
+        h.succeed();
+    }
+
+    /**
+     * A client has no server's resources, so a template for a preview is read from the data folder of the jar of the mod that registered the
+     * room (RoomTemplates#readFromMods): the engine's own test building read that way is the very cells the server reads, and the lookup on a
+     * server's level is the server's.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "siting")
+    public static void aTemplateReadFromTheModsJarIsTheOneTheServerReads(GameTestHelper h) {
+        platform();
+        List<RoomTemplates.Entry> server = RoomTemplates.get(h.getLevel(), PLATFORM);
+        List<RoomTemplates.Entry> jar = RoomTemplates.readFromMods(PLATFORM);
+        h.assertTrue(server.size() == 9 * 5 * 9, "the server read " + server.size() + " cells of the test building, not " + 9 * 5 * 9);
+        h.assertTrue(jar.equals(server), "the mod's jar gave " + jar.size() + " cells and not the server's " + server.size() + " (or not the same ones)");
+        h.assertTrue(RoomTemplates.lookup(h.getLevel(), PLATFORM).equals(server), "the lookup on a server's level is not the server's template");
+        h.succeed();
+    }
+
+
     /** The site was refused, saying {@code words}, at {@code spot}, and naming it. */
     private static void refusedAt(GameTestHelper h, Site s, Siting.Result r, String scene, String words, BlockPos spot) {
         Refusal no = s.expectRefusal(r, scene);

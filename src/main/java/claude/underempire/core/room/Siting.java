@@ -19,6 +19,7 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.tags.BlockTags;
 import net.minecraft.tags.FluidTags;
 import net.minecraft.world.level.EmptyBlockGetter;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.InfestedBlock;
 import net.minecraft.world.level.block.LeavesBlock;
@@ -139,17 +140,82 @@ public final class Siting {
 
     /**
      * Sites a raised building at {@code pl} (its door on the ground layer's course above the aimed ground:
-     * {@link PlanPlacement#onGround}). Reads the world only, never writes it or loads a chunk.
+     * {@link PlanPlacement#onGround}). Reads the world only, never writes it or loads a chunk. The level may be a client's
+     * ({@link #preview}): only a server's has a settlement's other buildings to keep (the {@code warren}'s room cells are asked of a server only).
      *
      * @param warren  the settlement: its other buildings are kept, each 1 wider, and a pad that would cut into one is refused
      * @param reshape false for the plinth, berm and landing only (the land round them is left as it is)
      */
-    public static Result plan(ServerLevel level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape) {
+    public static Result plan(Level level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape) {
         try {
             return new Planner(level, pl, warren).plan(reshape);
         } catch (Refused r) {
             return r.refusal;
         }
+    }
+
+    /**
+     * A column under the building's box that its template's ground layer holds, as the plinth would be laid under it.
+     *
+     * @param ground the height of the ground there, as the plan reads it (the top of the natural ground)
+     * @param depth  how many blocks of plinth go under the floor's course there ({@code floor - 1 - ground}): 0 or less where the
+     *               ground reaches the floor or is cut down to it; more than {@link #SKIRT_MAX} refuses the site
+     */
+    public record Column(int x, int z, int ground, int depth) {
+        /** Whether the plinth here is deeper than {@link #SKIRT_MAX} allows. */
+        public boolean tooDeep() {
+            return depth > SKIRT_MAX;
+        }
+    }
+
+    /**
+     * What a held plan shows the player (core/client/PlanOutline): where the building would stand, its door, the plinth under it by
+     * column, and where and why the site would be refused.
+     *
+     * @param placement the building's placement: its box and its door
+     * @param refusal   why {@link #plan} would refuse the site, and where (null: it would be sited)
+     * @param columns   the plinth's columns, in z then x order (none for a site whose template is missing or whose land is not loaded)
+     */
+    public record Preview(PlanPlacement placement, @Nullable Refusal refusal, List<Column> columns) {
+        public Preview {
+            columns = List.copyOf(columns);
+        }
+
+        /** The building's box. */
+        public BoundingBox box() {
+            return placement.box();
+        }
+
+        /** The door's cell, on the floor's course. */
+        public BlockPos door() {
+            return placement.door();
+        }
+
+        /** The height of the floor's course: the template's ground layer, a block under the door. */
+        public int floor() {
+            return placement.door().getY() - 1;
+        }
+
+        /** The door's landing, part of the pad: 3 columns wide and 2 out from the door, level with the floor. */
+        public Reshape.Rect landing() {
+            return landingRect(placement);
+        }
+    }
+
+    /**
+     * What to show the player of a site before it is asked for ({@link #plan}, with a settlement of no other buildings and the land
+     * reshaped as a raise would reshape it): the refusal, if there is one, and the plinth's columns. It is the plan's own reading
+     * of the land, the same refusal and the same ground for the same world, and may be asked of a client's level: it reads the world
+     * only and loads no chunk. It does not know a settlement's other buildings (a server's), so it cannot show that refusal. The template
+     * comes from {@link RoomTemplates#lookup}.
+     */
+    public static Preview preview(Level level, PlanPlacement pl) {
+        return preview(level, pl, true);
+    }
+
+    /** {@link #preview(Level, PlanPlacement)}, with the land round the pad reshaped as the plan is asked to, or not. */
+    public static Preview preview(Level level, PlanPlacement pl, boolean reshape) {
+        return new Planner(level, pl, RoomShoring.Warren.alone()).preview(reshape);
     }
 
     // --- what the land is made of --------------------------------------------------------------------------------------
@@ -807,7 +873,7 @@ public final class Siting {
     }
 
     private static final class Planner {
-        final ServerLevel level;
+        final Level level;
         final PlanPlacement pl;
         final RoomShoring.Warren warren;
         /** "the Test Hall", and "the Test Hall's". */
@@ -828,7 +894,7 @@ public final class Siting {
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         LongSet buildings = new LongOpenHashSet();
 
-        Planner(ServerLevel level, PlanPlacement pl, RoomShoring.Warren warren) {
+        Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren) {
             this.level = level;
             this.pl = pl;
             this.warren = warren;
@@ -842,7 +908,7 @@ public final class Siting {
                     Math.max(pad.x1(), landing.x1()), Math.max(pad.z1(), landing.z1()));
             int[] o = outward(pl);
             this.side = o[0] < 0 ? Reshape.Side.WEST : o[0] > 0 ? Reshape.Side.EAST : o[1] < 0 ? Reshape.Side.NORTH : Reshape.Side.SOUTH;
-            this.template = RoomTemplates.get(level, pl.room().id());
+            this.template = RoomTemplates.lookup(level, pl.room().id());
             this.layer = groundLayer(pl, template);
         }
 
@@ -981,6 +1047,40 @@ public final class Siting {
             return kept(c) != null && c.occupied() ? c.held : c.foot;
         }
 
+        // --- the preview ---------------------------------------------------------------------------------------------
+
+        /**
+         * The plan's refusal (or none), and the plinth's columns as the plan reads them: the same {@link #col} reading the pad's
+         * refusals are made from, so what is drawn is what is judged. A column whose land is not loaded is left out.
+         */
+        Preview preview(boolean reshape) {
+            Refusal refusal = null;
+            try {
+                plan(reshape);
+            } catch (Refused r) {
+                refusal = r.refusal;
+            }
+            List<Column> columns = new ArrayList<>();
+            if (!template.isEmpty() && box.minY() == floor) {
+                for (int z = box.minZ(); z <= box.maxZ(); z++) {
+                    for (int x = box.minX(); x <= box.maxX(); x++) {
+                        if (!layer.containsKey(column(x, z))) {
+                            continue;
+                        }
+                        try {
+                            Col c = col(x, z);
+                            columns.add(new Column(x, z, c.foot, floor - 1 - c.foot));
+                        } catch (Refused unloaded) {
+                            if (refusal == null) {
+                                refusal = unloaded.refusal;
+                            }
+                        }
+                    }
+                }
+            }
+            return new Preview(pl, refusal, columns);
+        }
+
         // --- the plan ------------------------------------------------------------------------------------------------
 
         Result plan(boolean reshape) {
@@ -997,8 +1097,8 @@ public final class Siting {
             }
             int lo = Math.max(level.getMinBuildHeight(), floor - 48);
             int hi = Math.min(level.getMaxBuildHeight() - 1, floor + 64);
-            buildings = warren.roomCells(level, new BoundingBox(widest.x0() - 1, lo, widest.z0() - 1, widest.x0() + widest.w(), hi,
-                    widest.z0() + widest.h()), box);
+            BoundingBox near = new BoundingBox(widest.x0() - 1, lo, widest.z0() - 1, widest.x0() + widest.w(), hi, widest.z0() + widest.h());
+            buildings = level instanceof ServerLevel server ? warren.roomCells(server, near, box) : new LongOpenHashSet();
             long[] trees = sitePad();
             besidePad();
             sealPockets();

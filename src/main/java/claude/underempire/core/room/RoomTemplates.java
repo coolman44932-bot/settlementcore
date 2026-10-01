@@ -2,6 +2,8 @@ package claude.underempire.core.room;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.HolderGetter;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -12,11 +14,18 @@ import net.minecraft.nbt.Tag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.packs.resources.Resource;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
+import net.neoforged.fml.ModList;
+import net.neoforged.neoforgespi.language.IModFileInfo;
 import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
+import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -24,6 +33,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Loads room templates (data/underempire/structure/room/&lt;id&gt;.nbt) straight from the server's
@@ -41,8 +51,52 @@ public final class RoomTemplates {
     /** The ids {@link #put} was given: a hand-built room's, which survive {@link #clear} (the room stays registered). */
     private static final Set<String> HAND = new HashSet<>();
 
+    /** What a client has read ({@link #lookup}): a render thread's own, apart from the server's {@link #CACHE}. */
+    private static final Map<String, List<Entry>> CLIENT_CACHE = new ConcurrentHashMap<>();
+
     public static List<Entry> get(ServerLevel level, String id) {
         return CACHE.computeIfAbsent(id, k -> load(level, k));
+    }
+
+    /**
+     * A room's template for a reader that may be a client's (Siting#preview): a server's level reads it as {@link #get} does, from the
+     * server's resources; any other level reads it from the jar of the mod that registered the room, which a client has as well
+     * ({@code data/<namespace>/structure/room/<id>.nbt}: a mod's data folder is not in a client's resource manager, and a dedicated
+     * server's resources are not the client's). Empty when it is nowhere to be found, and then not remembered.
+     */
+    public static List<Entry> lookup(Level level, String id) {
+        if (level instanceof ServerLevel server) {
+            return get(server, id);
+        }
+        List<Entry> held = CLIENT_CACHE.get(id);
+        if (held != null) {
+            return held;
+        }
+        List<Entry> read = readFromMods(id);
+        if (!read.isEmpty()) {
+            CLIENT_CACHE.put(id, read);
+        }
+        return read;
+    }
+
+    /** The template of {@code id} from the data folder of the mod jar that registered the room, or empty. */
+    public static List<Entry> readFromMods(String id) {
+        for (String ns : Rooms.namespacesFor(id)) {
+            IModFileInfo mod = ModList.get().getModFileById(ns);
+            if (mod == null) {
+                continue;
+            }
+            Path path = mod.getFile().findResource("data", ns, "structure", "room", id + ".nbt");
+            if (!Files.isRegularFile(path)) {
+                continue;
+            }
+            try (InputStream in = Files.newInputStream(path)) {
+                return entries(in, BuiltInRegistries.BLOCK.asLookup());
+            } catch (Exception e) {
+                LOG.error("Under-Empire: failed to read room template {} from the mod {}", id, ns, e);
+            }
+        }
+        return List.of();
     }
 
     /** Whether the template of {@code id} is in hand (read, or given by {@link #put}), until {@link #clear} or {@link #forget}. */
@@ -52,6 +106,7 @@ public final class RoomTemplates {
 
     public static void clear() {
         CACHE.clear();
+        CLIENT_CACHE.clear();
         PRINTS.clear();
     }
 
@@ -61,6 +116,7 @@ public final class RoomTemplates {
      */
     public static void forget(String id) {
         CACHE.remove(id);
+        CLIENT_CACHE.remove(id);
         PRINTS.remove(id);
     }
 
@@ -114,21 +170,28 @@ public final class RoomTemplates {
             return out;
         }
         try (InputStream in = res.get().open()) {
-            CompoundTag root = NbtIo.readCompressed(in, NbtAccounter.unlimitedHeap());
-            ListTag palette = root.getList("palette", Tag.TAG_COMPOUND);
-            BlockState[] states = new BlockState[palette.size()];
-            for (int i = 0; i < palette.size(); i++) {
-                states[i] = NbtUtils.readBlockState(level.holderLookup(Registries.BLOCK), palette.getCompound(i));
-            }
-            ListTag blocks = root.getList("blocks", Tag.TAG_COMPOUND);
-            for (int i = 0; i < blocks.size(); i++) {
-                CompoundTag b = blocks.getCompound(i);
-                ListTag pos = b.getList("pos", Tag.TAG_INT);
-                BlockPos p = new BlockPos(pos.getInt(0), pos.getInt(1), pos.getInt(2));
-                out.add(new Entry(p, states[b.getInt("state")], b.contains("nbt") ? b.getCompound("nbt") : null));
-            }
+            out.addAll(entries(in, level.holderLookup(Registries.BLOCK)));
         } catch (Exception e) {
             LOG.error("Under-Empire: failed to read room template {}", loc, e);
+        }
+        return out;
+    }
+
+    /** A template file's cells, air and all, with their block states looked up in {@code blocks}. */
+    private static List<Entry> entries(InputStream in, HolderGetter<Block> blocks) throws IOException {
+        List<Entry> out = new ArrayList<>();
+        CompoundTag root = NbtIo.readCompressed(in, NbtAccounter.unlimitedHeap());
+        ListTag palette = root.getList("palette", Tag.TAG_COMPOUND);
+        BlockState[] states = new BlockState[palette.size()];
+        for (int i = 0; i < palette.size(); i++) {
+            states[i] = NbtUtils.readBlockState(blocks, palette.getCompound(i));
+        }
+        ListTag cells = root.getList("blocks", Tag.TAG_COMPOUND);
+        for (int i = 0; i < cells.size(); i++) {
+            CompoundTag b = cells.getCompound(i);
+            ListTag pos = b.getList("pos", Tag.TAG_INT);
+            BlockPos p = new BlockPos(pos.getInt(0), pos.getInt(1), pos.getInt(2));
+            out.add(new Entry(p, states[b.getInt("state")], b.contains("nbt") ? b.getCompound("nbt") : null));
         }
         return out;
     }
