@@ -175,14 +175,18 @@ public final class Ration {
             return;
         }
         points[Math.max(0, Math.min(points.length - 1, grade))] += n;
-        road.log(from, HaulLog.LARDER, n);
+        if (!from.isEmpty()) {
+            road.log(from, HaulLog.LARDER, n);
+        }
         changed.run();
     }
 
-    /** Food spent on {@code on} (the haul log's road). Returns how much there was to spend. */
+    /** Food spent on {@code on} (the haul log's road; "" is not logged). Returns how much there was to spend. */
     public int spendFood(int n, String on) {
         int spent = spendFood(n);
-        road.log(HaulLog.LARDER, on, spent);
+        if (!on.isEmpty()) {
+            road.log(HaulLog.LARDER, on, spent);
+        }
         return spent;
     }
 

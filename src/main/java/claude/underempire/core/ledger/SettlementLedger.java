@@ -342,14 +342,14 @@ public final class SettlementLedger {
     /**
      * Into the clan's hoard: warpstone shards and blocks into the Heart's warpstone hoard, the rest sorted into the Clan
      * Hoard, then into the Warlord's own chests in the warren, then onto the Heart's spoils pile. Returns what would not go.
-     * Currency goes in by what it is worth ({@link Currencies#worth}), in whole units only: of 20 gold nuggets, nine to the ingot,
-     * 18 go in as 2 and the 2 over are given back.
+     * Currency goes in by what it is worth to this settlement ({@link Currencies#worth}: its own currency, not another race's), in
+     * whole units only: of 20 gold nuggets, nine to the ingot, 18 go in as 2 and the 2 over are given back.
      */
     public static ItemStack put(ServerLevel level, Settlement heart, ItemStack stack) {
         if (stack.isEmpty()) {
             return ItemStack.EMPTY;
         }
-        Currencies.Worth worth = Currencies.worth(stack);
+        Currencies.Worth worth = Currencies.worth(heart, stack);
         if (worth != null) {
             int units = worth.unitsOf(stack.getCount());
             if (units > 0) {

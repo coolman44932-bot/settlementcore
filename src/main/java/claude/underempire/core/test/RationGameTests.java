@@ -4,15 +4,21 @@ import claude.underempire.core.Core;
 import claude.underempire.core.food.Fare;
 import claude.underempire.core.food.Larder;
 import claude.underempire.core.ledger.HaulLog;
+import claude.underempire.core.settlement.Building;
 import claude.underempire.core.settlement.Famine;
 import claude.underempire.core.settlement.Ration;
 import claude.underempire.core.settlement.Settlement;
 import claude.underempire.core.work.Works;
+import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BarrelBlockEntity;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
@@ -252,6 +258,108 @@ public class RationGameTests {
         plain.is("works", works).is("peopleCount", 2).is("reserve", 3);
         h.assertTrue(plain.settlement().famine() == Famine.NONE && plain.settlement().population() == 5 + works.crewCount(),
                 "a settlement naming no policy has " + plain.settlement().famine() + " and a population of " + plain.settlement().population() + ", not none and 5");
+        h.succeed();
+    }
+
+    private static int sum(int[] points) {
+        return Arrays.stream(points).sum();
+    }
+
+    /**
+     * A pantry over a larder reads the larder on the level it is asked for, each time it is asked: a barrel of 3 bread in a larder room is
+     * edible food and nothing held back, one drawn is a bread (its points the meal's, and the barrel 2 the poorer), and the next
+     * count is that much less; with no level yet (null) it holds nothing, has nothing to draw and never asks the larder (a larder
+     * that fails any question it is asked is not asked), and once the level is there it reads it.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void aPantryOverALarderReadsItOnItsLevelAndHasNothingWithNone(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        BlockPos at = h.absolutePos(new BlockPos(2, 3, 2));
+        level.setBlock(at, Blocks.BARREL.defaultBlockState(), 3);
+        BarrelBlockEntity barrel = (BarrelBlockEntity) level.getBlockEntity(at);
+        barrel.setItem(0, new ItemStack(Items.BREAD, 3));
+        Building room = new Building("a_larder_room", new BoundingBox(at).inflatedBy(1));
+        Works[] works = new Works[1];
+        Settlement home = new StubSettlement().answer("buildings", a -> List.of(room)).is("larderRoom", true).answer("works", a -> works[0])
+                .answer("foodValue", a -> a[0]).settlement();
+        works[0] = new Works(home);
+        Larder larder = new Larder(home);
+
+        Ration.Pantry pantry = Ration.Pantry.of(larder, () -> level);
+        int before = sum(pantry.edible());
+        h.assertTrue(before > 0 && before == larder.food(level) && sum(pantry.held()) == 0 && pantry.edible().length == Fare.GRADES.length,
+                "a barrel of 3 bread was " + Arrays.toString(pantry.edible()) + " edible and " + Arrays.toString(pantry.held()) + " held back, the larder's " + larder.food(level));
+        Larder.Meal meal = pantry.draw();
+        h.assertTrue(meal != null && meal.item() == Items.BREAD && meal.points() > 0 && barrel.getItem(0).getCount() == 2,
+                "a draw gave " + meal + " and left " + barrel.getItem(0) + " in the barrel, not a bread and 2");
+        h.assertTrue(sum(pantry.edible()) == before - meal.points(), "after the draw it holds " + sum(pantry.edible()) + ", not " + before + " less the meal's " + meal.points());
+
+        Larder untouched = new Larder(new StubSettlement().settlement());
+        Ration.Pantry none = Ration.Pantry.of(untouched, () -> null);
+        h.assertTrue(none.edible().length == Fare.GRADES.length && none.held().length == Fare.GRADES.length && sum(none.edible()) == 0 && sum(none.held()) == 0 && none.draw() == null,
+                "a pantry with no level held " + Arrays.toString(none.edible()) + " and " + Arrays.toString(none.held()));
+        ServerLevel[] later = {null};
+        Ration.Pantry late = Ration.Pantry.of(larder, () -> later[0]);
+        h.assertTrue(sum(late.edible()) == 0 && late.draw() == null, "a pantry asked before its level was there held something");
+        later[0] = level;
+        h.assertTrue(sum(late.edible()) > 0, "a pantry whose level came held nothing");
+        level.setBlock(at, Blocks.AIR.defaultBlockState(), 3);
+        h.succeed();
+    }
+
+    /**
+     * What is owed is not spent by owing: 0.4 three times is 1.2 owed and the ration is whole (10 raw stays 10) and nothing is saved
+     * or logged; the people eat it a whole point at a time ({@code eat}), one spent on the eaten road and 0.2 owed over, and 2.5 more
+     * is owed to two more points and a half over.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void aRationOwesWhatItIsToldAndEatsItAWholePointAtATime(GameTestHelper h) {
+        Table t = new Table(new Pantry(), 0, 10, 0, 0, 0);
+        t.ration.owe(0.4f);
+        t.ration.owe(0.4f);
+        t.ration.owe(0.4f);
+        h.assertTrue(Math.abs(t.ration.hunger() - 1.2f) < 1e-4f && t.ration.inRation() == 10 && t.roads.isEmpty() && t.saves == 0,
+                "1.2 owed left hunger " + t.ration.hunger() + ", the ration " + t.ration.inRation() + ", roads " + t.roads + ", saves " + t.saves);
+        t.ration.eat(0f);
+        h.assertTrue(t.ration.inRation() == 9 && Math.abs(t.ration.hunger() - 0.2f) < 1e-4f && t.roads.equals(List.of(HaulLog.LARDER + ">" + HaulLog.EATEN + ":1")),
+                "eating 1.2 spent to " + t.ration.inRation() + " with " + t.ration.hunger() + " owed, roads " + t.roads + ", not 9, 0.2 and one on the eaten road");
+        t.ration.owe(2.5f);
+        t.ration.eat(0f);
+        h.assertTrue(t.ration.inRation() == 7 && Math.abs(t.ration.hunger() - 0.7f) < 1e-4f, "eating 2.7 more spent to " + t.ration.inRation() + " with " + t.ration.hunger() + " owed, not 7 and 0.7");
+        h.succeed();
+    }
+
+    /**
+     * Food of none or less is a spend of that much, whatever grade it is given: -7 of 5 in each grade takes the 5 slop and 2 of the
+     * raw (the worst first), logs nothing and saves once; zero spends nothing and saves nothing.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void foodOfNoneOrLessIsASpendOfThatMuchWhateverGradeItIsGiven(GameTestHelper h) {
+        Table t = new Table(new Pantry(), 5, 5, 5, 5, 5);
+        t.ration.addFood(-7, Fare.GORGE_GRADE, "Hunting");
+        h.assertTrue(Arrays.equals(t.ration.grades(), new int[]{0, 3, 5, 5, 5}) && t.roads.isEmpty() && t.saves == 1,
+                "-7 of 5 in each grade left " + Arrays.toString(t.ration.grades()) + ", roads " + t.roads + ", saves " + t.saves + ", not 0, 3, 5, 5, 5 with nothing logged and one save");
+        t.ration.addFood(0, Fare.RAW, "Hunting");
+        h.assertTrue(Arrays.equals(t.ration.grades(), new int[]{0, 3, 5, 5, 5}) && t.roads.isEmpty() && t.saves == 1, "0 changed the ration, logged or saved: " + Arrays.toString(t.ration.grades()) + ", saves " + t.saves);
+        h.succeed();
+    }
+
+    /**
+     * A grade outside the five is clamped to the nearest: 99 is gorge and -7 slop; food comes in on the road it names, and a road of
+     * "" is no road, in or out, logging nothing though the food moves and is saved: 3 gorge "Feasting", 2 slop "Scraps", 4 cooked from "",
+     * then 2 spent on "" (the slop, the worst grade) leave 4 cooked and 3 gorge, with the two named roads logged and four saves.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void aGradeIsClampedAndAnEmptyRoadIsNoRoad(GameTestHelper h) {
+        Table t = new Table(new Pantry(), 0, 0, 0, 0, 0);
+        t.ration.addFood(3, 99, "Feasting");
+        t.ration.addFood(2, -7, "Scraps");
+        t.ration.addFood(4, Fare.COOKED, "");
+        h.assertTrue(Arrays.equals(t.ration.grades(), new int[]{2, 0, 4, 0, 3}), "grade 99, -7 and cooked came in as " + Arrays.toString(t.ration.grades()) + ", not 2, 0, 4, 0, 3");
+        int spent = t.ration.spendFood(2, "");
+        h.assertTrue(spent == 2 && Arrays.equals(t.ration.grades(), new int[]{0, 0, 4, 0, 3}), "2 spent on no road left " + Arrays.toString(t.ration.grades()) + " (spent " + spent + ")");
+        h.assertTrue(t.roads.equals(List.of("Feasting>" + HaulLog.LARDER + ":3", "Scraps>" + HaulLog.LARDER + ":2")) && t.saves == 4,
+                "the roads were " + t.roads + " and the saves " + t.saves + ", not the two named roads and 4 saves");
         h.succeed();
     }
 }

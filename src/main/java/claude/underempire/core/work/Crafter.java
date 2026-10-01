@@ -1,6 +1,5 @@
 package claude.underempire.core.work;
 
-import claude.underempire.core.settlement.Currencies;
 import claude.underempire.core.settlement.Settlement;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.NonNullList;
@@ -368,7 +367,7 @@ public final class Crafter {
                         fromHoard.merge(got.getItem(), 1, Integer::sum);
                     }
                 }
-                if (got.isEmpty() && Currencies.unit(want) && heart.currency() > 0 && heart.spendCurrency(1, by)) {
+                if (got.isEmpty() && want.is(heart.currencyItem()) && heart.currency() > 0 && heart.spendCurrency(1, by)) {
                     got = new ItemStack(heart.currencyItem());
                     shards++;
                 }
@@ -428,7 +427,7 @@ public final class Crafter {
             if (s.isEmpty()) {
                 continue;
             }
-            if (owed > 0 && Currencies.unit(s)) {
+            if (owed > 0 && s.is(heart.currencyItem())) {
                 int n = Math.min(owed, s.getCount());
                 owed -= n;
                 s = s.copyWithCount(s.getCount() - n);

@@ -16,8 +16,9 @@ import java.util.function.Supplier;
  * (Under-Empire: warpstone shards, blocks, refined warpstone and warpstone ore); resolved lazily, so a race registers its
  * items before the registries fill.
  *
- * <p>What a thing is worth in it is {@link #worth}: the unit is one, the block nine, and a race may count more things in
- * ({@link #alsoWorth}: gold nuggets, nine to the ingot).
+ * <p>What a thing is worth in a settlement's currency is {@link #worth}: its unit is one, its block nine, and a race may count more
+ * things in ({@link #alsoWorth}: gold nuggets, nine to the ingot). It is asked of a settlement, and answers for that settlement's own
+ * currency only: two races' currencies can be registered at once, and shards put into a gold settlement's ledger are not gold.
  */
 public final class Currencies {
 
@@ -48,7 +49,7 @@ public final class Currencies {
         }
     }
 
-    private record Also(Supplier<? extends Item> item, Worth worth) {
+    private record Also(Supplier<? extends Item> unit, Supplier<? extends Item> item, Worth worth) {
     }
 
     private static final Worth UNIT = new Worth(1, 1);
@@ -67,27 +68,30 @@ public final class Currencies {
     }
 
     /**
-     * Another thing counted in a currency: {@code per} of {@code item} are worth {@code units} (a race with gold ingots for its unit
-     * counts nuggets as 1 per 9). The unit and the block are worth what they always were whatever is said here.
+     * Another thing counted in the currency whose unit is {@code unit}: {@code per} of {@code item} are worth {@code units} (a race
+     * with gold ingots for its unit counts nuggets as 1 per 9). Only a settlement whose own currency item is that unit counts it. The
+     * unit and the block are worth what they always were whatever is said here.
      */
-    public static synchronized void alsoWorth(Supplier<? extends Item> item, int units, int per) {
-        ALSO.add(new Also(item, new Worth(units, per)));
+    public static synchronized void alsoWorth(Supplier<? extends Item> unit, Supplier<? extends Item> item, int units, int per) {
+        ALSO.add(new Also(unit, item, new Worth(units, per)));
     }
 
     /**
-     * What {@code s} is worth in some race's currency, or null if it is none of it: the unit (1 per 1), the block (9 per 1), then
-     * what a race counted in with {@link #alsoWorth}.
+     * What {@code s} is worth in {@code settlement}'s own currency, or null if it is none of it: its unit
+     * ({@link Settlement#currencyItem}, 1 per 1), its block ({@link Settlement#currencyBlock}, 9 per 1), then what a race counted in
+     * beside that unit with {@link #alsoWorth}. Another race's currency is worth nothing here, registered or not.
      */
     @Nullable
-    public static Worth worth(ItemStack s) {
-        if (unit(s)) {
+    public static Worth worth(Settlement settlement, ItemStack s) {
+        Item unit = settlement.currencyItem();
+        if (s.is(unit)) {
             return UNIT;
         }
-        if (block(s)) {
+        if (s.is(settlement.currencyBlock())) {
             return BLOCK;
         }
         for (Also a : ALSO) {
-            if (s.is(a.item().get())) {
+            if (a.unit().get() == unit && s.is(a.item().get())) {
                 return a.worth();
             }
         }
