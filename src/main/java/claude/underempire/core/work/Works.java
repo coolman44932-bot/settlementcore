@@ -693,7 +693,7 @@ public final class Works {
         Siting.Plan plan = (Siting.Plan) sited;
         int cost = free ? 0 : room.cost();
         if (cost > 0 && !heart.spendCurrency(cost, "Raising " + the)) {
-            return cap(the) + " costs " + cost + " of the settlement's currency, and it has " + heart.currency();
+            return cap(the) + " costs " + heart.currencyAmount(cost) + ", and it has " + heart.currency();
         }
         RaiseJob job = new RaiseJob(room.id(), door, pl.facing(), plan, cost);
         job.ensureLoaded(level);

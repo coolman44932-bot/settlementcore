@@ -187,6 +187,20 @@ public interface Settlement extends RoomShoring.Warren {
     @Nullable
     Item refinedCurrency();
 
+    /**
+     * What a line to the player calls its currency, plural ("gold ingots"): "the settlement's currency" until a race names it (a
+     * raise that costs too much says "costs 12 gold ingots, and it has 3").
+     */
+    default String currencyName() {
+        return "the settlement's currency";
+    }
+
+    /** {@code n} of its currency in words: "12 gold ingots", and "12 of the settlement's currency" for the unnamed. */
+    default String currencyAmount(int n) {
+        String name = currencyName();
+        return n + (name.regionMatches(true, 0, "the ", 0, 4) ? " of " : " ") + name;
+    }
+
     // ------------------------------------------------------------------ what its people have done
 
     /** A deed of the settlement's rooms that its race may keep count of (the Skaven: which Great Clans rise). */
