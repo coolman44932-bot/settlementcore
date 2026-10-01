@@ -189,7 +189,7 @@ public final class Muster {
     static List<Mob> intruders(ServerLevel level, Settlement h) {
         Set<Mob> out = new LinkedHashSet<>();
         List<BoundingBox> boxes = new ArrayList<>(h.settlementBoxes());
-        boxes.add(new BoundingBox(h.getBlockPos()).inflatedBy(Settlement.HEART_REACH));
+        boxes.add(new BoundingBox(h.getBlockPos()).inflatedBy(h.reach()));
         for (BoundingBox b : boxes) {
             AABB area = AABB.of(b).inflate(3);
             if (!level.hasChunksAt((int) area.minX, (int) area.minZ, (int) area.maxX, (int) area.maxZ)) {
@@ -227,11 +227,12 @@ public final class Muster {
 
     /**
      * Where a defender comes up: between the foe nearest the Heart and the Heart, a few blocks towards the Heart (a clanrat
-     * a few more, behind the slaves), in the warren, on standable ground under cover, a tunnel's narrow floor before a
-     * room's. Null if there is nowhere.
+     * a few more, behind the slaves), in the warren, on standable ground under cover (unless the settlement
+     * {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders stand in the open), a tunnel's
+     * narrow floor before a room's. Null if there is nowhere. Public for the engine's tests.
      */
     @Nullable
-    static BlockPos cell(ServerLevel level, Settlement h, Mob head, boolean clanrat) {
+    public static BlockPos cell(ServerLevel level, Settlement h, Mob head, boolean clanrat) {
         Vec3 from = head.position();
         Vec3 dir = Vec3.atCenterOf(h.getBlockPos()).subtract(from);
         dir = dir.lengthSqr() < 1 ? new Vec3(1, 0, 0) : dir.normalize();
@@ -243,7 +244,8 @@ public final class Muster {
             for (int dy = 0; dy <= 6; dy++) {
                 for (int s : new int[]{dy, -dy}) {
                     BlockPos q = base.above(s);
-                    if (!level.isLoaded(q) || !h.inSettlement(q) || !SettlerMob.standable(level, q) || SettlerMob.underOpenSky(level, q)) {
+                    if (!level.isLoaded(q) || !h.inSettlement(q) || !SettlerMob.standable(level, q)
+                            || (!h.mustersUnderSky() && SettlerMob.underOpenSky(level, q))) {
                         continue;
                     }
                     if (tight(level, q)) {

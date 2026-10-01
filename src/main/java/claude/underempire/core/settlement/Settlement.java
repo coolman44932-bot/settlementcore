@@ -95,6 +95,23 @@ public interface Settlement extends RoomShoring.Warren {
     /** The boxes of everything it has dug and is digging. */
     List<BoundingBox> settlementBoxes();
 
+    /**
+     * How far round its heart the muster looks for foes besides {@link #settlementBoxes} (a box about the heart this wide
+     * each way): {@link #HEART_REACH}, the Warren Heart's, until a race says. A race that holds open ground may widen it.
+     */
+    default int reach() {
+        return HEART_REACH;
+    }
+
+    /**
+     * Whether its defenders come up and fight out under the open sky (core/defence/Muster). False, as the Warren Heart's: the
+     * muster brings its defenders up only on ground under cover, the tunnels. A surface race says true, and they stand where
+     * they are needed.
+     */
+    default boolean mustersUnderSky() {
+        return false;
+    }
+
     /** What part of the settlement {@code p} is in, for the ledger ("the Clan Hoard", "the tunnels"). */
     String placeOf(BlockPos p);
 
