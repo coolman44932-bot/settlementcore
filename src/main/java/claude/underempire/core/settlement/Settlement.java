@@ -144,6 +144,11 @@ public interface Settlement extends RoomShoring.Warren {
     /** Food points straight into the ration (eaten before anything in the containers). */
     void addFood(int n, int grade, String from);
 
+    /** What it does when it has people and no food (core/settlement/Famine, counted by Ration#second): nothing, until a race says. */
+    default Famine famine() {
+        return Famine.NONE;
+    }
+
     /** The larder: real food in real containers (core/food/Larder). */
     claude.underempire.core.food.Larder larderStores();
 
@@ -223,6 +228,14 @@ public interface Settlement extends RoomShoring.Warren {
     boolean hasPerson(UUID id);
 
     int peopleCount();
+
+    /**
+     * Everyone it counts: its people up and about, its rooms' crews and its reserve. A settlement with none has no one to starve (Ration#second).
+     * The Warren Heart's own count also has the rats teeming about its god.
+     */
+    default int population() {
+        return peopleCount() + works().crewCount() + reserve();
+    }
 
     /** How many settlers can be up at once. */
     int peopleCap();
