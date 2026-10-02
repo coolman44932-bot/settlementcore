@@ -6,7 +6,12 @@ import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.tags.BlockTags;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.pathfinder.PathComputationType;
+import net.minecraft.world.phys.shapes.Shapes;
 import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
@@ -21,7 +26,9 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  * way out, or ground that is not loaded (not seen to be shut in). A flood that runs dry short of that is a sealed hollow. The cells it walks:
  * <ul>
  *   <li>a <b>body space</b>: a cell with room for a settler in it, two high, with nothing in the way but something low enough to step onto
- *   (a slab, a carpet, a layer of snow: half a block or less, and then the cell over the settler's head must be free too);</li>
+ *   (a slab, a carpet, a layer of snow: half a block or less, and then the cell over the settler's head must be free too), or something a
+ *   settler walks through ({@link #passes}: an open door, an open trapdoor, a ladder, a plate against one side of its cell that is full height
+ *   but leaves the way clear; a closed door is a wall, and a rat does not open it);</li>
  *   <li>side to side, or up or down a step of one block (the block under the higher cell no taller than a block: a stair or a full block is
  *   a step, a fence or a wall is not). The roof is not asked for a jump, so a step of a block in a low tunnel counts;</li>
  *   <li>no floor asked to walk over a cell: a cell over a drop is as good as any other to the flood, which carries on over it (a mob steps off
@@ -190,12 +197,30 @@ public final class Footing {
     }
 
     private static boolean free(Level level, BlockPos p) {
-        return level.getBlockState(p).getCollisionShape(level, p).isEmpty();
+        return shape(level, p).isEmpty();
     }
 
     /** How high the collision stands in {@code p} (none: 0; a fence or a wall stands over 1, out of its cell). */
     private static double top(Level level, BlockPos p) {
-        VoxelShape shape = level.getBlockState(p).getCollisionShape(level, p);
+        VoxelShape shape = shape(level, p);
         return shape.isEmpty() ? 0 : shape.max(Direction.Axis.Y);
+    }
+
+    /** What a settler meets in {@code p}: the block's collision, but nothing of a thing it {@link #passes}. */
+    private static VoxelShape shape(Level level, BlockPos p) {
+        BlockState state = level.getBlockState(p);
+        VoxelShape shape = state.getCollisionShape(level, p);
+        return shape.isEmpty() || !passes(state) ? shape : Shapes.empty();
+    }
+
+    /**
+     * Whether a settler walks through {@code state} though it has a collision shape: an open door, an open trapdoor or a ladder (a thin plate
+     * against one side of its cell, full height, so the cell read as a wall: a room whose only way out was an open door was shut in, the review of
+     * 18f90e3). Asked of the block's own say in pathfinding ({@code isPathfindable}: a door and a trapdoor only while open), and of these three
+     * only: a fence or a wall is "pathfindable" too, and is no way through.
+     */
+    private static boolean passes(BlockState state) {
+        return (state.is(BlockTags.DOORS) || state.is(BlockTags.TRAPDOORS) || state.getBlock() instanceof LadderBlock)
+                && state.isPathfindable(PathComputationType.LAND);
     }
 }

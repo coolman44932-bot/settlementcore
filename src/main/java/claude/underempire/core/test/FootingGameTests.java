@@ -8,7 +8,12 @@ import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.DoorBlock;
+import net.minecraft.world.level.block.LadderBlock;
+import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
+import net.minecraft.world.level.block.state.properties.Half;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
@@ -169,6 +174,52 @@ public class FootingGameTests {
             MusterGameTests.clearGround(h, middle);
         }
         h.succeed();
+    }
+
+    /**
+     * A settler walks through an open door, an open trapdoor and a ladder, and not through a closed door or a trapdoor shut over its head: they
+     * have a collision shape as tall as a block (a plate against one side of the cell), and the flood read every one as a wall, so a room whose
+     * only way out was an open door was judged shut in (the review of 18f90e3). A room of 3 by 3 cells (fewer than {@link Footing#LIMIT}) with a way
+     * out in its west wall of two cells high only: an oak door, open, has one (the doorway has the open sky beyond it); the same door closed has none
+     * (rats do not open doors); nor has a trapdoor shut at the head of the doorway (a plate over the cell's top); a ladder and an open trapdoor
+     * in the doorway have one.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aSettlerPassesAnOpenDoorATrapdoorAndALadderButNotAClosedDoor(GameTestHelper h) {
+        BlockPos middle = MusterGameTests.openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            MusterGameTests.hollow(level, at, 3, 3);
+            BlockPos doorway = at.west();                                   // the wall cell in line with the room's first row, and the one over it
+            BlockState door = Blocks.OAK_DOOR.defaultBlockState().setValue(DoorBlock.FACING, Direction.WEST);
+            doorway(level, doorway, door.setValue(DoorBlock.HALF, DoubleBlockHalf.LOWER).setValue(DoorBlock.OPEN, true),
+                    door.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER).setValue(DoorBlock.OPEN, true));
+            h.assertTrue(Footing.escapes(level, at, Footing.LIMIT), "a room of 9 cells with an open door in its wall had no way out");
+            h.assertTrue(Footing.escapes(level, at.offset(2, 0, 2), Footing.LIMIT), "a room of 9 cells with an open door in its wall had no way out from its far corner");
+            doorway(level, doorway, door.setValue(DoorBlock.HALF, DoubleBlockHalf.LOWER), door.setValue(DoorBlock.HALF, DoubleBlockHalf.UPPER));
+            h.assertTrue(!Footing.escapes(level, at, Footing.LIMIT), "a room of 9 cells with its door shut had a way out");
+            BlockState shut = Blocks.OAK_TRAPDOOR.defaultBlockState().setValue(TrapDoorBlock.FACING, Direction.WEST).setValue(TrapDoorBlock.HALF, Half.TOP);
+            doorway(level, doorway, Blocks.AIR.defaultBlockState(), shut);
+            h.assertTrue(!Footing.escapes(level, at, Footing.LIMIT), "a room of 9 cells with a trapdoor shut at the head of its doorway had a way out");
+            BlockState open = Blocks.OAK_TRAPDOOR.defaultBlockState().setValue(TrapDoorBlock.FACING, Direction.WEST).setValue(TrapDoorBlock.OPEN, true);
+            doorway(level, doorway, open, open);
+            h.assertTrue(Footing.escapes(level, at, Footing.LIMIT), "a room of 9 cells with an open trapdoor in its doorway had no way out");
+            BlockState ladder = Blocks.LADDER.defaultBlockState().setValue(LadderBlock.FACING, Direction.EAST);
+            doorway(level, doorway, ladder, ladder);
+            h.assertTrue(Footing.escapes(level, at, Footing.LIMIT), "a room of 9 cells with a ladder in its doorway had no way out");
+            doorway(level, doorway, Blocks.STONE.defaultBlockState(), Blocks.STONE.defaultBlockState());
+            h.assertTrue(!Footing.escapes(level, at, Footing.LIMIT), "a room of 9 cells with its doorway walled up had a way out");
+        } finally {
+            MusterGameTests.clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /** The doorway's two cells, {@code low} in the cell at {@code at} and {@code high} in the one over it. */
+    private static void doorway(ServerLevel level, BlockPos at, BlockState low, BlockState high) {
+        level.setBlock(at, low, 2);
+        level.setBlock(at.above(), high, 2);
     }
 
     /** The four cells about {@code at} set to {@code low}, and (when {@code high} is not null) the four over them to {@code high}, else air. */
