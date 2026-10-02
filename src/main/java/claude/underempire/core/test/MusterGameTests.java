@@ -9,8 +9,10 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Slime;
 import net.minecraft.world.entity.monster.Spider;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
@@ -19,6 +21,7 @@ import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.UUID;
 import java.util.function.Predicate;
@@ -675,5 +678,114 @@ public class MusterGameTests {
             clearGround(h, middle);
         }
         h.succeed();
+    }
+
+    // ------------------------------------------------------------------ foes that hop and climb (the review of 18f90e3, finding 3)
+
+    /** Peaceful discards a slime on its first tick (Slime#shouldDespawnInPeaceful) and the test world is peaceful: the hostile batch runs on Normal. */
+    private static Difficulty was = Difficulty.PEACEFUL;
+    /** The slimes the hostile batch let loose, put down as it ends (a test that failed leaves its slime hopping). */
+    private static final List<Mob> LOOSE = new ArrayList<>();
+
+    @net.minecraft.gametest.framework.BeforeBatch(batch = "musterhostile")
+    public static void hostileBegins(ServerLevel level) {
+        was = level.getServer().getWorldData().getDifficulty();
+        level.getServer().setDifficulty(Difficulty.NORMAL, true);
+    }
+
+    @net.minecraft.gametest.framework.AfterBatch(batch = "musterhostile")
+    public static void hostileEnds(ServerLevel level) {
+        LOOSE.forEach(Mob::discard);
+        LOOSE.clear();
+        level.getServer().setDifficulty(was, true);
+    }
+
+    /** A slime of the smallest size with its AI on, in the hollow at {@code at} (the middle of its 2 by 2 floor), persistent. */
+    private static Slime slimeIn(ServerLevel level, BlockPos at) {
+        Slime slime = EntityType.SLIME.create(level);
+        slime.setSize(1, true);
+        slime.moveTo(at.getX() + 1.0, at.getY(), at.getZ() + 1.0, 0, 0);
+        slime.setPersistenceRequired();
+        level.addFreshEntity(slime);
+        LOOSE.add(slime);
+        return slime;
+    }
+
+    /**
+     * A slime sealed in a pocket is shut in whether it is on the ground or in the air (Muster#shutIn asked whether a foe was on the ground, and a
+     * slime hops: it was in the air a third of the seconds the muster looked, was counted in those, and every one raised the alarm and put the
+     * all-clear back). A slime with its AI on in a sealed pocket of 2 by 2 floor cells, 3 high, for 400 ticks: every tick it is judged shut in, the
+     * muster (asked once a second, 20 times) never sees it nor raises the alarm, and it did hop (airborne some ticks, or the test proves nothing).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 600, batch = "musterhostile")
+    public static void aSlimeHoppingInASealedPocketNeverRaisesTheAlarm(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        ServerLevel level = h.getLevel();
+        BlockPos at = middle.offset(-1, 3, 4);
+        hollow(level, at, 2, 2, 3);
+        Slime slime = slimeIn(level, at);
+        Muster muster = new Muster();
+        Settlement warren = city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement();
+        int[] tick = {0}, airborne = {0};
+        h.startSequence()
+                .thenExecuteFor(400, () -> {
+                    tick[0]++;
+                    boolean up = !slime.onGround();
+                    if (up) {
+                        airborne[0]++;
+                    }
+                    h.assertTrue(slime.isAlive() && slime.getY() < at.getY() + 3, "the slime left its pocket (alive " + slime.isAlive() + ") at " + slime.blockPosition().toShortString());
+                    h.assertTrue(Muster.shutIn(level, slime, new HashMap<>()), "a slime sealed in a pocket was judged to have a way out at tick " + tick[0]
+                            + ", " + (up ? "in the air" : "on the ground") + " at " + slime.blockPosition().toShortString());
+                    if (tick[0] % 20 == 0) {
+                        muster.second(level, warren);
+                        h.assertTrue(!muster.alarmed() && muster.lastSeen == 0, "the alarm was raised for a slime sealed in a pocket at tick " + tick[0]
+                                + ": alarm " + muster.alarmed() + ", seen " + muster.lastSeen + ", " + (up ? "in the air" : "on the ground"));
+                    }
+                })
+                .thenExecute(() -> {
+                    h.assertTrue(airborne[0] > 0, "the slime never left the ground in 400 ticks: its AI did not run, and the test proves nothing");
+                    slime.discard();
+                    clearGround(h, middle);
+                })
+                .thenSucceed();
+    }
+
+    /**
+     * A slime that can be reached is still counted, hopping or not: the same pocket with a wall of it opened (the control) raises the alarm at the first
+     * second, and at every second after in which the slime is still on the plot it is seen, in the air or on the ground.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 600, batch = "musterhostile")
+    public static void aSlimeHoppingInAPocketWithAWayOutStillRaisesTheAlarm(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        ServerLevel level = h.getLevel();
+        BlockPos at = middle.offset(-1, 3, 4);
+        hollow(level, at, 2, 2, 3);
+        level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                      // the control: a way out
+        level.setBlock(at.west().above(), Blocks.AIR.defaultBlockState(), 2);
+        Slime slime = slimeIn(level, at);
+        Muster muster = new Muster();
+        Settlement warren = city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement();
+        int[] tick = {0}, seen = {0};
+        h.startSequence()
+                .thenExecuteFor(400, () -> {
+                    tick[0]++;
+                    if (tick[0] % 20 == 0) {
+                        muster.second(level, warren);
+                        boolean here = slime.isAlive() && near(slime.blockPosition(), middle, HALF - 2);
+                        h.assertTrue(!here || (muster.alarmed() && muster.lastSeen == 1), "the slime on the plot at " + slime.blockPosition().toShortString()
+                                + " (" + (slime.onGround() ? "on the ground" : "in the air") + ") with a way out of its pocket was not counted at tick " + tick[0]
+                                + ": alarm " + muster.alarmed() + ", seen " + muster.lastSeen);
+                        if (here) {
+                            seen[0]++;
+                        }
+                    }
+                })
+                .thenExecute(() -> {
+                    h.assertTrue(seen[0] > 0, "the slime was never seen on the plot in 400 ticks");
+                    slime.discard();
+                    clearGround(h, middle);
+                })
+                .thenSucceed();
     }
 }

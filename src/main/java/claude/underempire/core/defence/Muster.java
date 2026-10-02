@@ -14,12 +14,15 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.FlyingMob;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.NeutralMob;
 import net.minecraft.world.entity.ai.attributes.AttributeInstance;
 import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.ai.control.FlyingMoveControl;
+import net.minecraft.world.entity.ai.navigation.FlyingPathNavigation;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.raid.Raider;
 import net.minecraft.world.level.Level;
@@ -179,21 +182,29 @@ public final class Muster {
     // ------------------------------------------------------------------ what counts as a foe in the warren
 
     /**
-     * Whether {@code m} is a foe shut in: a walker on its feet in a hollow too small for a way out ({@link Footing#escapes}, asked for a body of
-     * its own height), which no rat can come at and none ever sees, so it is not a foe the muster counts. A husk sealed in stone kept the alarm up
-     * for as long as it lived, {@link #perFoe} defenders up for it and no all-clear (aRatGivesUpAFoeItCannotReach). Only a foe that is on the
-     * ground, not riding and not in the water is asked, and only if a body of its height fits where its feet are (not on a stair, say): any other
-     * is counted, as it was. (A hollow of {@link Footing#LIMIT} cells or more is room enough that its foe is counted: the flood asks whether the
-     * foe is in a pocket, not whether the rats can come at it.)
+     * Whether {@code m} is a foe shut in: a walker in a hollow too small for a way out ({@link Footing#escapes}, asked for a body of its own
+     * height), which no rat can come at and none ever sees, so it is not a foe the muster counts. A husk sealed in stone kept the alarm up for as
+     * long as it lived, {@link #perFoe} defenders up for it and no all-clear (aRatGivesUpAFoeItCannotReach). Only a foe that is not riding, not
+     * in the water and not a flier ({@link #flies}) is asked, and only if a body of its height fits where its feet are (not on a stair, say): any
+     * other is counted, as it was. Whether it is on the ground is not asked: a slime sealed in a pocket hops, and a spider climbs, and both are in
+     * the air some of the seconds the muster looks, which counted them and put the all-clear back (the review of 18f90e3); the flood's answer
+     * is the one for every cell of the hollow, so it does not change as the foe moves in it. (A hollow of {@link Footing#LIMIT} cells to stand
+     * in or more is room enough that its foe is counted: the flood asks whether the foe is in a pocket, not whether the rats can come at it.)
      */
-    static boolean shutIn(ServerLevel level, Mob m, Map<Integer, Footing.Known> known) {
-        if (!m.onGround() || m.isPassenger() || m.isNoGravity() || m.isInWaterOrBubble()) {
+    public static boolean shutIn(ServerLevel level, Mob m, Map<Integer, Footing.Known> known) {
+        if (m.isPassenger() || flies(m) || m.isInWaterOrBubble()) {
             return false;
         }
         int height = Math.max(1, (int) Math.ceil(m.getBbHeight() - 0.05));
         BlockPos at = m.blockPosition();
         return Footing.fits(level, at, height)
                 && !Footing.escapes(level, at, Footing.LIMIT, known.computeIfAbsent(height, k -> new Footing.Known()), height);
+    }
+
+    /** A foe that does not walk: one that flies (a ghast, a phantom, a vex, a bee) or has no gravity. It is in no hollow of the ground's. */
+    private static boolean flies(Mob m) {
+        return m.isNoGravity() || m instanceof FlyingMob || m.getMoveControl() instanceof FlyingMoveControl
+                || m.getNavigation() instanceof FlyingPathNavigation;
     }
 
     /** A foe: a monster (not a clan rat) or a raider; not a neutral one that has not been angered. */
