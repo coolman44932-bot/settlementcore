@@ -46,6 +46,42 @@ public class FootingGameTests {
     }
 
     /**
+     * The limit counts the cells a body stands in, not the air over them (the review of 18f90e3: the flood counted every cell it walked, so a tall
+     * hollow reached {@link Footing#LIMIT} on floating layers of air). A sealed hollow of 3 by 3 by 4, 4 by 3 by 3, 2 by 2 by 8 and 1 by 12 by 3 cells
+     * has 24 or more cells of air a body fits in and fewer than 24 to stand in: from a cell on its floor, one in the air over it and the far corner it
+     * has no way out, and with a wall of it opened (the control) it has.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aSealedTallHollowOfFewCellsToStandInHasNoWayOut(GameTestHelper h) {
+        BlockPos middle = MusterGameTests.openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            for (int[] size : MusterGameTests.TALL) {
+                int w = size[0];
+                int d = size[1];
+                int high = size[2];
+                String name = w + " by " + d + " by " + high;
+                MusterGameTests.hollow(level, at, w, d, high);
+                BlockPos far = at.offset(w - 1, 0, d - 1);
+                boolean floor = Footing.escapes(level, at, Footing.LIMIT);
+                boolean air = Footing.escapes(level, at.above(), Footing.LIMIT);
+                boolean corner = Footing.escapes(level, far, Footing.LIMIT);
+                h.assertTrue(!floor && !air && !corner, "a hollow of " + name + " cells, sealed, had a way out from its floor (" + floor + "), from the air over it ("
+                        + air + ") and from its far corner (" + corner + "): " + w * d + " cells to stand in, the limit " + Footing.LIMIT);
+                level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                      // the control: a way out
+                level.setBlock(at.west().above(), Blocks.AIR.defaultBlockState(), 2);
+                h.assertTrue(Footing.escapes(level, at, Footing.LIMIT) && Footing.escapes(level, far, Footing.LIMIT),
+                        "the hollow of " + name + " cells with a wall opened had no way out");
+                MusterGameTests.unhollow(level, at, w, d, high);
+            }
+        } finally {
+            MusterGameTests.clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
      * A cell under the open sky has a way out whatever shuts it in at its sides: the same pocket of one cell has none under a roof, and one
      * under the sky once the roof's cell over it is opened (a pit has no walls to climb, but it is no hollow).
      */

@@ -17,28 +17,34 @@ import net.minecraft.world.phys.shapes.VoxelShape;
  * first rule against it, 8f199d2, refused only a cell of one, and a sealed hollow of two cells or more still passed).
  *
  * <p>{@link #escapes} floods out from a cell over the cells a settler can step into, and gives up when it has found {@link #LIMIT} of them
- * (room enough: it is no pocket), or reached the open sky, or a cell already known to have a way out, or ground that is not loaded (not seen
- * to be shut in). A flood that runs dry short of that is a sealed hollow. The cells it walks:
+ * <b>to stand in</b> (cells with a floor under them: room enough, it is no pocket), or reached the open sky, or a cell already known to have a
+ * way out, or ground that is not loaded (not seen to be shut in). A flood that runs dry short of that is a sealed hollow. The cells it walks:
  * <ul>
  *   <li>a <b>body space</b>: a cell with room for a settler in it, two high, with nothing in the way but something low enough to step onto
  *   (a slab, a carpet, a layer of snow: half a block or less, and then the cell over the settler's head must be free too);</li>
  *   <li>side to side, or up or down a step of one block (the block under the higher cell no taller than a block: a stair or a full block is
  *   a step, a fence or a wall is not). The roof is not asked for a jump, so a step of a block in a low tunnel counts;</li>
- *   <li>no floor asked: a cell over a drop is as good as any other to the flood, which carries on over it (a mob steps off a ledge, and a
- *   passage with a hole in its floor is still a passage). Nor any move up or down in place: a shaft with nothing walkable at its side is one
- *   cell, and the cell at its foot is refused, as it always was.</li>
+ *   <li>no floor asked to walk over a cell: a cell over a drop is as good as any other to the flood, which carries on over it (a mob steps off
+ *   a ledge, and a passage with a hole in its floor is still a passage). Nor any move up or down in place: a shaft with nothing walkable at its
+ *   side is one cell, and the cell at its foot is refused, as it always was.</li>
  * </ul>
+ * But only a cell with a floor under it counts toward the limit ({@link #floored}): a body does not stand in the air over the floor of a tall
+ * hollow, so a sealed hollow of 3 by 3 by 4, of 2 by 2 by 8 or of 1 by 12 by 3 cells (24 or more cells of air a body fits in, and under 24 to
+ * stand in) is no more room than a pocket of two (the review of 18f90e3: the flood counted every cell it walked, floating air layers too).
  * Water and lava have no collision, so they are open space to it, as they were to the check it replaces; {@link SettlerMob#standable} keeps
  * a settler out of the cell itself.
  *
- * <p>The cost is bounded: at most {@link #LIMIT} cells are looked at, each once, and a {@link Known} kept for the length of one pick lets
- * the candidates of that pick share what each fill found (every cell it looked at has the same answer, its way out being the same), so a
- * pick of dozens of cells costs little more than a fill or two.
+ * <p>The cost is bounded: the cells with a floor are walked before the ones without, so a flood in a room looks at little more than
+ * {@link #LIMIT} cells and a flood in a hollow with fewer to stand in at no more than {@link #ROOM} times as many in all, each once, and a
+ * {@link Known} kept for the length of one pick lets the candidates of that pick share what each fill found (every cell it looked at has the
+ * same answer, its way out being the same), so a pick of dozens of cells costs little more than a fill or two.
  */
 public final class Footing {
 
-    /** The cells a flood must find for a place to be room enough: a hollow shut in on every side with fewer is a pocket. */
+    /** The cells to stand in a flood must find for a place to be room enough: a hollow shut in on every side with fewer is a pocket. */
     public static final int LIMIT = 24;
+    /** The cells a flood looks at in all, floorless ones too, per cell of the limit: a void this big is no pocket, whatever its floor. */
+    public static final int ROOM = 8;
     /** The tallest thing a settler walks onto without a jump: a slab, a carpet, up to four layers of snow. */
     private static final double LOW = 0.51;
     /** Under this, a thing underfoot (a carpet) lifts a settler too little to want the cell over its head. */
@@ -78,9 +84,9 @@ public final class Footing {
     }
 
     /**
-     * Whether a settler at {@code pos} has a way out: the cells it can walk to (see the class) number {@code limit} or more, or reach the
-     * open sky, a cell {@code known} to have a way out, or ground that is not loaded. False for a hollow that closes off short of that,
-     * and for a cell no settler fits in. Every cell the flood looks at is told to {@code known}.
+     * Whether a settler at {@code pos} has a way out: the cells it can walk to (see the class) number {@code limit} or more with a floor
+     * under them, or reach the open sky, a cell {@code known} to have a way out, or ground that is not loaded. False for a hollow that closes
+     * off short of that, and for a cell no settler fits in. Every cell the flood looks at is told to {@code known}.
      *
      * <p>{@code height} is how many cells high the body is that walks (a settler's {@link #BODY}, but a foe's own: a spider walks a gap
      * a cell high, a tall foe needs three): the cells it flows over are those {@link #fits} for a body that high.
@@ -97,15 +103,22 @@ public final class Footing {
             return false;
         }
         LongOpenHashSet seen = new LongOpenHashSet();
-        LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
+        LongArrayFIFOQueue floor = new LongArrayFIFOQueue();     // the cells with a floor are walked before the ones without: a room's flood
+        LongArrayFIFOQueue air = new LongArrayFIFOQueue();       // finds its limit along the floor, and not up through the air over it
         seen.add(start);
-        queue.enqueue(start);
+        int standing = 0;                                        // the cells found that a body stands in
+        if (floored(level, pos)) {
+            standing = 1;
+            floor.enqueue(start);
+        } else {
+            air.enqueue(start);
+        }
         boolean out = limit <= 1;
         BlockPos.MutableBlockPos side = new BlockPos.MutableBlockPos();
         BlockPos.MutableBlockPos to = new BlockPos.MutableBlockPos();
         search:
-        while (!out && !queue.isEmpty()) {
-            BlockPos at = BlockPos.of(queue.dequeueLong());
+        while (!out && !(floor.isEmpty() && air.isEmpty())) {
+            BlockPos at = BlockPos.of((floor.isEmpty() ? air : floor).dequeueLong());
             if (SettlerMob.underOpenSky(level, at)) {
                 out = true;
                 break;
@@ -130,11 +143,15 @@ public final class Footing {
                         break search;
                     }
                     seen.add(key);
-                    if (seen.size() >= limit) {
+                    boolean stands = floored(level, to);
+                    if (stands) {
+                        standing++;
+                    }
+                    if (standing >= limit || seen.size() >= limit * ROOM) {
                         out = true;
                         break search;
                     }
-                    queue.enqueue(key);
+                    (stands ? floor : air).enqueue(key);
                 }
             }
         }
@@ -143,6 +160,14 @@ public final class Footing {
             known.said.put(it.nextLong(), out);                 // all one place: each cell has the same way out as the cell the flood began at
         }
         return out;
+    }
+
+    /**
+     * Whether a body in the cell {@code p} (a body space) stands on something: a low thing in the cell itself (a slab, a carpet), or a floor
+     * under it too tall to be a cell of its own (a block, a stair). A cell over a drop, or over a low thing that is a cell of its own, is not.
+     */
+    private static boolean floored(Level level, BlockPos p) {
+        return top(level, p) > 0 || top(level, p.below()) > LOW;
     }
 
     /** Whether a body {@code height} cells high has room at {@code pos}, the cell its feet are in (see the class: a body space). */

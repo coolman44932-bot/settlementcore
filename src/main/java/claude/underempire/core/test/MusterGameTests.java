@@ -352,10 +352,15 @@ public class MusterGameTests {
      * opened is a way out.
      */
     static void hollow(ServerLevel level, BlockPos at, int w, int d) {
+        hollow(level, at, w, d, 2);
+    }
+
+    /** {@link #hollow(ServerLevel, BlockPos, int, int)} {@code high} cells high: a tall one has cells of air a body fits in over the ones it stands in. */
+    static void hollow(ServerLevel level, BlockPos at, int w, int d, int high) {
         for (int dx = -1; dx <= w; dx++) {
-            for (int dy = -1; dy <= 2; dy++) {
+            for (int dy = -1; dy <= high; dy++) {
                 for (int dz = -1; dz <= d; dz++) {
-                    boolean air = dx >= 0 && dx < w && dz >= 0 && dz < d && (dy == 0 || dy == 1);
+                    boolean air = dx >= 0 && dx < w && dz >= 0 && dz < d && dy >= 0 && dy < high;
                     level.setBlock(at.offset(dx, dy, dz), air ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
                 }
             }
@@ -364,14 +369,22 @@ public class MusterGameTests {
 
     /** The block of {@link #hollow} laid at {@code at} for {@code w} by {@code d}, back to air. */
     static void unhollow(ServerLevel level, BlockPos at, int w, int d) {
+        unhollow(level, at, w, d, 2);
+    }
+
+    /** The block of {@link #hollow(ServerLevel, BlockPos, int, int, int)} laid at {@code at} for {@code w} by {@code d} by {@code high}, back to air. */
+    static void unhollow(ServerLevel level, BlockPos at, int w, int d, int high) {
         for (int dx = -1; dx <= w; dx++) {
-            for (int dy = -1; dy <= 2; dy++) {
+            for (int dy = -1; dy <= high; dy++) {
                 for (int dz = -1; dz <= d; dz++) {
                     level.setBlock(at.offset(dx, dy, dz), Blocks.AIR.defaultBlockState(), 2);
                 }
             }
         }
     }
+
+    /** Tall hollows the limit once counted floating air layers in: wide by deep by high, each with fewer than {@link Footing#LIMIT} cells to stand in. */
+    static final int[][] TALL = {{3, 3, 4}, {4, 3, 3}, {2, 2, 8}, {1, 12, 3}};
 
     /** Whether {@code p} is a cell of the floor of the hollow of {@code w} by {@code d} cells that begins at {@code at}. */
     private static boolean in(BlockPos p, BlockPos at, int w, int d) {
@@ -621,6 +634,43 @@ public class MusterGameTests {
             open.second(level, city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement());
             h.assertTrue(open.alarmed() && open.lastSeen == 1, "the spider with a way out of its gap: alarm " + open.alarmed() + ", seen " + open.lastSeen + ", not 1");
             spider.discard();
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * A foe on its feet in a tall hollow shut in on every side raises no alarm, however many cells of air the hollow has over its floor (Footing's
+     * limit counted every cell of air a body fits in, so a sealed hollow of 3 by 3 by 4, 4 by 3 by 3, 2 by 2 by 8 or 1 by 12 by 3 cells, 24 or more
+     * of air and under 24 to stand in, passed as open: the foe was counted, and its alarm raised: the review of 18f90e3). With a wall of the
+     * hollow opened (the control) the same foe is seen and raises it, so the quiet is the rule's doing.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aFoeShutInATallSealedHollowDoesNotRaiseTheAlarm(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            for (int[] size : TALL) {
+                String name = size[0] + " by " + size[1] + " by " + size[2];
+                hollow(level, at, size[0], size[1], size[2]);
+                var foe = foeAt(level, at, true);
+                foe.setOnGround(true);
+                Muster shut = new Muster();
+                shut.second(level, city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement());
+                h.assertTrue(foe.isAlive(), "the foe was removed from the world");
+                h.assertTrue(!shut.alarmed() && shut.lastSeen == 0, "a foe sealed in a hollow of " + name + " cells raised the alarm (" + shut.alarmed()
+                        + "), and was seen " + shut.lastSeen + " times");
+                level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                      // the control: a way out
+                level.setBlock(at.west().above(), Blocks.AIR.defaultBlockState(), 2);
+                Muster open = new Muster();
+                open.second(level, city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement());
+                h.assertTrue(open.alarmed() && open.lastSeen == 1, "the same foe with a way out of its hollow of " + name + ": alarm " + open.alarmed()
+                        + ", seen " + open.lastSeen + ", not 1");
+                foe.discard();
+                unhollow(level, at, size[0], size[1], size[2]);
+            }
         } finally {
             clearGround(h, middle);
         }
