@@ -788,4 +788,40 @@ public class MusterGameTests {
                 })
                 .thenSucceed();
     }
+
+    /**
+     * A foe a Watch-Post saw and that is shut in stone is no foe the muster counts (Muster#second): the post's gong lists a zombie sealed in stone near it
+     * with the rest, and it stayed in the muster's foes for as long as it lived (Jade's count, and the all-clear's tally of the slain when it died). A
+     * hoglin sealed in a hollow of 2 by 1 cells and one in the open, both told to the muster by a post: a second on, it counts the one (and so does the
+     * alarm); with a wall of the hollow opened (the control) the muster counts both.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aFoeShutInStoneThatAPostSawIsNotAmongTheFoesTheMusterCounts(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            hollow(level, at, 2, 1);
+            var shut = foeAt(level, at, true);
+            shut.setOnGround(true);
+            var loose = foeAt(level, middle.offset(10, 0, 0), true);
+            loose.setOnGround(true);
+            Muster muster = new Muster();
+            Settlement warren = city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement();
+            muster.sound(List.of(shut, loose));
+            muster.second(level, warren);
+            h.assertTrue(muster.alarmed() && muster.lastSeen == 1 && muster.foes() == 1, "a post saw a foe in the open and one sealed in stone: the muster counts "
+                    + muster.foes() + " foes (alarm " + muster.alarmed() + ", seen " + muster.lastSeen + "), not 1");
+            level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                      // the control: a way out
+            level.setBlock(at.west().above(), Blocks.AIR.defaultBlockState(), 2);
+            muster.second(level, warren);
+            h.assertTrue(muster.foes() == 2 && muster.lastSeen == 2, "with a way out of its hollow the muster counts " + muster.foes() + " foes (seen "
+                    + muster.lastSeen + "), not 2");
+            shut.discard();
+            loose.discard();
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
 }

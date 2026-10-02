@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -117,6 +118,7 @@ public final class Muster {
         return n;
     }
 
+    /** The foes the alarm is out for (Jade's count): never one shut in ({@link #shutIn}), though a Watch-Post saw it, once a second has judged it. */
     public int foes() {
         return foes.size();
     }
@@ -133,7 +135,7 @@ public final class Muster {
         return risen;
     }
 
-    /** A Watch-Post's gong: foes it saw, in the warren or about it. */
+    /** A Watch-Post's gong: foes it saw, in the warren or about it. The next {@link #second} drops any that is shut in ({@link #shutIn}); a post leaves those out itself. */
     public void sound(List<? extends LivingEntity> seen) {
         for (LivingEntity e : seen) {
             foes.add(e.getUUID());
@@ -149,13 +151,18 @@ public final class Muster {
         List<Mob> in = intruders(level, h);
         in.removeIf(m -> shutIn(level, m, known));
         lastSeen = in.size();
-        for (UUID id : foes) {                                  // the ones a Watch-Post saw, still about the warren
-            if (level.getEntity(id) instanceof Mob m && m.isAlive() && !in.contains(m)
-                    && m.distanceToSqr(Vec3.atCenterOf(h.getBlockPos())) < 96 * 96 && !shutIn(level, m, known)) {
-                in.add(m);
+        Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
+        for (Iterator<UUID> it = foes.iterator(); it.hasNext(); ) {   // the ones a Watch-Post saw, still about the warren
+            if (!(level.getEntity(it.next()) instanceof LivingEntity e) || !e.isAlive()) {
+                it.remove();
+            } else if (e instanceof Mob m && !in.contains(m) && m.distanceToSqr(heart) < 96 * 96) {
+                if (shutIn(level, m, known)) {
+                    it.remove();                                // shut in since it was seen: no foe, nor one slain when it dies (Jade's count, the tally)
+                } else {
+                    in.add(m);
+                }
             }
         }
-        foes.removeIf(id -> !(level.getEntity(id) instanceof LivingEntity e) || !e.isAlive());
         if (!in.isEmpty()) {
             if (!alarmed) {
                 raise(level, h, in);
