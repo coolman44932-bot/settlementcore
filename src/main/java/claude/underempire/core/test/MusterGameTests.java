@@ -3,12 +3,14 @@ package claude.underempire.core.test;
 import claude.underempire.core.Core;
 import claude.underempire.core.defence.Muster;
 import claude.underempire.core.settlement.Settlement;
+import claude.underempire.core.unit.Footing;
 import claude.underempire.core.unit.SettlerMob;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -18,6 +20,7 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
+import java.util.function.Predicate;
 
 /**
  * The muster in the open (core/defence/Muster, docs/plans/greatplan-first-spawning.md section B item 4): a settlement that says
@@ -35,7 +38,7 @@ public class MusterGameTests {
     private static final int HALF = 20;
 
     /** A plot of open grass, nothing over it up to the build limit. Returns the cell to stand in at its middle. */
-    private static BlockPos openGround(GameTestHelper h) {
+    static BlockPos openGround(GameTestHelper h) {
         ServerLevel level = h.getLevel();
         BlockPos a = h.absolutePos(new BlockPos(0, UP, 0));
         BlockPos b = h.absolutePos(new BlockPos(2 * HALF, UP, 2 * HALF));
@@ -59,7 +62,7 @@ public class MusterGameTests {
     }
 
     /** Everything the plot laid, back to air (the next batches' plots start from nothing). */
-    private static void clearGround(GameTestHelper h, BlockPos middle) {
+    static void clearGround(GameTestHelper h, BlockPos middle) {
         ServerLevel level = h.getLevel();
         BlockState air = Blocks.AIR.defaultBlockState();
         BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
@@ -294,12 +297,12 @@ public class MusterGameTests {
     }
 
     /**
-     * A defender never comes up in a cell shut in on every side (Muster#opens). A foe sealed in a stone cell made the tightest "tunnel"
-     * there is, and the alarm brought defenders up in it, on top of the foe (the Warren Heart's aRatGivesUpAFoeItCannotReach: a husk
-     * shut in stone died in one of its runs in about ninety). The foe stands in the pocket of a stone block, the heart 3 under it and
+     * A defender never comes up in a cell shut in on every side (Footing#escapes, first Muster#opens). A foe sealed in a stone cell made the
+     * tightest "tunnel" there is, and the alarm brought defenders up in it, on top of the foe (the Warren Heart's aRatGivesUpAFoeItCannotReach: a
+     * husk shut in stone died in one of its runs in about ninety). The foe stands in the pocket of a stone block, the heart 3 under it and
      * 4 off as in that test, and the cell is asked for 1500 times, as the alarm asks: none may be the pocket. With a side of it opened
      * (the control) the same asking finds it, so the sealed none is the rule's doing and not the ground's (before the rule: about 2 in
-     * 100 asks of the sealed one too).
+     * 100 asks of the sealed one too). The hollows of more cells, the tunnel, the half blocks and the shaft are the tests that follow.
      */
     @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
     public static void aDefenderNeverComesUpInACellShutInOnEverySide(GameTestHelper h) {
@@ -334,6 +337,184 @@ public class MusterGameTests {
                 }
             }
             h.assertTrue(opened > 0, "the pocket with a way out was never asked for in 1500 asks: the ground gives none a cell, so the sealed none proves nothing");
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    private static final int ASKS = 500;
+
+    /**
+     * A block of stone round a hollow of {@code w} by {@code d} cells, two high, the first of them at {@code at}: a wall one thick all round
+     * it, a floor under and a roof over, and air in the hollow, so a settler stands in each of its cells under cover and shut in. A wall
+     * opened is a way out.
+     */
+    static void hollow(ServerLevel level, BlockPos at, int w, int d) {
+        for (int dx = -1; dx <= w; dx++) {
+            for (int dy = -1; dy <= 2; dy++) {
+                for (int dz = -1; dz <= d; dz++) {
+                    boolean air = dx >= 0 && dx < w && dz >= 0 && dz < d && (dy == 0 || dy == 1);
+                    level.setBlock(at.offset(dx, dy, dz), air ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
+                }
+            }
+        }
+    }
+
+    /** The block of {@link #hollow} laid at {@code at} for {@code w} by {@code d}, back to air. */
+    static void unhollow(ServerLevel level, BlockPos at, int w, int d) {
+        for (int dx = -1; dx <= w; dx++) {
+            for (int dy = -1; dy <= 2; dy++) {
+                for (int dz = -1; dz <= d; dz++) {
+                    level.setBlock(at.offset(dx, dy, dz), Blocks.AIR.defaultBlockState(), 2);
+                }
+            }
+        }
+    }
+
+    /** Whether {@code p} is a cell of the floor of the hollow of {@code w} by {@code d} cells that begins at {@code at}. */
+    private static boolean in(BlockPos p, BlockPos at, int w, int d) {
+        return p.getY() == at.getY() && p.getX() >= at.getX() && p.getX() < at.getX() + w && p.getZ() >= at.getZ() && p.getZ() < at.getZ() + d;
+    }
+
+    /**
+     * Of {@code asks} asks of Muster#cell for a worker's cell, as the alarm asks, how many came back a cell that {@code is}: all the asks, or
+     * (with {@code untilOne}) as many as it took to find the first.
+     */
+    private static int asked(ServerLevel level, Settlement city, Mob foe, int asks, boolean untilOne, Predicate<BlockPos> is) {
+        int n = 0;
+        for (int i = 0; i < asks; i++) {
+            BlockPos cell = Muster.cell(level, city, foe, false);
+            if (cell != null && is.test(cell)) {
+                n++;
+                if (untilOne) {
+                    break;
+                }
+            }
+        }
+        return n;
+    }
+
+    /**
+     * A defender never comes up in a hollow shut in on every side, whatever the number of its cells (the first rule, Muster#opens, asked only
+     * for a side with two free cells beyond it, so every hollow of two cells or more passed it: the review of 8f199d2). A sealed hollow of
+     * 2 by 1, 1 by 2, 2 by 2 and 3 by 3 cells, and a tunnel of 6 sealed at both ends, each in a stone block with the foe in its first cell,
+     * the heart under and off to one side as in the test of the pocket of one: the cell is asked for {@link #ASKS} times, and none may be
+     * a cell of it. Then its west wall is opened (the control: the same asking finds a cell of it, so the sealed none is the rule's doing).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aDefenderNeverComesUpInASealedHollowOfSeveralCells(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            Settlement tunnels = city(middle, middle, new ArrayList<>()).settlement();
+            for (int[] size : new int[][]{{2, 1}, {1, 2}, {2, 2}, {3, 3}, {6, 1}}) {
+                int w = size[0];
+                int d = size[1];
+                hollow(level, at, w, d);
+                var foe = foeAt(level, at, false);
+                int sealed = asked(level, tunnels, foe, ASKS, false, c -> in(c, at, w, d));
+                h.assertTrue(sealed == 0, "a defender was to come up " + sealed + " times of " + ASKS + " in a sealed hollow of " + w + " by " + d
+                        + " cells at " + at.toShortString());
+                level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                    // the control: a way out
+                level.setBlock(at.west().above(), Blocks.AIR.defaultBlockState(), 2);
+                int opened = asked(level, tunnels, foe, 4 * ASKS, true, c -> in(c, at, w, d));
+                h.assertTrue(opened > 0, "the hollow of " + w + " by " + d + " with a way out was never asked for in " + 4 * ASKS
+                        + " asks: the ground gives none a cell, so the sealed none proves nothing");
+                unhollow(level, at, w, d);
+            }
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * A tunnel one wide, open at one end, is a place to come up in all the way along it, to the dead end: the way out is the cells of the
+     * tunnel, 8 of them (fewer than {@link Footing#LIMIT}), and then the open air at its end. The foe stands in the blind end, and the cell is
+     * asked for until one comes in the half of the tunnel furthest from the opening.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aDefenderComesUpDeepInATunnelOpenAtOneEnd(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            hollow(level, at, 8, 1);
+            level.setBlock(at.offset(8, 0, 0), Blocks.AIR.defaultBlockState(), 2);               // the far end opened
+            level.setBlock(at.offset(8, 1, 0), Blocks.AIR.defaultBlockState(), 2);
+            var foe = foeAt(level, at, false);
+            Settlement tunnels = city(middle, middle, new ArrayList<>()).settlement();
+            int deep = asked(level, tunnels, foe, 8 * ASKS, true, c -> in(c, at, 4, 1));
+            h.assertTrue(deep > 0, "no defender came up in the blind half of a tunnel open at its far end in " + 8 * ASKS + " asks");
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * A floor cell whose four neighbours are half blocks is a place to come up in: a settler steps up onto a slab, a carpet or a stair, so it
+     * is not shut in (Muster#opens counted every neighbour with a collision shape a wall, and refused it). The cell is on a stone floor under
+     * a stone roof, with a slab to the north, a stair east, a carpet south and a stair west, the foe in it, and asked for until it comes up.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aDefenderComesUpOnAFloorCellRingedBySlabsAndStairs(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            for (int dx = -4; dx <= 4; dx++) {
+                for (int dz = -4; dz <= 4; dz++) {
+                    level.setBlock(at.offset(dx, -1, dz), Blocks.STONE.defaultBlockState(), 2);   // the floor
+                    level.setBlock(at.offset(dx, 3, dz), Blocks.STONE.defaultBlockState(), 2);    // the roof: three clear over the floor, for a settler on a slab
+                }
+            }
+            level.setBlock(at.north(), Blocks.STONE_SLAB.defaultBlockState(), 2);
+            level.setBlock(at.east(), Blocks.STONE_STAIRS.defaultBlockState(), 2);
+            level.setBlock(at.south(), Blocks.WHITE_CARPET.defaultBlockState(), 2);
+            level.setBlock(at.west(), Blocks.STONE_STAIRS.defaultBlockState(), 2);
+            var foe = foeAt(level, at, false);
+            Settlement tunnels = city(middle, middle, new ArrayList<>()).settlement();
+            h.assertTrue(SettlerMob.standable(level, at) && !SettlerMob.underOpenSky(level, at), "the cell ringed by half blocks is not a standable one under cover");
+            int ringed = asked(level, tunnels, foe, 8 * ASKS, true, at::equals);
+            h.assertTrue(ringed > 0, "no defender came up in a floor cell ringed by slabs, stairs and a carpet in " + 8 * ASKS + " asks, at " + at.toShortString());
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * The foot of a shaft is no place to come up in, as before: the cell at the bottom of a shaft one wide, two deeper than the passage that
+     * leaves it near the top for the open air, has nothing walkable at its side and its way out is a climb (only the flood of walkable cells
+     * is asked, so a shaft section is refused, as Muster#opens refused it; the passage's floor is a cell to come up in all the same). Opened
+     * on one side (the control) it is asked for.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aDefenderIsNotBroughtUpAtTheFootOfAShaft(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos foot = middle.offset(-1, 3, 4);
+            for (int dx = -1; dx <= 6; dx++) {
+                for (int dy = -1; dy <= 4; dy++) {
+                    for (int dz = -1; dz <= 1; dz++) {
+                        boolean shaft = dx == 0 && dz == 0 && dy >= 0 && dy <= 3;
+                        boolean passage = dx >= 1 && dz == 0 && (dy == 2 || dy == 3);           // off the top of the shaft, its far end open
+                        level.setBlock(foot.offset(dx, dy, dz), shaft || passage ? Blocks.AIR.defaultBlockState() : Blocks.STONE.defaultBlockState(), 2);
+                    }
+                }
+            }
+            var foe = foeAt(level, foot, false);
+            Settlement tunnels = city(middle, middle, new ArrayList<>()).settlement();
+            int shut = asked(level, tunnels, foe, 2 * ASKS, false, foot::equals);
+            h.assertTrue(shut == 0, "a defender was to come up " + shut + " times of " + 2 * ASKS + " at the foot of a shaft, at " + foot.toShortString());
+            level.setBlock(foot.west(), Blocks.AIR.defaultBlockState(), 2);                       // the control: a way out at its side
+            level.setBlock(foot.west().above(), Blocks.AIR.defaultBlockState(), 2);
+            int opened = asked(level, tunnels, foe, 16 * ASKS, true, foot::equals);
+            h.assertTrue(opened > 0, "the foot of the shaft with a way out at its side was never asked for in " + 16 * ASKS + " asks: the ground gives none a cell");
         } finally {
             clearGround(h, middle);
         }

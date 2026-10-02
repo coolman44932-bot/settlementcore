@@ -1,5 +1,6 @@
 package claude.underempire.core.settlement;
 
+import claude.underempire.core.unit.Footing;
 import claude.underempire.core.unit.SettlerMob;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
@@ -12,7 +13,8 @@ import org.jetbrains.annotations.Nullable;
  * <ul>
  * <li>{@link #add}: more of the reserve, refused past {@link #room()} or without the food, and the food spent through the
  *     settlement's ration;</li>
- * <li>{@link #bringUp}: one out of the reserve as a mob, refused at the settlement's {@code peopleCap};</li>
+ * <li>{@link #bringUp}: one out of the reserve as a mob, refused at the settlement's {@code peopleCap}, and never into a hollow shut in
+ *     on every side ({@link Footing#escapes});</li>
  * <li>{@link #rate} and {@link #scaled}: how fast it breeds, the fare's breeding times the settlement's own multiplier (a pool's
  *     warm water, a Heart's devotion), and a number scaled by it with the fraction rounded up or down at random.</li>
  * </ul>
@@ -91,13 +93,23 @@ public final class Brood {
 
     /**
      * One out of the reserve up as a mob at {@code at}, if the settlement has fewer up than its {@code peopleCap}: null if it is
-     * at its cap, the reserve holds none of the kind, or the race could not make one (the one taken goes back).
+     * at its cap, the reserve holds none of the kind, the race could not make one (the one taken goes back), or {@code at} is a cell a
+     * settler can stand in but a hollow shut in on every side ({@link Footing#escapes}) and there is no cell near it that is not
+     * ({@link Settlement#findStandable}): none is taken from the reserve then. A cell with a way out, or one no settler stands in, is
+     * where the race asked.
      */
     @Nullable
     public SettlerMob bringUp(boolean soldier, BlockPos at) {
         if (settlement.peopleCount() >= settlement.peopleCap()) {
             return null;
         }
-        return settlement.riseFromReserve(level, at, soldier, false);
+        BlockPos up = at;
+        if (level.isLoaded(at) && SettlerMob.standable(level, at) && !Footing.escapes(level, at, Footing.LIMIT)) {
+            up = Settlement.findStandable(level, at);
+            if (!Footing.escapes(level, up, Footing.LIMIT)) {
+                return null;
+            }
+        }
+        return settlement.riseFromReserve(level, up, soldier, false);
     }
 }

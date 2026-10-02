@@ -5,9 +5,12 @@ import claude.underempire.core.food.Fare;
 import claude.underempire.core.settlement.Brood;
 import claude.underempire.core.settlement.Settlement;
 import claude.underempire.core.settlement.Spawning;
+import claude.underempire.core.unit.Footing;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.server.level.ServerLevel;
+import net.minecraft.world.level.block.Blocks;
 import net.neoforged.neoforge.gametest.GameTestHolder;
 import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
@@ -36,6 +39,8 @@ public class SpawningGameTests {
         Fare fare = Fare.PLAIN;
         final List<String> spent = new ArrayList<>();
         final List<String> asked = new ArrayList<>();
+        /** The cells the settlement was asked to raise someone at, in the order asked. */
+        final List<BlockPos> where = new ArrayList<>();
         final Settlement settlement;
 
         City() {
@@ -52,6 +57,7 @@ public class SpawningGameTests {
                     })
                     .answer("riseFromReserve", a -> {
                         asked.add(a[2] + "@" + a[1] + "/" + a[3]);
+                        where.add((BlockPos) a[1]);
                         return null;
                     })
                     .settlement();
@@ -184,6 +190,49 @@ public class SpawningGameTests {
         for (int i = 0; i < 200; i++) {
             int n = c.brood(h, 100, 1.5f).scaled(3);
             h.assertTrue(n == 4 || n == 5, "3 times 1.5 scaled to " + n + ", not 4 or 5");
+        }
+        h.succeed();
+    }
+
+    /**
+     * A brood never brings one up in a hollow shut in on every side (Footing#escapes, Brood#bringUp): asked for a cell of a sealed hollow of
+     * 2 by 2 in a block of stone, it asks the settlement for no cell of it. With no other cell near that has a way out it asks for none,
+     * and none is taken out of the reserve; with a ledge of stone off the block (open to the sky) it asks for a cell of the ledge, the
+     * nearest; and asked for a cell on open ground it asks for that very cell, as ever.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aBroodNeverBringsOneUpInAHollowShutInOnEverySide(GameTestHelper h) {
+        BlockPos middle = MusterGameTests.openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos hollow = middle.offset(-1, 3, 4);
+            MusterGameTests.hollow(level, hollow, 2, 2);
+            City c = new City();
+            Brood brood = c.brood(h, 100, 1f);
+            BlockPos[] cells = {hollow, hollow.east(), hollow.south(), hollow.offset(1, 0, 1)};
+            for (BlockPos cell : cells) {
+                brood.bringUp(false, cell);
+            }
+            h.assertTrue(c.where.isEmpty(), "the brood asked for " + c.where + " with no cell to come up in but those of a hollow shut in on every side");
+            for (int dx = 3; dx <= 5; dx++) {                                    // a ledge of stone off the block's east side, 3 by 3, with open air over it
+                for (int dz = -1; dz <= 1; dz++) {
+                    level.setBlock(hollow.offset(dx, -1, dz), Blocks.STONE.defaultBlockState(), 2);
+                }
+            }
+            for (BlockPos cell : cells) {
+                brood.bringUp(false, cell);
+            }
+            h.assertTrue(c.where.size() == cells.length, "the brood asked for " + c.where.size() + " cells, not " + cells.length + ", with a ledge to come up on");
+            for (BlockPos at : c.where) {
+                h.assertTrue(at.getY() == hollow.getY() && at.getX() >= hollow.getX() + 3 && Math.abs(at.getZ() - hollow.getZ()) <= 1
+                                && Footing.escapes(level, at, Footing.LIMIT),
+                        "the brood asked for " + at.toShortString() + ", not a cell of the ledge off the block");
+            }
+            c.where.clear();
+            brood.bringUp(true, middle);
+            h.assertTrue(c.where.equals(List.of(middle)), "the brood asked for " + c.where + " for a cell on open ground, not " + middle.toShortString());
+        } finally {
+            MusterGameTests.clearGround(h, middle);
         }
         h.succeed();
     }

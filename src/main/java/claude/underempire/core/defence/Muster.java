@@ -1,5 +1,6 @@
 package claude.underempire.core.defence;
 
+import claude.underempire.core.unit.Footing;
 import claude.underempire.core.unit.SettlerMob;
 import claude.underempire.core.settlement.Settlement;
 import claude.underempire.core.Core;
@@ -249,9 +250,10 @@ public final class Muster {
     /**
      * Where a defender comes up: between the foe nearest the Heart and the Heart, a few blocks towards the Heart (a clanrat
      * a few more, behind the slaves), in the warren (or within the settlement's {@link Settlement#reach} of its heart), on standable
-     * ground with a way out ({@link #opens}: never a pocket shut in on every side) under cover (unless the settlement {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders
-     * stand in the open, at the first cell found, there being no tunnel to look on for), a tunnel's narrow floor before a room's.
-     * Null if there is nowhere. Public for the engine's tests.
+     * ground with a way out ({@link Footing#escapes}: never a hollow shut in on every side, of one cell or of many), under cover (unless
+     * the settlement {@link Settlement#mustersUnderSky musters under the sky}: a surface race's defenders stand in the open, at the first
+     * cell found, there being no tunnel to look on for), a tunnel's narrow floor before a room's. The candidates of one ask share what the
+     * ways out found ({@link Footing.Known}). Null if there is nowhere. Public for the engine's tests.
      */
     @Nullable
     public static BlockPos cell(ServerLevel level, Settlement h, Mob head, boolean clanrat) {
@@ -260,6 +262,7 @@ public final class Muster {
         dir = dir.lengthSqr() < 1 ? new Vec3(1, 0, 0) : dir.normalize();
         BoundingBox ring = ring(h);
         boolean sky = h.mustersUnderSky();
+        Footing.Known known = new Footing.Known();
         BlockPos open = null;
         for (int t = 0; t < 48; t++) {
             double d = (clanrat ? 6 : 3) + level.random.nextDouble() * 4 + t / 12.0;
@@ -268,8 +271,8 @@ public final class Muster {
             for (int dy = 0; dy <= 6; dy++) {
                 for (int s : new int[]{dy, -dy}) {
                     BlockPos q = base.above(s);
-                    if (!level.isLoaded(q) || !defends(h, ring, q) || !SettlerMob.standable(level, q) || !opens(level, q)
-                            || (!sky && SettlerMob.underOpenSky(level, q))) {
+                    if (!level.isLoaded(q) || !defends(h, ring, q) || !SettlerMob.standable(level, q)
+                            || (!sky && SettlerMob.underOpenSky(level, q)) || !Footing.escapes(level, q, Footing.LIMIT, known)) {
                         continue;
                     }
                     if (sky || tight(level, q)) {
@@ -285,23 +288,9 @@ public final class Muster {
     }
 
     /**
-     * A way out of {@code q}: a side of it with two free cells a rat can walk into. A cell shut in on every side (a trap's pocket, a
-     * hollow in the rock, a foe sealed in stone) is no tunnel, but {@link #tight} counts it the tightest there is, so a defender came
-     * up in it, on top of the foe shut there (aRatGivesUpAFoeItCannotReach: a husk sealed in a stone cell died in one run in about
-     * ninety).
+     * A tunnel no wider than {@link #TIGHT} across one way or the other, at {@code p}. A cell shut in on every side is the tightest there is,
+     * and why {@link #cell} asks {@link Footing#escapes} of every cell before it asks this.
      */
-    static boolean opens(Level level, BlockPos q) {
-        for (Direction d : Direction.Plane.HORIZONTAL) {
-            BlockPos n = q.relative(d);
-            if (level.getBlockState(n).getCollisionShape(level, n).isEmpty()
-                    && level.getBlockState(n.above()).getCollisionShape(level, n.above()).isEmpty()) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** A tunnel no wider than {@link #TIGHT} across one way or the other, at {@code p}. */
     public static boolean tight(Level level, BlockPos p) {
         return run(level, p, Direction.EAST) + run(level, p, Direction.WEST) + 1 <= TIGHT
                 || run(level, p, Direction.NORTH) + run(level, p, Direction.SOUTH) + 1 <= TIGHT;

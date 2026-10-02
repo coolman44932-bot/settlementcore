@@ -5,6 +5,7 @@ import claude.underempire.core.defence.Muster;
 import claude.underempire.core.food.Fare;
 import claude.underempire.core.room.RoomShoring;
 import claude.underempire.core.room.Rooms;
+import claude.underempire.core.unit.Footing;
 import claude.underempire.core.unit.SettlerMob;
 import claude.underempire.core.work.Works;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
@@ -327,8 +328,13 @@ public interface Settlement extends RoomShoring.Warren {
         return name.regionMatches(true, 0, "the ", 0, 4) ? name : "the " + name;
     }
 
-    /** A cell two high with a solid floor near {@code near} (rings out to 4), or the cell above {@code near}. */
+    /**
+     * A cell two high with a solid floor near {@code near} (rings out to 4), or the cell above {@code near}: one of the nearest at random, and
+     * one with a way out ({@link Footing#escapes}), never a cell of a hollow shut in on every side, as a rat that comes up in one is shut in
+     * with whatever is there. The cell above {@code near}, the last resort, is not asked.
+     */
     static BlockPos findStandable(ServerLevel level, BlockPos near) {
+        Footing.Known known = new Footing.Known();
         for (int r = 1; r < 5; r++) {
             List<BlockPos> ring = new ArrayList<>();
             for (int dy = -2; dy <= 2; dy++) {
@@ -342,8 +348,11 @@ public interface Settlement extends RoomShoring.Warren {
                     }
                 }
             }
-            if (!ring.isEmpty()) {
-                return ring.get(level.random.nextInt(ring.size()));
+            while (!ring.isEmpty()) {
+                BlockPos p = ring.remove(level.random.nextInt(ring.size()));
+                if (Footing.escapes(level, p, Footing.LIMIT, known)) {
+                    return p;
+                }
             }
         }
         return near.above();
