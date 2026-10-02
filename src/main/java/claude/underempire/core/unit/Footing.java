@@ -45,6 +45,8 @@ public final class Footing {
     private static final double FLAT = 0.1;
     /** The tallest the block under a cell may stand for the cell to be a step up from the one beside it: a full block or a stair. */
     private static final double STEP = 1.001;
+    /** How many cells high the body is that a settler needs: every settler is under two blocks tall. */
+    public static final int BODY = 2;
     private static final int[] SIDEWAYS = {0, 1, -1};
 
     private Footing() {
@@ -52,7 +54,8 @@ public final class Footing {
 
     /**
      * What one pick has found out already: which cells have a way out and which are shut in, so the candidates of one pick (Muster.cell,
-     * Settlement.findStandable) share the work. Never kept past the tick the pick is in: it does not watch the world for changes.
+     * Settlement.findStandable) share the work. Never kept past the tick the pick is in: it does not watch the world for changes. It is of
+     * one height of body ({@link #escapes(Level, BlockPos, int, Known, int)}): a body of another height has other ways out.
      */
     public static final class Known {
         private final Long2BooleanOpenHashMap said = new Long2BooleanOpenHashMap();
@@ -69,12 +72,20 @@ public final class Footing {
         return escapes(level, pos, limit, new Known());
     }
 
+    /** {@link #escapes(Level, BlockPos, int, Known, int)} for a settler, a body of {@link #BODY} cells. */
+    public static boolean escapes(Level level, BlockPos pos, int limit, Known known) {
+        return escapes(level, pos, limit, known, BODY);
+    }
+
     /**
      * Whether a settler at {@code pos} has a way out: the cells it can walk to (see the class) number {@code limit} or more, or reach the
      * open sky, a cell {@code known} to have a way out, or ground that is not loaded. False for a hollow that closes off short of that,
      * and for a cell no settler fits in. Every cell the flood looks at is told to {@code known}.
+     *
+     * <p>{@code height} is how many cells high the body is that walks (a settler's {@link #BODY}, but a foe's own: a spider walks a gap
+     * a cell high, a tall foe needs three): the cells it flows over are those {@link #fits} for a body that high.
      */
-    public static boolean escapes(Level level, BlockPos pos, int limit, Known known) {
+    public static boolean escapes(Level level, BlockPos pos, int limit, Known known, int height) {
         long start = pos.asLong();
         if (known.said.containsKey(start)) {
             return known.said.get(start);
@@ -82,7 +93,7 @@ public final class Footing {
         if (!level.isLoaded(pos)) {
             return true;                                         // ground not seen is not ground seen to be shut in (and not to be loaded by asking)
         }
-        if (!body(level, pos)) {
+        if (!body(level, pos, height)) {
             return false;
         }
         LongOpenHashSet seen = new LongOpenHashSet();
@@ -108,7 +119,7 @@ public final class Footing {
                 for (int dy : SIDEWAYS) {
                     to.set(side.getX(), side.getY() + dy, side.getZ());
                     long key = to.asLong();
-                    if (seen.contains(key) || !body(level, to)) {
+                    if (seen.contains(key) || !body(level, to, height)) {
                         continue;
                     }
                     if (dy != 0 && top(level, (dy > 0 ? to : at).below()) > STEP) {
@@ -134,10 +145,23 @@ public final class Footing {
         return out;
     }
 
-    /** A cell with room for a settler in it: nothing in it but a low thing underfoot, nothing over that, and a third cell free if it lifts. */
-    private static boolean body(Level level, BlockPos p) {
+    /** Whether a body {@code height} cells high has room at {@code pos}, the cell its feet are in (see the class: a body space). */
+    public static boolean fits(Level level, BlockPos pos, int height) {
+        return body(level, pos, height);
+    }
+
+    /** A cell with room for a body {@code height} high: nothing in it but a low thing underfoot, nothing over that, and one cell more free if it lifts. */
+    private static boolean body(Level level, BlockPos p, int height) {
         double lift = top(level, p);
-        return lift <= LOW && free(level, p.above()) && (lift <= FLAT || free(level, p.above(2)));
+        if (lift > LOW) {
+            return false;
+        }
+        for (int i = 1; i < height; i++) {
+            if (!free(level, p.above(i))) {
+                return false;
+            }
+        }
+        return lift <= FLAT || free(level, p.above(height));
     }
 
     private static boolean free(Level level, BlockPos p) {

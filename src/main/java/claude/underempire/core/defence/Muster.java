@@ -33,6 +33,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -141,11 +142,13 @@ public final class Muster {
         if (!CoreConfig.muster.getAsBoolean() || h.owner() == null) {
             return;
         }
+        Map<Integer, Footing.Known> known = new HashMap<>();   // what the floods found about the foes, a body height to a Known
         List<Mob> in = intruders(level, h);
+        in.removeIf(m -> shutIn(level, m, known));
         lastSeen = in.size();
         for (UUID id : foes) {                                  // the ones a Watch-Post saw, still about the warren
             if (level.getEntity(id) instanceof Mob m && m.isAlive() && !in.contains(m)
-                    && m.distanceToSqr(Vec3.atCenterOf(h.getBlockPos())) < 96 * 96) {
+                    && m.distanceToSqr(Vec3.atCenterOf(h.getBlockPos())) < 96 * 96 && !shutIn(level, m, known)) {
                 in.add(m);
             }
         }
@@ -174,6 +177,24 @@ public final class Muster {
     }
 
     // ------------------------------------------------------------------ what counts as a foe in the warren
+
+    /**
+     * Whether {@code m} is a foe shut in: a walker on its feet in a hollow too small for a way out ({@link Footing#escapes}, asked for a body of
+     * its own height), which no rat can come at and none ever sees, so it is not a foe the muster counts. A husk sealed in stone kept the alarm up
+     * for as long as it lived, {@link #perFoe} defenders up for it and no all-clear (aRatGivesUpAFoeItCannotReach). Only a foe that is on the
+     * ground, not riding and not in the water is asked, and only if a body of its height fits where its feet are (not on a stair, say): any other
+     * is counted, as it was. (A hollow of {@link Footing#LIMIT} cells or more is room enough that its foe is counted: the flood asks whether the
+     * foe is in a pocket, not whether the rats can come at it.)
+     */
+    static boolean shutIn(ServerLevel level, Mob m, Map<Integer, Footing.Known> known) {
+        if (!m.onGround() || m.isPassenger() || m.isNoGravity() || m.isInWaterOrBubble()) {
+            return false;
+        }
+        int height = Math.max(1, (int) Math.ceil(m.getBbHeight() - 0.05));
+        BlockPos at = m.blockPosition();
+        return Footing.fits(level, at, height)
+                && !Footing.escapes(level, at, Footing.LIMIT, known.computeIfAbsent(height, k -> new Footing.Known()), height);
+    }
 
     /** A foe: a monster (not a clan rat) or a raider; not a neutral one that has not been angered. */
     public static boolean foe(Mob m) {

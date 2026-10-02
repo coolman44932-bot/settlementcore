@@ -11,6 +11,7 @@ import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
+import net.minecraft.world.entity.monster.Spider;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
@@ -515,6 +516,111 @@ public class MusterGameTests {
             level.setBlock(foot.west().above(), Blocks.AIR.defaultBlockState(), 2);
             int opened = asked(level, tunnels, foe, 16 * ASKS, true, foot::equals);
             h.assertTrue(opened > 0, "the foot of the shaft with a way out at its side was never asked for in " + 16 * ASKS + " asks: the ground gives none a cell");
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * The muster counts only the foes with a way out (Muster#shutIn). A foe sealed in stone, which no rat can come at and none sees, kept the alarm up
+     * for as long as it lived, with defenders up for it and no all-clear. A foe on its feet in a sealed hollow of 1 by 1 and of 2 by 2 cells raises no
+     * alarm in a settlement that musters under the sky (before: STEP defenders were asked up on the open ground between it and the heart); the same foe
+     * with a wall of its hollow opened does, so the quiet is the rule's doing.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aFoeShutInStoneDoesNotRaiseTheAlarm(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            for (int[] size : new int[][]{{1, 1}, {2, 2}}) {
+                hollow(level, at, size[0], size[1]);
+                var foe = foeAt(level, at, true);
+                foe.setOnGround(true);
+                List<BlockPos> shutAsked = new ArrayList<>();
+                Muster shut = new Muster();
+                shut.second(level, city(middle, middle, shutAsked).is("mustersUnderSky", true).settlement());
+                h.assertTrue(foe.isAlive(), "the foe was removed from the world");
+                h.assertTrue(!shut.alarmed() && shut.lastSeen == 0 && shutAsked.isEmpty(), "a foe sealed in a hollow of " + size[0] + " by " + size[1]
+                        + " raised the alarm (" + shut.alarmed() + "), was seen " + shut.lastSeen + " times and had " + shutAsked.size() + " defenders asked up");
+                level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                      // the control: a way out
+                level.setBlock(at.west().above(), Blocks.AIR.defaultBlockState(), 2);
+                List<BlockPos> openAsked = new ArrayList<>();
+                Muster open = new Muster();
+                open.second(level, city(middle, middle, openAsked).is("mustersUnderSky", true).settlement());
+                h.assertTrue(open.alarmed() && open.lastSeen == 1 && openAsked.size() == Muster.STEP, "the same foe with a way out of its hollow of " + size[0] + " by "
+                        + size[1] + ": alarm " + open.alarmed() + ", seen " + open.lastSeen + ", " + openAsked.size() + " defenders asked up, not " + Muster.STEP);
+                foe.discard();
+                unhollow(level, at, size[0], size[1]);
+            }
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * The alarm stands down while a foe shut in stone still lives (Muster#shutIn): a foe in the open raises it and is the only one seen, the foe sealed
+     * in the stone block not counted with it (one seen, not two: a defender for each); and when the foe in the open is gone the alarm ends within
+     * ALL_CLEAR seconds, as it would with no foe about, the sealed one living (before: it stood for as long as the sealed foe lived).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void theAlarmStandsDownWhileAFoeShutInStoneStillLives(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            hollow(level, at, 2, 1);
+            var shut = foeAt(level, at, true);
+            shut.setOnGround(true);
+            var loose = foeAt(level, middle.offset(10, 0, 0), true);
+            loose.setOnGround(true);
+            Muster muster = new Muster();
+            Settlement surface = city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement();
+            muster.second(level, surface);
+            h.assertTrue(muster.alarmed() && muster.lastSeen == 1, "the alarm for a foe in the open: " + muster.alarmed() + ", " + muster.lastSeen
+                    + " foes seen, not 1 (the foe sealed in stone is not one)");
+            loose.discard();
+            for (int i = 0; i < Muster.ALL_CLEAR; i++) {
+                muster.second(level, surface);
+            }
+            h.assertTrue(shut.isAlive(), "the foe in the stone was removed from the world");
+            h.assertTrue(!muster.alarmed(), "the alarm was still up " + Muster.ALL_CLEAR + " seconds after the last foe it could be asked up for was gone, a foe sealed in stone alive");
+            shut.discard();
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /**
+     * The flood for a foe is for a body of its own height: a spider (0.9 high) sealed in a gap one cell high, where no settler fits, is shut in, and
+     * raises no alarm; with the wall of the gap opened it does. (A flood for a body two high found no room for it, and counted it.)
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aSmallFoeShutInAGapOneCellHighDoesNotRaiseTheAlarm(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BlockPos at = middle.offset(-1, 3, 4);
+            hollow(level, at, 1, 1);
+            level.setBlock(at.above(), Blocks.STONE.defaultBlockState(), 2);                         // a gap one high
+            Spider spider = EntityType.SPIDER.create(level);
+            spider.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 0, 0);
+            spider.setNoAi(true);
+            spider.setPersistenceRequired();
+            level.addFreshEntity(spider);
+            spider.setOnGround(true);
+            Muster shut = new Muster();
+            shut.second(level, city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement());
+            h.assertTrue(spider.isAlive(), "the spider was removed from the world");
+            h.assertTrue(!shut.alarmed() && shut.lastSeen == 0, "a spider sealed in a gap one high raised the alarm (" + shut.alarmed() + "), seen " + shut.lastSeen + " times");
+            level.setBlock(at.west(), Blocks.AIR.defaultBlockState(), 2);                            // the control: a way out for it
+            Muster open = new Muster();
+            open.second(level, city(middle, middle, new ArrayList<>()).is("mustersUnderSky", true).settlement());
+            h.assertTrue(open.alarmed() && open.lastSeen == 1, "the spider with a way out of its gap: alarm " + open.alarmed() + ", seen " + open.lastSeen + ", not 1");
+            spider.discard();
         } finally {
             clearGround(h, middle);
         }
