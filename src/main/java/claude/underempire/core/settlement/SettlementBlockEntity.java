@@ -97,8 +97,8 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
      */
     public static final int MAX_ROUNDS_PER_SECOND = 4;
     /**
-     * The most spawn progress a saved settlement keeps: an hour of the rooms' clock. A round comes every few seconds to few minutes, so
-     * more is corrupt (or from a settlement whose rounds were far longer); it is read as an hour, and a non-number or a negative one as none.
+     * The most spawn progress a running clock keeps, unless the race's round is longer: an hour of the rooms' clock. A round comes every few
+     * seconds to few minutes, so more is a backlog to drop, not to catch up on ({@link #sane(float, int)}).
      */
     public static final float MAX_SAVED_PROGRESS = 3600f;
 
@@ -264,9 +264,14 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         return progress >= 0f ? Math.min(progress, Math.max(MAX_SAVED_PROGRESS, every)) : 0f;
     }
 
-    /** {@link #sane(float, int)} for a load, which cannot ask the race how long its round is (the level is not set yet): an hour at most. */
-    static float sane(float progress) {
-        return sane(progress, 0);
+    /**
+     * {@code progress} as a load keeps it: none for a negative, an infinite or a non-number, and the rest whole. A load cannot ask the race how
+     * long its round is (the level is not set yet), so it trims nothing: the first second trims it to the round ({@link #sane(float, int)}).
+     * A load that kept an hour at most cost a race whose rounds are longer than an hour up to half a round at every reload (the review of
+     * d21aef0).
+     */
+    static float loaded(float progress) {
+        return Float.isFinite(progress) && progress > 0f ? progress : 0f;
     }
 
     /** What a round of spawning may do now: within {@link #reserveCap}, at {@link #breedingMultiplier}, its food out of the ration. */
@@ -665,6 +670,6 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         for (Tag t : tag.getList("spoils", Tag.TAG_COMPOUND)) {
             ItemStack.parse(registries, t).ifPresent(spoils::add);
         }
-        spawnProgress = sane(tag.getFloat("spawn_progress"));
+        spawnProgress = loaded(tag.getFloat("spawn_progress"));
     }
 }

@@ -412,10 +412,10 @@ public class SettlementBlockEntityGameTests {
     }
 
     /**
-     * A second runs at most {@link SettlementBlockEntity#MAX_ROUNDS_PER_SECOND} rounds of spawning, and a saved progress is clamped on load: a
+     * A second runs at most {@link SettlementBlockEntity#MAX_ROUNDS_PER_SECOND} rounds of spawning, and a saved progress is made sane on load: a
      * progress of a billion, or a clock that was 59 seconds along a round of 60 when the round became 1 second long, makes 4 rounds in its
-     * next second (the backlog is dropped, not caught up on), never a thousand; a billion is kept as an hour, and a negative or a non-number
-     * as none; and the clock still runs a round a second after.
+     * next second (the backlog is dropped, not caught up on), never a thousand; a negative, an infinite or a non-number loads as none, and
+     * the rest whole (its first second trims it to the round); and the clock still runs a round a second after.
      */
     @GameTest(template = "digsite", timeoutTicks = 40, batch = "settlement")
     public static void theSpawnClockRunsAtMostAFewRoundsASecondAndSavesNothingCorrupt(GameTestHelper h) {
@@ -423,7 +423,7 @@ public class SettlementBlockEntityGameTests {
         TestSettlement source = TestSettlement.of(h, new BlockPos(2, 2, 2));
         CompoundTag base = source.saved(level.registryAccess());
         float[] saved = {1e9f, Float.NaN, -5f, Float.POSITIVE_INFINITY, 12.5f};
-        float[] kept = {SettlementBlockEntity.MAX_SAVED_PROGRESS, 0f, 0f, SettlementBlockEntity.MAX_SAVED_PROGRESS, 12.5f};
+        float[] kept = {1e9f, 0f, 0f, 0f, 12.5f};
         for (int i = 0; i < saved.length; i++) {
             CompoundTag tag = base.copy();
             tag.putFloat("spawn_progress", saved[i]);
@@ -454,6 +454,8 @@ public class SettlementBlockEntityGameTests {
         int made = dropped.rounds;
         seconds(h, dropped, 3);
         h.assertTrue(dropped.rounds - made >= 3 && dropped.rounds - made <= 4, "the clock did not come back to a round a second: " + (dropped.rounds - made) + " rounds in 3 seconds more");
+        h.assertTrue(corrupt.saved(level.registryAccess()).getFloat("spawn_progress") <= corrupt.every,
+                "a billion loaded was not trimmed to the round by its first second: " + corrupt.saved(level.registryAccess()).getFloat("spawn_progress"));
         for (TestSettlement t : List.of(source, corrupt, dropped)) {
             t.setRemoved();
         }
@@ -477,6 +479,35 @@ public class SettlementBlockEntityGameTests {
         seconds(h, s, 7);
         h.assertTrue(s.rounds == 2, "15 seconds at a pace of 1000 made " + s.rounds + " rounds of a round of " + s.every + ", not 2");
         s.setRemoved();
+        h.succeed();
+    }
+
+    /**
+     * A reload keeps a long round's progress (the review of d21aef0: the load kept an hour at most): a round of 7200 seconds, 5000 along it, is
+     * saved and loaded at 5000, and at a pace of 1000 a second it comes in its 3rd second, not its 4th (an hour kept would have needed 4).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 40, batch = "settlement")
+    public static void aReloadKeepsALongRoundsProgress(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        TestSettlement s = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        s.every = 2 * (int) SettlementBlockEntity.MAX_SAVED_PROGRESS;
+        s.pace = 1000f;
+        seconds(h, s, 5);
+        h.assertTrue(s.rounds == 0, "5 seconds at a pace of 1000 made " + s.rounds + " rounds of a round of " + s.every);
+        CompoundTag tag = s.saved(level.registryAccess());
+        TestSettlement back = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        back.load(tag, level.registryAccess());
+        back.every = s.every;
+        back.pace = s.pace;
+        float kept = back.saved(level.registryAccess()).getFloat("spawn_progress");
+        h.assertTrue(kept == 5000f, "a round 5000 seconds along was loaded at " + kept + ", not 5000");
+        seconds(h, back, 2);
+        h.assertTrue(back.rounds == 0, "the reloaded round came early: " + back.rounds + " rounds at 7000");
+        seconds(h, back, 1);
+        h.assertTrue(back.rounds == 1, "the reloaded round did not come at 8000: " + back.rounds + " rounds");
+        for (TestSettlement t : List.of(s, back)) {
+            t.setRemoved();
+        }
         h.succeed();
     }
 
