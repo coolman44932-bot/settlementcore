@@ -1230,8 +1230,9 @@ public class RaiseJob extends DigJob {
         int z1 = Math.max(from.getZ(), anchor.getZ()) + r;
         int y0 = Math.min(from.getY(), anchor.getY()) - STAND_UP - 3;
         int y1 = Math.max(from.getY(), anchor.getY()) + STAND_UP + 2;
-        if (x1 - x0 > 40 || z1 - z0 > 40 || !level.isLoaded(from)) {
-            return null;
+        if (x1 - x0 > 40 || z1 - z0 > 40 || !level.isLoaded(from) || !level.isLoaded(from.west()) || !level.isLoaded(from.east())
+                || !level.isLoaded(from.north()) || !level.isLoaded(from.south())) {
+            return null;                                         // far off, or its land (or a neighbour walkStart may step to) not loaded: can't tell
         }
         BlockPos start = walkStart(level, from);
         if (start == null) {
@@ -1294,9 +1295,6 @@ public class RaiseJob extends DigJob {
         if (SettlerMob.standable(level, from)) {
             return from;
         }
-        if (onPartBlock(level, from)) {
-            return from;                                         // on carpet, a slab, a stair, a path: its cell holds what it stands on (the review of a235bf3)
-        }
         BlockPos.MutableBlockPos c = new BlockPos.MutableBlockPos();
         for (int dy = 1; dy <= 3; dy++) {
             c.set(from.getX(), from.getY() - dy, from.getZ());
@@ -1326,15 +1324,6 @@ public class RaiseJob extends DigJob {
             }
         }
         return null;
-    }
-
-    /**
-     * Whether a builder in {@code feet} stands on a part block in its own cell (carpet, a bottom slab, a stair, a path or farmland: a collision box
-     * lower than the cell, with the cells over it free): its feet are above the block's top, in the same cell.
-     */
-    private static boolean onPartBlock(ServerLevel level, BlockPos feet) {
-        net.minecraft.world.phys.shapes.VoxelShape s = level.getBlockState(feet).getCollisionShape(level, feet);
-        return !s.isEmpty() && s.max(net.minecraft.core.Direction.Axis.Y) < 1.0 && free(level, feet.above()) && free(level, feet.above(2));
     }
 
     /** Whether the cells a builder passes stepping off a ledge at {@code y} into the column (x, z) down to its feet at {@code feet} are free. */
