@@ -236,7 +236,7 @@ public final class Muster {
             if (!level.hasChunksAt((int) area.minX, (int) area.minZ, (int) area.maxX, (int) area.maxZ)) {
                 continue;
             }
-            out.addAll(level.getEntitiesOfClass(Mob.class, area, m -> foe(m) && defends(h, ring, m.blockPosition())));
+            out.addAll(level.getEntitiesOfClass(Mob.class, area, m -> foe(m) && holds(h, ring, m.blockPosition())));
         }
         return new ArrayList<>(out);
     }
@@ -257,7 +257,7 @@ public final class Muster {
      * Whether the muster defends {@code p}: it is in the settlement, or within the settlement's {@link Settlement#reach} of its heart ({@code ring}, from
      * {@link #ring}). The one rule for what counts as a foe, where a defender comes up and who takes heart from the fight.
      */
-    static boolean defends(Settlement h, BoundingBox ring, BlockPos p) {
+    static boolean holds(Settlement h, BoundingBox ring, BlockPos p) {
         return h.inSettlement(p) || ring.isInside(p);
     }
 
@@ -310,7 +310,7 @@ public final class Muster {
             for (int dy = 0; dy <= 6; dy++) {
                 for (int s : new int[]{dy, -dy}) {
                     BlockPos q = base.above(s);
-                    if (!level.isLoaded(q) || !defends(h, ring, q) || !SettlerMob.standable(level, q)
+                    if (!level.isLoaded(q) || !holds(h, ring, q) || !SettlerMob.standable(level, q)
                             || (!sky && SettlerMob.underOpenSky(level, q)) || !Footing.escapes(level, q, Footing.LIMIT, known)) {
                         continue;
                     }
@@ -360,7 +360,7 @@ public final class Muster {
                 if (!now.add(r.getUUID())) {
                     continue;
                 }
-                if (!defends(h, ring, r.blockPosition())) {
+                if (!holds(h, ring, r.blockPosition())) {
                     continue;
                 }
                 boolean tunnel = tight(level, r.blockPosition());
