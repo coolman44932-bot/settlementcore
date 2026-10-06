@@ -1193,8 +1193,9 @@ public class RaiseJob extends DigJob {
      * The cells {@code from} (a cell its builder stands in) can be walked to within {@value #WALK_STEPS} steps, each with its number of
      * steps, on the way to a stand near {@code anchor}: a flood over {@link SettlerMob#standable} cells, one step on level ground, up a
      * block (with the cell over its head free) or down as far as 3 (with the way down free), as vanilla's ground paths go, in a box round
-     * both and 6 more, of at most {@value #WALK_CELLS} cells. Null when it can't tell (the builder isn't in a cell one can stand in, or it
-     * is far from the work): then any stand is as good.
+     * both and 6 more, of at most {@value #WALK_CELLS} cells, from where the builder is or lands ({@link #walkStart}). Null when it can't tell
+     * (the builder far from the work, or on land not loaded): then any stand is as good. Empty when the builder has no cell to walk from
+     * (swimming, nothing to stand on round it): it reaches nothing.
      */
     @Nullable
     private static Long2IntOpenHashMap walkable(ServerLevel level, BlockPos from, BlockPos anchor) {
@@ -1293,6 +1294,9 @@ public class RaiseJob extends DigJob {
         if (SettlerMob.standable(level, from)) {
             return from;
         }
+        if (onPartBlock(level, from)) {
+            return from;                                         // on carpet, a slab, a stair, a path: its cell holds what it stands on (the review of a235bf3)
+        }
         BlockPos.MutableBlockPos c = new BlockPos.MutableBlockPos();
         for (int dy = 1; dy <= 3; dy++) {
             c.set(from.getX(), from.getY() - dy, from.getZ());
@@ -1309,17 +1313,28 @@ public class RaiseJob extends DigJob {
         for (Direction d : Direction.Plane.HORIZONTAL) {
             int nx = from.getX() + d.getStepX();
             int nz = from.getZ() + d.getStepZ();
-            for (int dy = 0; dy >= -3; dy--) {
+            for (int dy = 1; dy >= -3; dy--) {                  // up a block (a swimmer at the bank, the head free) or down as far as 3
                 c.set(nx, from.getY() + dy, nz);
                 if (!level.isLoaded(c)) {
                     break;
                 }
-                if (SettlerMob.standable(level, c) && (dy == 0 || fallFree(level, nx, from.getY(), nz, c.getY()))) {
+                boolean way = dy == 0 || (dy > 0 ? free(level, from.above()) && free(level, from.above(2))   // a step up: its head free
+                        : fallFree(level, nx, from.getY(), nz, c.getY()));                                     // a drop: the way down free
+                if (SettlerMob.standable(level, c) && way) {
                     return c.immutable();                        // a drop beside it only as the flood takes one: through free cells (the review of 420b3e0)
                 }
             }
         }
         return null;
+    }
+
+    /**
+     * Whether a builder in {@code feet} stands on a part block in its own cell (carpet, a bottom slab, a stair, a path or farmland: a collision box
+     * lower than the cell, with the cells over it free): its feet are above the block's top, in the same cell.
+     */
+    private static boolean onPartBlock(ServerLevel level, BlockPos feet) {
+        net.minecraft.world.phys.shapes.VoxelShape s = level.getBlockState(feet).getCollisionShape(level, feet);
+        return !s.isEmpty() && s.max(net.minecraft.core.Direction.Axis.Y) < 1.0 && free(level, feet.above()) && free(level, feet.above(2));
     }
 
     /** Whether the cells a builder passes stepping off a ledge at {@code y} into the column (x, z) down to its feet at {@code feet} are free. */

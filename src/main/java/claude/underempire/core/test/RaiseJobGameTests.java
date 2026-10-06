@@ -1057,7 +1057,8 @@ public class RaiseJobGameTests {
     /**
      * A builder swimming in a pool 3 deep, 2 from every shore, has no cell to walk from (the review of 420b3e0: the flood then could not tell,
      * and the stand was the highest cell, said to be walkable): it is told it can't walk to its stand, so the site sends it back to the door. The
-     * control: a builder on the bank is told it can walk to one.
+     * controls: a builder on the bank, one swimming at the bank's edge (a step up beside it), and one on carpet, a slab, a stair or a path (its
+     * feet in the part block's own cell: the review of a235bf3) can each walk to one.
      */
     @GameTest(template = "digsite", timeoutTicks = 100, batch = "raise")
     public static void aSwimmingBuilderIsSentBackToTheDoor(GameTestHelper h) {
@@ -1095,6 +1096,21 @@ public class RaiseJobGameTests {
             RaiseJob.Stand fromPool = job.stand(level, anchor, cells, swimming);
             h.assertTrue(!fromPool.walkable(), "a builder swimming at " + swimming.toShortString() + " is given " + fromPool
                     + ": told it can walk there from water it can't stand in, so it is never sent back to the door");
+            BlockPos atBank = new BlockPos(cx - 2, s.floor, cz);       // swimming at the edge: the bank is a step up beside it
+            RaiseJob.Stand fromEdge = job.stand(level, anchor, cells, atBank);
+            h.assertTrue(fromEdge.walkable(), "a builder swimming at the bank's edge " + atBank.toShortString() + " is given " + fromEdge
+                    + ": it can climb out onto the bank beside it");
+            // on a part block (the review of a235bf3): carpet, a bottom slab, a stair, a path on level ground; each its own column on the bank
+            net.minecraft.world.level.block.state.BlockState[] parts = {Blocks.WHITE_CARPET.defaultBlockState(), Blocks.STONE_SLAB.defaultBlockState(),
+                    Blocks.STONE_BRICK_STAIRS.defaultBlockState(), Blocks.DIRT_PATH.defaultBlockState()};
+            for (int k = 0; k < parts.length; k++) {
+                boolean path = parts[k].is(Blocks.DIRT_PATH);
+                BlockPos on = new BlockPos(cx - 4 - k, path ? s.floor : s.floor + 1, cz + 3);   // a path is set into the ground, the rest on it
+                s.set(on.getX(), on.getY(), on.getZ(), parts[k]);
+                RaiseJob.Stand fromPart = job.stand(level, anchor, cells, on);
+                h.assertTrue(fromPart.walkable(), "a builder on " + parts[k].getBlock().getName().getString() + " at " + on.toShortString() + " is given " + fromPart
+                        + ": standing on a part block of its own cell, it can walk");
+            }
             s.clear();
             h.succeed();
         }));

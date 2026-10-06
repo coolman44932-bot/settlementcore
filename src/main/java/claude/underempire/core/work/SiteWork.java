@@ -384,8 +384,11 @@ public final class SiteWork extends RoomWork {
         UUID id = rat.getUUID();
         long now = level.getGameTime();
         Long was = sentAt.get(id);
+        if (was != null && now - was < LEG_WINDOW) {
+            return null;                                         // sent once in the window: before the landing's scan (the review of a235bf3)
+        }
         BlockPos landing = comeUpAt(level);
-        if (landing == null || was != null && now - was < LEG_WINDOW) {
+        if (landing == null) {
             return null;
         }
         job.release(id);
