@@ -187,6 +187,16 @@ public interface Settlement extends RoomShoring.Warren {
         }
     }
 
+    /** How its people's digging is said: "dig", "digging", "dug" (the Warren Heart's "gnaw", "gnawing", "gnawed": an Ore Mine's drifts). */
+    record DigWords(String dig, String digging, String dug) {
+        public static final DigWords ENGINE = new DigWords("dig", "digging", "dug");
+    }
+
+    /** The words of its digging: {@link DigWords#ENGINE} until a race says. */
+    default DigWords digWords() {
+        return DigWords.ENGINE;
+    }
+
     /** The words of the deep levels' lines: {@link DeepWords#ENGINE} until a race says. */
     default DeepWords deepWords() {
         return DeepWords.ENGINE;

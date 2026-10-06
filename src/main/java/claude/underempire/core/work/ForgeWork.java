@@ -262,6 +262,9 @@ public class ForgeWork extends RoomWork {
 
     /** How much more refined warpstone the clan wants: short of its keep, and the Warlord's once-order. */
     public int refineNeed(ServerLevel level) {
+        if (heart.refinedCurrency() == null) {
+            return 0;                                            // a race that refines no currency wants none (it crashed making a stack of nothing)
+        }
         ItemStack r = new ItemStack(heart.refinedCurrency());
         WorkOrders.Order o = heart.works().orders().get(r);
         return keepShort(level, r) + (o == null ? 0 : o.once);
@@ -279,7 +282,7 @@ public class ForgeWork extends RoomWork {
             return 0;
         }
         if (!canRefine(level)) {
-            refineWanting = "a blast furnace and an Ore Bin in the Furnace Chambers";
+            refineWanting = "a blast furnace and an Ore Bin in the " + room().displayName();
             return 0;
         }
         ItemStack r = new ItemStack(heart.refinedCurrency());

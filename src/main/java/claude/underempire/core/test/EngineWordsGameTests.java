@@ -40,7 +40,7 @@ import java.util.regex.Pattern;
 public class EngineWordsGameTests {
 
     /** The words of the races; "settlement", "builders" and "currency" are the engine's. */
-    static final Pattern RACE_WORDS = Pattern.compile("\\b(rats?|warlords?|clans?|clanrats?|warrens?|hordes?|hearts?|warpstone|slaves?|skaven)\\b", Pattern.CASE_INSENSITIVE);
+    static final Pattern RACE_WORDS = Pattern.compile("\\b(rats?|warlords?|clans?|clanrats?|warrens?|hordes?|hearts?|warpstone|slaves?|skaven|gnaw(s|ed|ing)?)\\b", Pattern.CASE_INSENSITIVE);
 
     /** The first race's word in {@code line}, or null. */
     static String raceWordIn(String line) {
@@ -51,7 +51,7 @@ public class EngineWordsGameTests {
     /** The words themselves, on lines that have them and lines that do not (the check can fail). */
     @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
     public static void theCheckFindsAWordOfARaceAndNothingElse(GameTestHelper h) {
-        String[] bad = {"Raise it near its heart", "The warren is attacked!", "the Horde rises", "5 slaves came up", "Clan Hoard: 3 barrels", "paid in warpstone", "a Clanrat", "Skaven work"};
+        String[] bad = {"drifts 40% gnawed", "Raise it near its heart", "The warren is attacked!", "the Horde rises", "5 slaves came up", "Clan Hoard: 3 barrels", "paid in warpstone", "a Clanrat", "Skaven work"};
         String[] good = {"The Test Platform is raised.", "costs 10 of the settlement's currency, and it has 3", "Heartwood and pirates and rate and slavery", "your builders are pulling it down",
                 "is outside the settlement: raise it near its centre, or beside what it has built"};
         for (String line : bad) {
@@ -179,6 +179,55 @@ public class EngineWordsGameTests {
         h.assertTrue(DeepLevels.levelDug(w, "the Test Hall", 1).equals("The Deep Halls beneath the Test Hall are dug out. Go down: the deeper you go, the more of your people you will see.")
                         && DeepLevels.levelDug(w, "the Test Hall", 3).equals("The Deepest Hall (3 down) beneath the Test Hall is dug out. Your people are thickest here."),
                 "the levels dug read " + DeepLevels.levelDug(w, "the Test Hall", 1) + " / " + DeepLevels.levelDug(w, "the Test Hall", 3));
+        t.setRemoved();
+        h.succeed();
+    }
+
+    /**
+     * The rooms' own lines on a settlement of the tests' own that names nothing (the review of df7b881: the words test read the seams, not
+     * the lines): a Furnace Chambers, a Cook-Pits, a Fields, a Hoard and an Ore Mine of the engine's kinds, named by the test, each built bare
+     * in the test's plot; their reports, gauges, needs and boosts, and the Forge's and the Mine's night, carry no race's word.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 40, batch = "settlement")
+    public static void theRoomsOwnLinesNameNoRace(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        TestSettlement t = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        List<String> said = new ArrayList<>();
+        Rooms.Function[] kinds = {Rooms.Function.FORGE, Rooms.Function.KITCHEN, Rooms.Function.FIELDS, Rooms.Function.HOARD, Rooms.Function.OREMINE};
+        for (Rooms.Function f : kinds) {
+            String id = "engine_words_" + f.id().toLowerCase(java.util.Locale.ROOT);
+            Rooms.Room room = new Rooms.Room(id, "Test " + f.id().charAt(0) + f.id().substring(1).toLowerCase(java.util.Locale.ROOT), 0, f,
+                    "A room of the engine-words test, registered nowhere.", 5, 4, 5, 0, 1, 2, List.of(), List.of(), List.of());
+            PlanPlacement pl = PlanPlacement.compute(room, h.absolutePos(new BlockPos(1, 2, 3)), Direction.EAST);
+            claude.underempire.core.settlement.Building b = new claude.underempire.core.settlement.Building(id, pl.box(), pl.door(), Direction.EAST);
+            claude.underempire.core.work.RoomWork w = switch (f.id()) {
+                case "FORGE" -> new claude.underempire.core.work.ForgeWork(t, b, pl);
+                case "KITCHEN" -> new claude.underempire.core.work.CookWork(t, b, pl);
+                case "FIELDS" -> new claude.underempire.core.work.FieldsWork(t, b, pl);
+                case "HOARD" -> new claude.underempire.core.work.HoardWork(t, b, pl);
+                default -> new claude.underempire.core.work.MineWork(t, b, pl);
+            };
+            List<Component> lines = new ArrayList<>();
+            w.describe(level, lines);
+            List<String> needs = new ArrayList<>();
+            List<String> boosts = new ArrayList<>();
+            w.wants(level, needs, boosts);
+            var g = w.gauge(level);
+            if (g != null) {
+                said.add(g.toString());
+            }
+            if (f == Rooms.Function.FORGE || f == Rooms.Function.OREMINE) {
+                w.nightsWork(level, 60, lines);
+            }
+            lines.forEach(c -> said.add(c.getString()));
+            said.addAll(needs);
+            said.addAll(boosts);
+        }
+        h.assertTrue(said.size() >= kinds.length, "only " + said.size() + " lines were said: the test does not reach the rooms' words");
+        for (String line : said) {
+            String word = raceWordIn(line);
+            h.assertTrue(word == null, "a room of the engine says \"" + line + "\", with the race's word \"" + word + "\": a seam is owed");
+        }
         t.setRemoved();
         h.succeed();
     }

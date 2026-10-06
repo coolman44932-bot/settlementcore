@@ -196,8 +196,17 @@ public final class SettlementLedger {
     /** The haul log's name for the owner's own chests in the settlement (the Hoard's is the settlement's: Settlement#hoardName). */
     static final String OWN_CHESTS = "Your chests";
 
-    /** The haul log's name for the store at {@code p}: its room, or the Warlord's own chests. */
+    /**
+     * The haul log's name for the store at {@code p}: the Hoard's name in a hoard room ({@link Settlement#hoardName}, the name every other road
+     * of the Hoard's goes by: a race whose hoard room is named otherwise has one row for it, not two), else its room, or the owner's own chests.
+     */
     static String place(Settlement heart, BlockPos p) {
+        for (Building b : heart.buildings()) {
+            Rooms.Room r = Rooms.get(b.room());
+            if (r != null && r.function() == Rooms.Function.HOARD && b.box().isInside(p)) {
+                return heart.hoardName();
+            }
+        }
         String room = heart.placeOf(p);
         return room.isEmpty() ? OWN_CHESTS : room;
     }

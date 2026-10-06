@@ -27,8 +27,7 @@ public final class HaulLog {
     public static final int MINUTES = 10;
     private static final long MINUTE = 1200;
 
-    /** The places that are not rooms. */
-    /** The engine's own; the Hoard's and the spoils' are the settlement's words (Settlement#hoardName, #spoilsName). */
+    /** The places that are not rooms: the engine's own; the Hoard's and the spoils' are the settlement's words (Settlement#hoardName, #spoilsName). */
     public static final String LARDER = "Larder", WARLORD = "You", EATEN = "Eaten";
 
     /**

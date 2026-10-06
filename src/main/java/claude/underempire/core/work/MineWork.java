@@ -386,7 +386,7 @@ public class MineWork extends RoomWork {
                 continue;
             }
             BlockPos c = d.cells.get(d.next);
-            return routed(rat, new Chore("gnawing a drift", c, 2.2, workTicks(rat, 24), d, (l, r) -> {
+            return routed(rat, new Chore(heart.digWords().digging() + " a drift", c, 2.2, workTicks(rat, 24), d, (l, r) -> {
                 if (check(l, d) == Verdict.CUT) {
                     digColumn(l, d);
                 }
@@ -1131,7 +1131,7 @@ public class MineWork extends RoomWork {
             }
         }
         if (gnawed > g0 || found > f0) {
-            report.add(Component.literal("The miners gnawed " + (gnawed - g0) + " blocks of drift and found " + (found - f0) + " ore"
+            report.add(Component.literal("The miners " + heart.digWords().dug() + " " + (gnawed - g0) + " blocks of drift and found " + (found - f0) + " ore"
                     + (steps > s0 ? ", and sank the winze " + (steps - s0) + " steps" + (levels() > l0 ? " to level " + levels() : "") : "")
                     + ".").withStyle(ChatFormatting.DARK_GREEN));
         }
@@ -1181,7 +1181,7 @@ public class MineWork extends RoomWork {
                     + (trickles() ? "; the old faces give ore every " + TRICKLE_TICKS / 20 + " s" : "");
         }
         int[] td = levelDug();
-        return (at.isEmpty() ? "" : at + ": ") + "drifts " + (td[0] == 0 ? 0 : td[1] * 100 / td[0]) + "% gnawed";
+        return (at.isEmpty() ? "" : at + ": ") + "drifts " + (td[0] == 0 ? 0 : td[1] * 100 / td[0]) + "% " + heart.digWords().dug();
     }
 
     @Override
