@@ -591,7 +591,7 @@ public class MineWork extends RoomWork {
                 return Verdict.WAIT;
             }
             if (inOtherRoom(p) && !box().isInside(p)) {
-                return stop(level, "at another room of the warren, at " + at(p), false);
+                return stop(level, "at another room of the " + heart.placeName() + ", at " + at(p), false);
             }
             BlockState st = level.getBlockState(p);
             if (!box().isInside(p) && !gives(level, p, st)) {    // (in the room's own pit, its own furnishing: a lamp, the winch)
@@ -600,7 +600,7 @@ public class MineWork extends RoomWork {
             for (Direction dir : Direction.Plane.HORIZONTAL) {
                 BlockPos n = p.relative(dir);
                 if (!inShaft(n) && inOtherRoom(n) && !box().isInside(n)) {
-                    return stop(level, "beside another room of the warren, at " + at(n), false);   // the winze keeps out of it
+                    return stop(level, "beside another room of the " + heart.placeName() + ", at " + at(n), false);   // the winze keeps out of it
                 }
             }
         }

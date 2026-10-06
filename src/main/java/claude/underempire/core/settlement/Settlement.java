@@ -143,6 +143,55 @@ public interface Settlement extends RoomShoring.Warren {
         return MusterWords.ENGINE;
     }
 
+    /** What a line to the player calls the settlement, after "the" or "your" ("at another room of the settlement"): the Warren Heart's "warren". */
+    default String placeName() {
+        return "settlement";
+    }
+
+    /** Its people as a line names them, mid-sentence ("While you slept in your Den, your people worked on:"): the Warren Heart's "the clan". */
+    default String peopleName() {
+        return "your people";
+    }
+
+    /** The haul log's name for the settlement's Hoard (the Ledger's roads: "Hoard", the Warren Heart's "Clan Hoard"). */
+    default String hoardName() {
+        return "Hoard";
+    }
+
+    /** The haul log's name for the spoils its owner hands it: "Spoils", the Warren Heart's "Heart's spoils". */
+    default String spoilsName() {
+        return "Spoils";
+    }
+
+    /** Its currency where it is kept, in a line ("{currency} in store past 29 to refine"): the Warren Heart's "warpstone in the Heart". */
+    default String currencyHeld() {
+        return currencyName() + " in store";
+    }
+
+    /**
+     * The words of the lines about digging down under a room (core/room/DeepLevels), the engine's until a race says. {@code levels} names the levels
+     * down, the settlement itself first ("the warren", "the Deep Warrens", "the Underdeep": the second is plural, "are dug out"); {@code who} begins
+     * a sentence about those who dig ("The horde can find no way down"); {@code starts} is them beginning ("the horde begins to gnaw its way
+     * down"); {@code whose} begins a sentence with their way ("The horde's way down"); {@code home} is the settlement when no room is named ("your
+     * warren"); {@code looks} is them trying again ("it looks for another way down"); {@code dug} is a level finished ("gnawed out"); and
+     * {@code deeper} and {@code deepest} end the line for the first level down and for those below it.
+     */
+    record DeepWords(List<String> levels, String who, String starts, String whose, String home, String looks, String dug, String deeper, String deepest) {
+        public static final DeepWords ENGINE = new DeepWords(List.of("the settlement", "the Deep Halls", "the Deepest Hall"), "Your builders",
+                "your builders begin to dig their way down", "Your builders' way down", "your settlement", "they look for another way down", "dug out",
+                "Go down: the deeper you go, the more of your people you will see.", "Your people are thickest here.");
+
+        /** The level {@code tier} down ({@code 0}: the settlement itself), and how far down past the named ones. */
+        public String level(int tier) {
+            return levels.get(Math.min(tier, levels.size() - 1)) + (tier > 2 ? " (" + tier + " down)" : "");
+        }
+    }
+
+    /** The words of the deep levels' lines: {@link DeepWords#ENGINE} until a race says. */
+    default DeepWords deepWords() {
+        return DeepWords.ENGINE;
+    }
+
     /** Whether {@code bed} is in one of its dens (core/work/Den). */
     boolean inDen(BlockPos bed);
 

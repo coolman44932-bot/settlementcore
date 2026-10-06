@@ -65,7 +65,7 @@ public final class Den {
                 continue;
             }
             List<Component> report = nightsWork(level, h, seconds);
-            p.sendSystemMessage(Component.literal("While you slept in your Den, the clan worked on:").withStyle(ChatFormatting.GOLD));
+            p.sendSystemMessage(Component.literal("While you slept in your Den, " + h.peopleName() + " worked on:").withStyle(ChatFormatting.GOLD));
             report.forEach(p::sendSystemMessage);
         }
     }

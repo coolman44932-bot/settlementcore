@@ -396,7 +396,7 @@ public final class Crafter {
             }
         }
         for (var e : fromHoard.entrySet()) {
-            heart.log(Works.HOARD, by, e.getKey(), e.getValue());
+            heart.log(heart.hoardName(), by, e.getKey(), e.getValue());
         }
         // the thing made first: the rest are leftovers
         List<ItemStack> hand = new ArrayList<>();

@@ -59,8 +59,6 @@ public final class DeepLevels {
     /** Tests: blocks a second, whatever the horde (0: the horde decides). */
     public static int testRate;
 
-    private static final String[] LEVEL_NAME = {"the warren", "the Deep Warrens", "the Underdeep"};
-
     /** One level beneath a room: the Way Down first, then its pieces in the order they were laid out. */
     private static final class Level {
         final String source;
@@ -93,8 +91,26 @@ public final class DeepLevels {
         this.heart = heart;
     }
 
+    /** The level {@code tier} down in the engine's words (a race's own: {@code heart.deepWords().level(tier)}). */
     public static String levelName(int tier) {
-        return LEVEL_NAME[Math.min(tier, LEVEL_NAME.length - 1)] + (tier > 2 ? " (" + tier + " down)" : "");
+        return Settlement.DeepWords.ENGINE.level(tier);
+    }
+
+    /** The lines about digging down, in {@code w}'s words, for {@code room} ("the Warren Junction"): no way down, begun, cut into {@code where}, a level dug. */
+    public static String noWayDown(Settlement.DeepWords w, String room) {
+        return w.who() + " can find no way down beneath " + room + ": the ground round it is taken.";
+    }
+
+    public static String begunDown(Settlement.DeepWords w, String room, int tier) {
+        return "Beneath " + room + ", " + w.starts() + " to " + w.level(tier) + ".";
+    }
+
+    public static String wayCutInto(Settlement.DeepWords w, String room, String where) {
+        return w.whose() + " beneath " + room + " would have cut into " + (where.isEmpty() ? w.home() : where) + ": " + w.looks() + ".";
+    }
+
+    public static String levelDug(Settlement.DeepWords w, String room, int tier) {
+        return capital(w.level(tier)) + " beneath " + room + (tier == 1 ? " are " + w.dug() + ". " + w.deeper() : " is " + w.dug() + ". " + w.deepest());
     }
 
     public static int maxLevels() {
@@ -150,7 +166,7 @@ public final class DeepLevels {
                     all += 1;
                     got += j.isDone() ? 1 : 0;
                 }
-                return levelName(l.tier) + " beneath " + Settlement.theRoom(l.source) + ", "
+                return heart.deepWords().level(l.tier) + " beneath " + Settlement.theRoom(l.source) + ", "
                         + Math.round(100.0 * (l.done + (l.done < l.jobs.size() ? l.jobs.get(l.done).progress() : 0)) / l.jobs.size()) + "%";
             }
         }
@@ -212,8 +228,7 @@ public final class DeepLevels {
         if (planned == null) {
             ServerPlayer p = heart.ownerPlayer();
             if (p != null) {
-                p.sendSystemMessage(Component.literal("The horde can find no way down beneath " + Settlement.theRoom(b.room())
-                        + ": the ground round it is taken.").withStyle(ChatFormatting.GRAY));
+                p.sendSystemMessage(Component.literal(noWayDown(heart.deepWords(), Settlement.theRoom(b.room()))).withStyle(ChatFormatting.GRAY));
             }
             return;
         }
@@ -221,8 +236,7 @@ public final class DeepLevels {
         heart.setChanged();
         ServerPlayer p = heart.ownerPlayer();
         if (p != null) {
-            p.sendSystemMessage(Component.literal("Beneath " + Settlement.theRoom(b.room()) + ", the horde begins to gnaw its way down to "
-                    + levelName(tier) + ".").withStyle(ChatFormatting.DARK_GREEN));
+            p.sendSystemMessage(Component.literal(begunDown(heart.deepWords(), Settlement.theRoom(b.room()), tier)).withStyle(ChatFormatting.DARK_GREEN));
         }
     }
 
@@ -573,8 +587,7 @@ public final class DeepLevels {
         levels.remove(l);
         opened.remove(key(l.source, l.sourceBox));
         if (p != null) {
-            p.sendSystemMessage(Component.literal("The horde's way down beneath " + Settlement.theRoom(l.source) + " would have cut into "
-                    + (where.isEmpty() ? "your warren" : where) + ": it looks for another way down.").withStyle(ChatFormatting.DARK_GREEN));
+            p.sendSystemMessage(Component.literal(wayCutInto(heart.deepWords(), Settlement.theRoom(l.source), where)).withStyle(ChatFormatting.DARK_GREEN));
         }
         for (Building b : heart.buildings()) {
             if (b.room().equals(l.source) && b.box().equals(l.sourceBox)) {
@@ -610,9 +623,7 @@ public final class DeepLevels {
         l.announced = true;
         ServerPlayer p = heart.ownerPlayer();
         if (p != null) {
-            p.sendSystemMessage(Component.literal(capital(levelName(l.tier)) + " beneath " + Settlement.theRoom(l.source)
-                    + (l.tier == 1 ? " are gnawed out. Go down: the deeper you go, the more of your clan you will see."
-                    : " is gnawed out. The horde is thickest here.")).withStyle(ChatFormatting.GREEN));
+            p.sendSystemMessage(Component.literal(levelDug(heart.deepWords(), Settlement.theRoom(l.source), l.tier)).withStyle(ChatFormatting.GREEN));
         }
         level.playSound(null, l.jobs.get(0).door, SoundEvents.BELL_RESONATE, SoundSource.BLOCKS, 1f, 0.5f);
     }

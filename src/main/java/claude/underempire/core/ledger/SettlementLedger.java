@@ -193,8 +193,8 @@ public final class SettlementLedger {
         return out;
     }
 
-    /** The haul log's names for the Hoard and for the Warlord's own chests in the warren. */
-    static final String HOARD = "Clan Hoard", OWN_CHESTS = "Your chests";
+    /** The haul log's name for the owner's own chests in the settlement (the Hoard's is the settlement's: Settlement#hoardName). */
+    static final String OWN_CHESTS = "Your chests";
 
     /** The haul log's name for the store at {@code p}: its room, or the Warlord's own chests. */
     static String place(Settlement heart, BlockPos p) {
@@ -331,7 +331,7 @@ public final class SettlementLedger {
                 int move = Math.min(want - got.getCount(), have.getCount());
                 have.shrink(move);
                 got.grow(move);
-                heart.log(HaulLog.SPOILS, HaulLog.WARLORD, like.getItem(), move);
+                heart.log(heart.spoilsName(), HaulLog.WARLORD, like.getItem(), move);
             }
         }
         heart.spoils().removeIf(ItemStack::isEmpty);
@@ -367,7 +367,7 @@ public final class SettlementLedger {
                 break;
             }
         }
-        heart.log(HaulLog.WARLORD, HOARD, item, was - rest.getCount());
+        heart.log(HaulLog.WARLORD, heart.hoardName(), item, was - rest.getCount());
         if (rest.isEmpty()) {
             return rest;
         }
@@ -385,7 +385,7 @@ public final class SettlementLedger {
             ItemStack part = rest.split(rest.getMaxStackSize());
             heart.addSpoil(part);
         }
-        heart.log(HaulLog.WARLORD, HaulLog.SPOILS, item, was - rest.getCount());
+        heart.log(HaulLog.WARLORD, heart.spoilsName(), item, was - rest.getCount());
         return rest;
     }
 }

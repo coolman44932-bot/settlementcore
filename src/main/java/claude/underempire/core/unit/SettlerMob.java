@@ -32,7 +32,7 @@ public abstract class SettlerMob extends PathfinderMob {
 
     /** The three standing orders. */
     public enum Mode {
-        WORK("to work, the warren's work"), FOLLOW("follow you"), GUARD("hold where they stand");
+        WORK("to work"), FOLLOW("follow you"), GUARD("hold where they stand");   // a race may say more (the Skaven: "to work, the warren's work")
 
         private final String order;
 

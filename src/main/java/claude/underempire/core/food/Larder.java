@@ -207,7 +207,7 @@ public final class Larder {
             int was = rest.getCount();
             rest = h.put(level, rest);
             if (where != null && rest.getCount() < was) {
-                where.accept(Works.HOARD, was - rest.getCount());
+                where.accept(home.hoardName(), was - rest.getCount());
             }
         }
         if (rest.getCount() != s.getCount()) {

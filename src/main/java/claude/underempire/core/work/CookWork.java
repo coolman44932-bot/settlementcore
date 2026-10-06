@@ -464,7 +464,7 @@ public class CookWork extends RoomWork {
             needs.add("water in the stew-cauldron");
         }
         if (spiceWanted) {
-            boosts.add("warpstone past " + SPICE_RESERVE + " in the Heart: spiced feasts");
+            boosts.add(heart.currencyHeld() + " past " + SPICE_RESERVE + ": spiced feasts");
         }
         roomIn(level, out, FARE_BIN, needs);
     }
@@ -474,10 +474,10 @@ public class CookWork extends RoomWork {
         rescan(level);
         int inPantry = Bins.count(level, pantry, s -> true);
         Dish d = next(level);
-        lines.add(Component.literal("Cook-Pits: " + inPantry + " things in the Pantry" + (d == null ? ", nothing to cook" : ", next: " + d.what())
+        lines.add(Component.literal(room().displayName() + ": " + inPantry + " things in the Pantry" + (d == null ? ", nothing to cook" : ", next: " + d.what())
                 + (water ? "" : ", no water in the cauldron") + "; " + cooked + " dishes made" + (spiced > 0 ? ", " + spiced + " warp-spiced" : "")
                 + (last == null ? "" : ", the last " + last)
-                + (spiceWanted ? "; no warpstone to spice the feasts (the hoard keeps " + SPICE_RESERVE + ")" : ""))
+                + (spiceWanted ? "; no " + heart.currencyName() + " to spice the feasts (it keeps " + SPICE_RESERVE + ")" : ""))
                 .withStyle(ChatFormatting.DARK_GREEN));
     }
 

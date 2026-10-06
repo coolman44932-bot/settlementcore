@@ -978,8 +978,6 @@ public final class Works {
         return w == null ? "" : w.room().displayName();          // "" is never logged: a room the warren does not have
     }
 
-    public static final String HOARD = "Clan Hoard";
-
     /** {@link #move}, with the road it went along logged (nest/ledger/HaulLog). */
     private void move(ItemStack s, String from, String to, java.util.function.Function<ItemStack, ItemStack> dest) {
         if (s.isEmpty()) {
@@ -1067,7 +1065,7 @@ public final class Works {
         if (hoard && !heart.spoils().isEmpty()) {
             for (Iterator<ItemStack> it = heart.spoils().iterator(); it.hasNext(); ) {
                 ItemStack s = it.next();
-                move(s, claude.underempire.core.ledger.HaulLog.SPOILS, HOARD, st -> toHoard(level, st));
+                move(s, heart.spoilsName(), heart.hoardName(), st -> toHoard(level, st));
                 if (s.isEmpty()) {
                     it.remove();
                 }
@@ -1081,7 +1079,7 @@ public final class Works {
             for (ItemStack s : Bins.stacks(level, made)) {
                 feed(level, s, name(cook));
                 if (hoard) {
-                    move(s, name(cook), HOARD, st -> toHoard(level, st));
+                    move(s, name(cook), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
         }
@@ -1096,7 +1094,7 @@ public final class Works {
                     feed(level, s, name(f));
                 }
                 if (hoard) {
-                    move(s, name(f), HOARD, st -> toHoard(level, st));
+                    move(s, name(f), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
         }
@@ -1111,13 +1109,13 @@ public final class Works {
                     move(s, name(m), name(forge), st -> Bins.insert(level, forge.fuelBins(level), st));
                 }
                 if (hoard) {
-                    move(s, name(m), HOARD, st -> toHoard(level, st));
+                    move(s, name(m), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
             if (hoard) {
                 touched.addAll(m.stoneBins(level));
                 for (ItemStack s : Bins.stacks(level, m.stoneBins(level))) {
-                    move(s, name(m), HOARD, st -> toHoard(level, st));
+                    move(s, name(m), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
         }
@@ -1149,7 +1147,7 @@ public final class Works {
                         ItemStack part = s.copyWithCount(s.getCount() - keep);
                         ItemStack rest = toHoard(level, part);
                         s.shrink(part.getCount() - rest.getCount());
-                        heart.log(name(f), HOARD, part.getItem(), part.getCount() - rest.getCount());
+                        heart.log(name(f), heart.hoardName(), part.getItem(), part.getCount() - rest.getCount());
                     }
                 }
             }
@@ -1170,7 +1168,7 @@ public final class Works {
                     feed(level, s, name(p));
                 }
                 if (hoard) {
-                    move(s, name(p), HOARD, st -> toHoard(level, st));
+                    move(s, name(p), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
         }
@@ -1191,7 +1189,7 @@ public final class Works {
                     feed(level, s, name(o));
                 }
                 if (hoard) {
-                    move(s, name(o), HOARD, st -> toHoard(level, st));
+                    move(s, name(o), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
         }
@@ -1203,7 +1201,7 @@ public final class Works {
                     topUp(level, pantry, s, 8, name(g), name(cook));
                 }
                 if (hoard) {
-                    move(s, name(g), HOARD, st -> toHoard(level, st));
+                    move(s, name(g), heart.hoardName(), st -> toHoard(level, st));
                 }
             }
         }
@@ -1233,7 +1231,7 @@ public final class Works {
             }
             if (hoard && !rest.isEmpty()) {
                 int was = rest.getCount();
-                heart.log(claude.underempire.core.ledger.HaulLog.LARDER, HOARD, Items.BOWL, was - toHoard(level, rest).getCount());
+                heart.log(claude.underempire.core.ledger.HaulLog.LARDER, heart.hoardName(), Items.BOWL, was - toHoard(level, rest).getCount());
             }
             bowls = 0;
         }
@@ -1285,7 +1283,7 @@ public final class Works {
                             ItemStack rest = Bins.insert(level, sp.bins(), st.copyWithCount(n));
                             int went = n - rest.getCount();
                             if (went > 0) {
-                                heart.log(HOARD, name(w), st.getItem(), went);
+                                heart.log(heart.hoardName(), name(w), st.getItem(), went);
                                 st.shrink(went);
                                 if (st.isEmpty()) {
                                     c.setItem(i, ItemStack.EMPTY);

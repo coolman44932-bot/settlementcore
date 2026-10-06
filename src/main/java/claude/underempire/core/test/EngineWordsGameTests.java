@@ -2,9 +2,11 @@ package claude.underempire.core.test;
 
 import claude.underempire.core.Core;
 import claude.underempire.core.defence.Muster;
+import claude.underempire.core.room.DeepLevels;
 import claude.underempire.core.room.PlanPlacement;
 import claude.underempire.core.room.RaiseJob;
 import claude.underempire.core.room.Rooms;
+import claude.underempire.core.settlement.Settlement;
 import claude.underempire.core.test.SettlementBlockEntityGameTests.TestSettlement;
 import claude.underempire.core.test.SitingGameTests.Site;
 import claude.underempire.core.work.SiteWork;
@@ -145,6 +147,40 @@ public class EngineWordsGameTests {
             s.clear();
             h.succeed();
         }));
+    }
+
+    /**
+     * The engine's own words for what every race's settlement says outside a raise and the muster (the review of d21aef0: the deep levels, the
+     * Furnace Chambers, the Hoard, the Cook-Pits, the Den, the haul log and the standing orders still spoke the Skaven's): a settlement of the
+     * tests' own that names nothing is called the "settlement", its people "your people", its Hoard and spoils in the Ledger "Hoard" and
+     * "Spoils", its currency "the settlement's currency in store"; every line about digging down built of the engine's words, for each level,
+     * and the orders. None has a race's word.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void theEnginesOwnWordsNameNoRace(GameTestHelper h) {
+        TestSettlement t = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        Settlement.DeepWords w = t.deepWords();
+        h.assertTrue(w == Settlement.DeepWords.ENGINE, "a settlement of the tests' own has deep words of its own: " + w);
+        List<String> said = new ArrayList<>(List.of(t.placeName(), t.peopleName(), t.hoardName(), t.spoilsName(), t.currencyHeld(), t.currencyAmount(12),
+                claude.underempire.core.ledger.HaulLog.LARDER, claude.underempire.core.ledger.HaulLog.WARLORD, claude.underempire.core.ledger.HaulLog.EATEN,
+                DeepLevels.noWayDown(w, "the Test Hall"), DeepLevels.wayCutInto(w, "the Test Hall", ""), DeepLevels.wayCutInto(w, "the Test Hall", "the Test Store")));
+        for (int tier = 0; tier <= 4; tier++) {
+            said.add(DeepLevels.begunDown(w, "the Test Hall", tier));
+            said.add(DeepLevels.levelDug(w, "the Test Hall", tier));
+            said.add(DeepLevels.levelName(tier));
+        }
+        for (claude.underempire.core.unit.SettlerMob.Mode m : claude.underempire.core.unit.SettlerMob.Mode.values()) {
+            said.add(m.order());
+        }
+        for (String line : said) {
+            String word = raceWordIn(line);
+            h.assertTrue(word == null, "the engine says \"" + line + "\", with the race's word \"" + word + "\": a seam (a Settlement word) is owed");
+        }
+        h.assertTrue(DeepLevels.levelDug(w, "the Test Hall", 1).equals("The Deep Halls beneath the Test Hall are dug out. Go down: the deeper you go, the more of your people you will see.")
+                        && DeepLevels.levelDug(w, "the Test Hall", 3).equals("The Deepest Hall (3 down) beneath the Test Hall is dug out. Your people are thickest here."),
+                "the levels dug read " + DeepLevels.levelDug(w, "the Test Hall", 1) + " / " + DeepLevels.levelDug(w, "the Test Hall", 3));
+        t.setRemoved();
+        h.succeed();
     }
 
     /**

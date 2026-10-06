@@ -291,12 +291,12 @@ public class ForgeWork extends RoomWork {
                 break;
             }
             if (heart.currency() < REFINE_RESERVE + BLOCK_SHARDS) {
-                refineWanting = "warpstone in the Heart past " + (REFINE_RESERVE + BLOCK_SHARDS) + " to refine (it keeps " + REFINE_RESERVE + ")";
+                refineWanting = heart.currencyHeld() + " past " + (REFINE_RESERVE + BLOCK_SHARDS) + " to refine (it keeps " + REFINE_RESERVE + ")";
                 break;
             }
             ItemStack block = new ItemStack(heart.currencyBlock());
             if (!Bins.hasRoom(level, ores, block)) {
-                refineWanting = "room in the Ore Bin for warpstone to refine";
+                refineWanting = "room in the Ore Bin for " + heart.currencyName() + " to refine";
                 break;
             }
             if (!heart.spendCurrency(BLOCK_SHARDS, room().displayName())) {
@@ -453,7 +453,7 @@ public class ForgeWork extends RoomWork {
         rescan(level);
         int blocks = refine(level);
         if (blocks > 0) {
-            report.add(Component.literal("The Furnace Chambers pressed " + blocks * BLOCK_SHARDS + " warpstone into " + blocks
+            report.add(Component.literal("The " + room().displayName() + " pressed " + blocks * BLOCK_SHARDS + " " + heart.currencyName() + " into " + blocks
                     + (blocks == 1 ? " block" : " blocks") + " to refine.").withStyle(ChatFormatting.DARK_GREEN));
         }
         int before = (int) smelted;
@@ -586,10 +586,10 @@ public class ForgeWork extends RoomWork {
             }
         }
         int waiting = Bins.count(level, ores, s -> true);
-        out.add(Component.literal("Furnace Chambers: " + furnaces.size() + " furnaces, " + lit + " burning"
+        out.add(Component.literal(room().displayName() + ": " + furnaces.size() + " furnaces, " + lit + " burning"
                 + (waiting > 0 ? ", " + waiting + " waiting in the Ore Bin" : ", the Ore Bin is empty")
                 + (fuel.isEmpty() || Bins.count(level, fuel, s -> true) > 0 ? "" : ", NO FUEL")
-                + (refinedComing(level) > 0 ? "; refining warpstone (" + refinedComing(level) + " refined on its way)" : "")
+                + (refinedComing(level) > 0 ? "; refining " + heart.currencyName() + " (" + refinedComing(level) + " refined on its way)" : "")
                 + (refineWanting != null && refineNeed(level) > 0 ? "; can't refine: needs " + refineWanting : "")).withStyle(ChatFormatting.DARK_GREEN));
     }
 

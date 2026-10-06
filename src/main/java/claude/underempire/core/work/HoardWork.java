@@ -160,7 +160,7 @@ public class HoardWork extends RoomWork {
     public void wants(ServerLevel level, List<String> needs, List<String> boosts) {
         Gauge g = gauge(level);
         if (g != null && g.fill() >= 0.9f) {
-            needs.add("room: dig another Clan Hoard");
+            needs.add("room: " + (claude.underempire.core.room.Rooms.isRaised(room().id()) ? "raise" : "dig") + " another " + room().displayName());
         }
     }
 
@@ -197,7 +197,7 @@ public class HoardWork extends RoomWork {
                 }
             }
         }
-        out.add(Component.literal("Clan Hoard: " + all.size() + " barrels, " + used + "/" + slots + " slots full")
+        out.add(Component.literal(room().displayName() + ": " + all.size() + " barrels, " + used + "/" + slots + " slots full")
                 .withStyle(ChatFormatting.DARK_GREEN));
     }
 }

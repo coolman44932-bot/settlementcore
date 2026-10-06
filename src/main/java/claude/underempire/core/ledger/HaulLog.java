@@ -28,8 +28,8 @@ public final class HaulLog {
     private static final long MINUTE = 1200;
 
     /** The places that are not rooms. */
-    public static final String LARDER = "Larder", WARPSTONE = "Heart's warpstone", SPOILS = "Heart's spoils", WARLORD = "You",
-            EATEN = "Eaten by the clan";
+    /** The engine's own; the Hoard's and the spoils' are the settlement's words (Settlement#hoardName, #spoilsName). */
+    public static final String LARDER = "Larder", WARLORD = "You", EATEN = "Eaten";
 
     /**
      * One road: from where, to where, what, and how much went along it. {@code item} null is the larder's food itself,

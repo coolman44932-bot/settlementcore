@@ -300,7 +300,7 @@ public class FieldsWork extends RoomWork {
                 }
             }
         }
-        out.add(Component.literal("Slave Fields: " + plots.size() + " plots, " + growing + " growing, " + ripe + " ripe; "
+        out.add(Component.literal(room().displayName() + ": " + plots.size() + " plots, " + growing + " growing, " + ripe + " ripe; "
                 + harvested + " reaped").withStyle(ChatFormatting.DARK_GREEN));
     }
 
