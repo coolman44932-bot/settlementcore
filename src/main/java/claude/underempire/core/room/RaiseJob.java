@@ -1108,8 +1108,10 @@ public class RaiseJob extends DigJob {
      * down as far as 3), the cell nearest by those steps and not by the crow's flight: the finished top of a closed hall's roof, with no way
      * up to it, was the best cell for the last roof cells (the review of 30f4859's hanging pieces' test, 1 raise in 4), and a cell inside
      * the walls, for a builder outside, was a walk through the door that a vanilla path gave out on; the builder stood out its 400 ticks at
-     * the foot of a wall. A column's cells under one that can't be walked to are looked at too. With none, or when the builder stands
-     * where one can't tell, the best cell as before (nothing is known better).
+     * the foot of a wall. A column's cells under one that can't be walked to are looked at too. With none, the best cell as before, and the
+     * builder told it can't walk there; when it can't be told (the builder far off, or its land not loaded), the best cell as before (nothing is
+     * known better). A builder in a cell one can't stand in walks from where it lands or steps (RaiseJob#walkStart), and with no such cell walks
+     * nowhere.
      */
     @Nullable
     public BlockPos standFor(ServerLevel level, BlockPos anchor, List<BlockPos> batch, BlockPos near) {
@@ -1119,7 +1121,8 @@ public class RaiseJob extends DigJob {
     /**
      * A stand ({@link #standFor}), and whether its builder can walk to it. Not when the flood ran and found no cell in reach of the work that it can
      * walk to: {@code at} is then the old best, which no path may reach (a builder outside the back wall of a closed hall with one door is more
-     * than {@value #WALK_STEPS} steps from it). It is when the flood found one, and when it could not tell (nothing is known better).
+     * than {@value #WALK_STEPS} steps from it), or that the builder has no cell to walk from (swimming). It is when the flood found one, and
+     * when it could not tell (the builder far off: nothing is known better).
      */
     public record Stand(@Nullable BlockPos at, boolean walkable) {
     }
@@ -1231,7 +1234,7 @@ public class RaiseJob extends DigJob {
         }
         BlockPos start = walkStart(level, from);
         if (start == null) {
-            return null;
+            return new Long2IntOpenHashMap();                    // no cell to walk from (swimming, all round it carpet or lanterns): it reaches nothing
         }
         Long2IntOpenHashMap seen = new Long2IntOpenHashMap();
         LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
@@ -1281,7 +1284,9 @@ public class RaiseJob extends DigJob {
      * over its head, a jump or a fall under way, a slab under it), and then "the builder isn't in a cell one can stand in" is no reason to say the walk
      * can't be told ({@link #stand} then gave a stand nobody can walk to and called it walkable: aLampHallHasItsLanternsHungByBuilders, 2026-10-06, a
      * builder under a lantern was given the roof's top and held its batch 400 ticks). Else: where it lands, the first cell one can stand in in its column
-     * down to 3 below (stopping at a solid cell), else the first it can step or drop to beside it. Null when there is none (then it can't be told).
+     * down to 3 below (stopping at a solid cell), else the first it can step or drop to beside it. Null when there is none: then the walk reaches
+     * nothing ({@link #flood} answers an empty walk), and the builder is sent back to the door, not to the highest cell as if it could walk there (a
+     * builder swimming in a pool: aSwimmingBuilderIsSentBackToTheDoor).
      */
     @Nullable
     private static BlockPos walkStart(ServerLevel level, BlockPos from) {
@@ -1302,13 +1307,15 @@ public class RaiseJob extends DigJob {
             }
         }
         for (Direction d : Direction.Plane.HORIZONTAL) {
+            int nx = from.getX() + d.getStepX();
+            int nz = from.getZ() + d.getStepZ();
             for (int dy = 0; dy >= -3; dy--) {
-                c.set(from.getX() + d.getStepX(), from.getY() + dy, from.getZ() + d.getStepZ());
+                c.set(nx, from.getY() + dy, nz);
                 if (!level.isLoaded(c)) {
                     break;
                 }
-                if (SettlerMob.standable(level, c)) {
-                    return c.immutable();
+                if (SettlerMob.standable(level, c) && (dy == 0 || fallFree(level, nx, from.getY(), nz, c.getY()))) {
+                    return c.immutable();                        // a drop beside it only as the flood takes one: through free cells (the review of 420b3e0)
                 }
             }
         }

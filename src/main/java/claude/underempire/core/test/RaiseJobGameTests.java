@@ -1055,6 +1055,52 @@ public class RaiseJobGameTests {
     }
 
     /**
+     * A builder swimming in a pool 3 deep, 2 from every shore, has no cell to walk from (the review of 420b3e0: the flood then could not tell,
+     * and the stand was the highest cell, said to be walkable): it is told it can't walk to its stand, so the site sends it back to the door. The
+     * control: a builder on the bank is told it can walk to one.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "raise")
+    public static void aSwimmingBuilderIsSentBackToTheDoor(GameTestHelper h) {
+        Rooms.Room room = lamps();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "the lamp hall");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            int cx = s.bx1() + 5;                                // a pool 5 by 5, 3 deep, east of the hall's berm and ramp
+            int cz = s.bz0 + 4;
+            for (int x = cx - 2; x <= cx + 2; x++) {
+                for (int z = cz - 2; z <= cz + 2; z++) {
+                    for (int y = s.floor - 2; y <= s.floor; y++) {
+                        s.set(x, y, z, Blocks.WATER.defaultBlockState());
+                    }
+                }
+            }
+            BlockPos swimming = new BlockPos(cx, s.floor, cz);
+            BlockPos bank = new BlockPos(cx - 3, s.floor + 1, cz);
+            h.assertTrue(!claude.underempire.core.unit.SettlerMob.standable(level, swimming) && claude.underempire.core.unit.SettlerMob.standable(level, bank),
+                    "the scene is wrong: the pool's middle " + swimming.toShortString() + " is one to stand in, or the bank " + bank.toShortString() + " is not");
+            BlockPos anchor = null;
+            for (DigJob.Task t : job.taskList()) {
+                if (t.pos().getY() == s.floor + 1 && (anchor == null || t.pos().distSqr(bank) < anchor.distSqr(bank))) {
+                    anchor = t.pos();                            // a cell of the first course, nearest the pool
+                }
+            }
+            h.assertTrue(anchor != null, "no cell of the first course");
+            List<BlockPos> cells = List.of(anchor);
+            RaiseJob.Stand fromBank = job.stand(level, anchor, cells, bank);
+            h.assertTrue(fromBank.at() != null && fromBank.walkable(), "the control: a builder on the bank at " + bank.toShortString() + " is given " + fromBank);
+            RaiseJob.Stand fromPool = job.stand(level, anchor, cells, swimming);
+            h.assertTrue(!fromPool.walkable(), "a builder swimming at " + swimming.toShortString() + " is given " + fromPool
+                    + ": told it can walk there from water it can't stand in, so it is never sent back to the door");
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
      * What is a hanging piece and what holds it, cell by cell in the air (the two tests above raise whole buildings): a piece hangs only
      * where it depends on the cell over it (a vine's top face, a vertical chain: not a wall vine, not a chain laid sideways); a hanging
      * piece is held by something solid over it, or by its own column over it already laid (vines under vines, a cave vine under its
