@@ -294,6 +294,22 @@ public final class Siting {
         return new Reshape.Rect(b.minX() - 1, b.minZ() - 1, b.maxX() + 1, b.maxZ() + 1);
     }
 
+    /**
+     * The room's open court in world columns ({@link Rooms#court}: the pool a ring is raised round), or null for none. Its columns are no
+     * part of the pad: the raise never builds on them, clears, fills, cuts, levels or tears down there, and the ramp goes round them as
+     * round what it keeps.
+     */
+    @Nullable
+    static Reshape.Rect courtRect(PlanPlacement pl) {
+        BoundingBox c = Rooms.court(pl.room().id());
+        if (c == null) {
+            return null;
+        }
+        BlockPos a = pl.world(new BlockPos(c.minX(), 0, c.minZ()));
+        BlockPos b = pl.world(new BlockPos(c.maxX(), 0, c.maxZ()));
+        return new Reshape.Rect(Math.min(a.getX(), b.getX()), Math.min(a.getZ(), b.getZ()), Math.max(a.getX(), b.getX()), Math.max(a.getZ(), b.getZ()));
+    }
+
     /** The door's landing: 3 columns wide and 2 out from the door, level with the floor. */
     private static Reshape.Rect landingRect(PlanPlacement pl) {
         int[] o = outward(pl);
@@ -883,6 +899,7 @@ public final class Siting {
         final int floor;
         final Reshape.Rect pad;
         final Reshape.Rect landing;
+        @Nullable final Reshape.Rect court;
         final Reshape.Rect all;
         final Reshape.Side side;
         final List<RoomTemplates.Entry> template;
@@ -904,6 +921,7 @@ public final class Siting {
             this.floor = pl.door().getY() - 1;
             this.pad = padRect(pl);
             this.landing = landingRect(pl);
+            this.court = courtRect(pl);
             this.all = new Reshape.Rect(Math.min(pad.x0(), landing.x0()), Math.min(pad.z0(), landing.z0()),
                     Math.max(pad.x1(), landing.x1()), Math.max(pad.z1(), landing.z1()));
             int[] o = outward(pl);
@@ -921,7 +939,24 @@ public final class Siting {
         }
 
         boolean inPad(int x, int z) {
-            return in(pad, x, z) || in(landing, x, z);
+            return (in(pad, x, z) || in(landing, x, z)) && !inCourt(x, z);
+        }
+
+        /** In the room's open court ({@link #courtRect}): never the pad's, and held as it is. */
+        boolean inCourt(int x, int z) {
+            return court != null && in(court, x, z);
+        }
+
+        /** {@code f}'s court columns held as they are (KEPT; a pond in it is marked FLUID by {@link #heights}): a frame stamps them PAD. */
+        Reshape.Frame courted(Reshape.Frame f) {
+            if (court != null) {
+                for (int i = 0; i < f.kinds().length; i++) {
+                    if (inCourt(f.x0() + i % f.w(), f.z0() + i / f.w())) {
+                        f.kinds()[i] = Reshape.Kind.KEPT;
+                    }
+                }
+            }
+            return f;
         }
 
         boolean inBox(int x, int z) {
@@ -1121,7 +1156,7 @@ public final class Siting {
                 Reshape.Result r;
                 for (int pass = 1; ; ) {
                     while (true) {
-                        f = Reshape.frame(pad, landing, side, margin);
+                        f = courted(Reshape.frame(pad, landing, side, margin));
                         g = heights(f, extra);
                         r = Reshape.plan(f.w(), f.h(), g, f.kinds(), null, floor, margin);
                         if (!r.tooSteep()) {
@@ -1169,7 +1204,7 @@ public final class Siting {
             for (int i = 0; i < kinds.length; i++) {
                 kinds[i] = inPad(x0 + i % w, z0 + i / w) ? Reshape.Kind.PAD : Reshape.Kind.BORDER;
             }
-            return new Reshape.Frame(x0, z0, w, h, kinds);
+            return courted(new Reshape.Frame(x0, z0, w, h, kinds));
         }
 
         /**
@@ -1203,8 +1238,8 @@ public final class Siting {
             int gap = 0;
             for (int z = all.z0() - 1; z <= all.z1() + 1; z++) {
                 for (int x = all.x0() - 1; x <= all.x1() + 1; x++) {
-                    if (inPad(x, z)) {
-                        continue;
+                    if (inPad(x, z) || inCourt(x, z)) {
+                        continue;                                // the court is held as it is: no ramp starts from its bank
                     }
                     boolean near = false;
                     for (int dz = -1; dz <= 1 && !near; dz++) {

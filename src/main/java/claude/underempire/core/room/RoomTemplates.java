@@ -95,6 +95,10 @@ public final class RoomTemplates {
 
     /** The template of {@code id} from the data folder of the mod jar that registered the room, or empty. */
     public static List<Entry> readFromMods(String id) {
+        List<Entry> made = Rooms.madeCells(id);
+        if (made != null) {
+            return made;
+        }
         MOD_READS.merge(id, 1, Integer::sum);
         for (String ns : Rooms.namespacesFor(id)) {
             IModFileInfo mod = ModList.get().getModFileById(ns);
@@ -169,6 +173,10 @@ public final class RoomTemplates {
     }
 
     private static List<Entry> load(ServerLevel level, String id) {
+        List<Entry> made = Rooms.madeCells(id);
+        if (made != null) {
+            return made;                                          // a room made in code (Rooms#family): no file to read
+        }
         ResourceLocation loc = null;
         Optional<Resource> res = Optional.empty();
         List<String> tried = Rooms.namespacesFor(id);

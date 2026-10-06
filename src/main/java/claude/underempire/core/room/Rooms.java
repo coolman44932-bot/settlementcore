@@ -82,6 +82,14 @@ public final class Rooms {
                        List<Station> stations) {
     }
 
+    /**
+     * A room made in code from its id ({@link #family}), not read from a template: the room, every cell of its template (air too, in
+     * template-local coordinates, as a read one's), and its open court, the columns of its box it never builds on, clears or levels
+     * (template-local, its y ignored), or null for none.
+     */
+    public record Made(Room room, List<RoomTemplates.Entry> cells, @Nullable net.minecraft.world.level.levelgen.structure.BoundingBox court) {
+    }
+
     /** A deep level's piece: which level it belongs to, what it is (way, room, end, hub) and how often. */
     public record Deep(String id, int tier, String kind, int weight) {
     }
@@ -112,6 +120,12 @@ public final class Rooms {
     /** Whose data each room's template and relight are in: the namespace of the mod that registered it. */
     private static final Map<String, String> NAMESPACE = new HashMap<>();
     private static final Set<String> NAMESPACES = new LinkedHashSet<>();
+    /** The families of rooms made in code, by id prefix ({@link #family}), and what they have made. */
+    private static final Map<String, Family> FAMILIES = new LinkedHashMap<>();
+    private static final Map<String, Made> MADE = new HashMap<>();
+
+    private record Family(String namespace, java.util.function.Function<String, Made> make) {
+    }
 
     private Rooms() {
     }
@@ -158,6 +172,63 @@ public final class Rooms {
         }
     }
 
+    /**
+     * A family of raised buildings made in code, one room for each id that starts with {@code prefix} (a ring round a pool of any size:
+     * {@code "lm_pool_ring_5x7"}): the first time an id of it is asked for ({@link #get}, {@link #isRaised}, a template read), {@code make} is
+     * given the id and answers its {@link Made}, or null for an id it does not make (a size it refuses). Made once and kept for the
+     * session, so a site saved with the id finds the same room after a reload; {@code make} must make the same room from the same id
+     * every time. The room is registered as a raised building of {@code namespace}'s, with its template and its court.
+     */
+    public static synchronized void family(String namespace, String prefix, java.util.function.Function<String, Made> make) {
+        NAMESPACES.add(namespace);
+        FAMILIES.put(prefix, new Family(namespace, make));
+    }
+
+    /** The room {@code id} of a family, made now if it is one and has not been; null for no family's. */
+    @Nullable
+    private static Made made(String id) {
+        Made m = MADE.get(id);
+        if (m != null) {
+            return m;
+        }
+        for (Map.Entry<String, Family> f : FAMILIES.entrySet()) {
+            if (!id.startsWith(f.getKey())) {
+                continue;
+            }
+            m = f.getValue().make().apply(id);
+            if (m == null) {
+                continue;
+            }
+            if (!m.room().id().equals(id)) {
+                throw new IllegalStateException("Settlement Core: the family " + f.getKey() + " made the room " + m.room().id() + " for " + id);
+            }
+            MADE.put(id, m);
+            NAMESPACE.put(id, f.getValue().namespace());
+            RAISED.removeIf(x -> x.id().equals(id));
+            RAISED.add(m.room());
+            BY_ID.put(id, m.room());
+            return m;
+        }
+        return null;
+    }
+
+    /** The template of a room made in code ({@link #family}), every cell; null for a room read from a file. */
+    @Nullable
+    public static synchronized List<RoomTemplates.Entry> madeCells(String id) {
+        Made m = made(id);
+        return m == null ? null : m.cells();
+    }
+
+    /**
+     * The open court of a room (template-local; its y means nothing): the columns of its box a raise never builds on, clears, levels or tears
+     * down, the pool a ring is raised round (core/room/Siting). Null for a room without one.
+     */
+    @Nullable
+    public static synchronized net.minecraft.world.level.levelgen.structure.BoundingBox court(String id) {
+        Made m = made(id);
+        return m == null ? null : m.court();
+    }
+
     /** Every race's raised buildings (surface-builder.md), in registration order. */
     public static synchronized List<Room> raised() {
         return Collections.unmodifiableList(new ArrayList<>(RAISED));
@@ -165,6 +236,7 @@ public final class Rooms {
 
     /** Whether {@code id} is a raised building (built up on the surface), not a dug room. */
     public static synchronized boolean isRaised(String id) {
+        made(id);
         return RAISED.stream().anyMatch(r -> r.id().equals(id));
     }
 
@@ -185,7 +257,14 @@ public final class Rooms {
 
     @Nullable
     public static Room get(String id) {
-        return BY_ID.get(id);
+        Room r = BY_ID.get(id);
+        if (r != null || FAMILIES.isEmpty()) {
+            return r;
+        }
+        synchronized (Rooms.class) {
+            Made m = made(id);
+            return m == null ? null : m.room();
+        }
     }
 
     /** Every room a plan can build. */
