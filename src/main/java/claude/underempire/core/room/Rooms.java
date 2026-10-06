@@ -255,16 +255,21 @@ public final class Rooms {
         return new ArrayList<>(out);
     }
 
+    /**
+     * The room {@code id}, or null; a room of a {@link #family} is made the first time it is asked for. Under the lock: since families make rooms
+     * while the game runs, the map is written after start-up, and a read beside a write could miss a room that is there (the review of 00ab16a).
+     */
     @Nullable
-    public static Room get(String id) {
+    public static synchronized Room get(@Nullable String id) {
+        if (id == null) {
+            return null;
+        }
         Room r = BY_ID.get(id);
         if (r != null || FAMILIES.isEmpty()) {
             return r;
         }
-        synchronized (Rooms.class) {
-            Made m = made(id);
-            return m == null ? null : m.room();
-        }
+        Made m = made(id);
+        return m == null ? null : m.room();
     }
 
     /** Every room a plan can build. */

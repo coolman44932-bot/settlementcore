@@ -55,16 +55,16 @@ public class CourtGameTests {
     }
 
     /** A plot of flat grass with a pool dug in it, and the ring placed round the pool's bounding box plus 1. */
-    static final class Pool {
-        final GameTestHelper h;
-        final ServerLevel level;
-        final int px0, pz0, px1, pz1, floor;
-        final int wx0, wz0, wx1, wz1;                 // the water
-        final PlanPlacement pl;
-        final BoundingBox court;                      // world columns
+    public static final class Pool {
+        public final GameTestHelper h;
+        public final ServerLevel level;
+        public final int px0, pz0, px1, pz1, floor;
+        public final int wx0, wz0, wx1, wz1;          // the water
+        public final PlanPlacement pl;
+        public final BoundingBox court;               // world columns
         final Map<BlockPos, BlockState> before = new HashMap<>();
 
-        Pool(GameTestHelper h, int poolX, int poolZ) {
+        public Pool(GameTestHelper h, int poolX, int poolZ) {
             register();
             this.h = h;
             this.level = h.getLevel();
@@ -92,17 +92,23 @@ public class CourtGameTests {
                     "the ring's court " + local + " is not the pool and its rim, " + court);
         }
 
-        void set(int x, int y, int z, BlockState s) {
+        public void set(int x, int y, int z, BlockState s) {
             level.setBlock(new BlockPos(x, y, z), s, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
         }
 
         /** The plot cleared to air, then grass at the floor on dirt on stone, the pool dug two deep and filled. */
-        void lay() {
+        public void lay() {
+            lay((x, z) -> floor);
+        }
+
+        /** {@link #lay()} on land of its own: the grass at {@code land}'s height in each column (the pool and its rim at the floor). */
+        public void lay(SitingGameTests.Land land) {
             clear();
             for (int x = px0; x <= px1; x++) {
                 for (int z = pz0; z <= pz1; z++) {
-                    for (int y = floor - DEEP; y <= floor; y++) {
-                        set(x, y, z, (y == floor ? Blocks.GRASS_BLOCK : y >= floor - 3 ? Blocks.DIRT : Blocks.STONE).defaultBlockState());
+                    int g = court.minX() <= x && x <= court.maxX() && court.minZ() <= z && z <= court.maxZ() ? floor : land.at(x, z);
+                    for (int y = floor - DEEP; y <= g; y++) {
+                        set(x, y, z, (y == g ? Blocks.GRASS_BLOCK : y >= g - 3 ? Blocks.DIRT : Blocks.STONE).defaultBlockState());
                     }
                 }
             }
@@ -118,11 +124,11 @@ public class CourtGameTests {
             }
         }
 
-        void clear() {
+        public void clear() {
             BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
             for (int x = px0; x <= px1; x++) {
                 for (int z = pz0; z <= pz1; z++) {
-                    for (int y = floor - DEEP - 2; y <= floor + 12; y++) {
+                    for (int y = floor - DEEP - 2; y <= floor + 24; y++) {
                         if (!level.getBlockState(p.set(x, y, z)).isAir()) {
                             level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE);
                         }
@@ -132,7 +138,7 @@ public class CourtGameTests {
         }
 
         /** Every cell of the pool, its rim and the air over them as it was before the raise; the first that is not, or null. */
-        String courtChanged() {
+        public String courtChanged() {
             for (Map.Entry<BlockPos, BlockState> e : before.entrySet()) {
                 BlockState now = level.getBlockState(e.getKey());
                 if (now != e.getValue()) {
@@ -143,7 +149,7 @@ public class CourtGameTests {
         }
 
         /** Every cell of the ring as its template has it; the first that is not, or null. */
-        String ringWrong() {
+        public String ringWrong() {
             for (RoomTemplates.Entry e : RoomTemplates.get(level, pl.room().id())) {
                 BlockPos w = pl.world(e.local());
                 BlockState want = e.state().rotate(pl.rotation());
