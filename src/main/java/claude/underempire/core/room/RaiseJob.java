@@ -1226,13 +1226,17 @@ public class RaiseJob extends DigJob {
         int z1 = Math.max(from.getZ(), anchor.getZ()) + r;
         int y0 = Math.min(from.getY(), anchor.getY()) - STAND_UP - 3;
         int y1 = Math.max(from.getY(), anchor.getY()) + STAND_UP + 2;
-        if (x1 - x0 > 40 || z1 - z0 > 40 || !level.isLoaded(from) || !SettlerMob.standable(level, from)) {
+        if (x1 - x0 > 40 || z1 - z0 > 40 || !level.isLoaded(from)) {
+            return null;
+        }
+        BlockPos start = walkStart(level, from);
+        if (start == null) {
             return null;
         }
         Long2IntOpenHashMap seen = new Long2IntOpenHashMap();
         LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
-        seen.put(from.asLong(), 0);
-        queue.enqueue(from.asLong());
+        seen.put(start.asLong(), 0);
+        queue.enqueue(start.asLong());
         BlockPos.MutableBlockPos n = new BlockPos.MutableBlockPos();
         while (!queue.isEmpty() && seen.size() < WALK_CELLS) {
             long k = queue.dequeueLong();
@@ -1270,6 +1274,45 @@ public class RaiseJob extends DigJob {
             }
         }
         return seen;
+    }
+
+    /**
+     * The cell a walk from {@code from} begins in: that cell when one can stand in it. A builder is often not in one (a hanging lantern's collision box
+     * over its head, a jump or a fall under way, a slab under it), and then "the builder isn't in a cell one can stand in" is no reason to say the walk
+     * can't be told ({@link #stand} then gave a stand nobody can walk to and called it walkable: aLampHallHasItsLanternsHungByBuilders, 2026-10-06, a
+     * builder under a lantern was given the roof's top and held its batch 400 ticks). Else: where it lands, the first cell one can stand in in its column
+     * down to 3 below (stopping at a solid cell), else the first it can step or drop to beside it. Null when there is none (then it can't be told).
+     */
+    @Nullable
+    private static BlockPos walkStart(ServerLevel level, BlockPos from) {
+        if (SettlerMob.standable(level, from)) {
+            return from;
+        }
+        BlockPos.MutableBlockPos c = new BlockPos.MutableBlockPos();
+        for (int dy = 1; dy <= 3; dy++) {
+            c.set(from.getX(), from.getY() - dy, from.getZ());
+            if (!level.isLoaded(c)) {
+                break;
+            }
+            if (SettlerMob.standable(level, c)) {
+                return c.immutable();
+            }
+            if (!free(level, c)) {
+                break;
+            }
+        }
+        for (Direction d : Direction.Plane.HORIZONTAL) {
+            for (int dy = 0; dy >= -3; dy--) {
+                c.set(from.getX() + d.getStepX(), from.getY() + dy, from.getZ() + d.getStepZ());
+                if (!level.isLoaded(c)) {
+                    break;
+                }
+                if (SettlerMob.standable(level, c)) {
+                    return c.immutable();
+                }
+            }
+        }
+        return null;
     }
 
     /** Whether the cells a builder passes stepping off a ledge at {@code y} into the column (x, z) down to its feet at {@code feet} are free. */

@@ -990,6 +990,71 @@ public class RaiseJobGameTests {
     }
 
     /**
+     * A builder who stands where it can't be told to stand is still sent to a stand it can walk to (the flake of aLampHallHasItsLanternsHungByBuilders,
+     * 2026-10-06, f26fc41: a builder at the cell under the hall's chain and lantern, claiming the last roof cells, was given the roof's top, 4 over its
+     * head, and held the batch its 400 ticks until the cell was shelved and heaved). {@code RaiseJob#flood} begins in the cell the builder is in, and
+     * {@code SettlerMob.standable} refuses a cell with a lantern's collision box over its feet: no flood, "can't tell", the old best (the highest cell
+     * in each column, the finished roof) and a {@link RaiseJob.Stand} that says it is walkable. In the hall of {@link #lamps()}, laid up to its last
+     * cells, the lantern on its chain at (5,2,5): for a builder in the cell under it the roof cell still to be laid is laid from a cell on the floor
+     * it can walk to, as for a builder one cell aside (the control: the same cells, the same stand rule).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aBuilderUnderAHangingLanternIsSentToAStandItCanWalkTo(GameTestHelper h) {
+        Rooms.Room room = lamps();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "the lamp hall");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 7L);
+            BlockPos near = s.pl.door();
+            for (int rounds = 0; job.taskList().size() - job.finishedCount() > 12; rounds++) {
+                h.assertTrue(rounds < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size()
+                        + " done; open: " + job.openReport(level, 8));
+                BlockPos claimed = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                h.assertTrue(claimed != null, "nothing could be handed out: " + job.openReport(level, 8));
+                job.gnawSome(level, builder, 1f);
+                job.complete(level, builder);
+            }
+            BlockPos lantern = s.pl.world(new BlockPos(5, 2, 5));          // the lantern on the chain: hangs over the floor cell the builder is in
+            if (!RaiseJob.hangs(level.getBlockState(lantern))) {
+                level.setBlock(lantern.above(), Blocks.CHAIN.defaultBlockState(), 2);   // laid by hand as the crew does it late: the stand rule doesn't ask who laid it
+                level.setBlock(lantern, hangingLantern(), 2);
+            }
+            BlockPos under = lantern.below();
+            BlockPos aside = under.east();
+            h.assertTrue(!claude.underempire.core.unit.SettlerMob.standable(level, under) && level.getBlockState(under).isAir(),
+                    "the scene is wrong: the cell " + under.toShortString() + " under the lantern is one to stand in (" + level.getBlockState(lantern) + " over it)");
+            h.assertTrue(claude.underempire.core.unit.SettlerMob.standable(level, aside), "the scene is wrong: the cell " + aside.toShortString() + " beside it is not one to stand in");
+            BlockPos anchor = null;                              // the roof cell still to be laid nearest the lantern
+            for (DigJob.Task t : job.taskList()) {
+                if (t.pos().getY() == s.floor + 4 && job.fillsOpen(t.pos())
+                        && (anchor == null || t.pos().distSqr(under) < anchor.distSqr(under))) {
+                    anchor = t.pos();
+                }
+            }
+            h.assertTrue(anchor != null, "no roof cell is left to be laid (4 over the floor): " + job.openReport(level, 12));
+            List<BlockPos> cells = List.of(anchor);
+            RaiseJob.Stand beside = job.stand(level, anchor, cells, aside);
+            h.assertTrue(beside.at() != null && beside.walkable() && beside.at().getY() <= s.floor + 2,
+                    "the control: for a builder at " + aside.toShortString() + " the roof cell " + anchor.toShortString() + " is laid from " + beside + ", not a cell on the floor it can walk to");
+            RaiseJob.Stand stand = job.stand(level, anchor, cells, under);
+            h.assertTrue(stand.at() != null && stand.at().getY() <= s.floor + 2,
+                    "for a builder at " + under.toShortString() + " (under the lantern at " + lantern.toShortString() + ") the roof cell " + anchor.toShortString()
+                            + " is laid from " + stand + " (the floor is at " + (s.floor + 1) + ", the roof's top at " + (s.floor + 5) + "): a builder is sent where no path goes"
+                            + (stand.walkable() ? ", and told it can walk there" : ""));
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
      * What is a hanging piece and what holds it, cell by cell in the air (the two tests above raise whole buildings): a piece hangs only
      * where it depends on the cell over it (a vine's top face, a vertical chain: not a wall vine, not a chain laid sideways); a hanging
      * piece is held by something solid over it, or by its own column over it already laid (vines under vines, a cave vine under its
