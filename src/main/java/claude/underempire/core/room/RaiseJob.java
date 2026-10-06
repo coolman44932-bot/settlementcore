@@ -1122,7 +1122,7 @@ public class RaiseJob extends DigJob {
      * A stand ({@link #standFor}), and whether its builder can walk to it. Not when the flood ran and found no cell in reach of the work that it can
      * walk to: {@code at} is then the old best, which no path may reach (a builder outside the back wall of a closed hall with one door is more
      * than {@value #WALK_STEPS} steps from it), or that the builder has no cell to walk from (swimming). It is when the flood found one, and
-     * when it could not tell (the builder far off: nothing is known better).
+     * when it could not tell (the builder far off, or on land or beside land not loaded: nothing is known better).
      */
     public record Stand(@Nullable BlockPos at, boolean walkable) {
     }
