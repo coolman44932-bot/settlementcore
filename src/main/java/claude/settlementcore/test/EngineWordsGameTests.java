@@ -229,6 +229,34 @@ public class EngineWordsGameTests {
     }
 
     /**
+     * The muster's words three ways: the templates read as sentences ({@link Settlement.MusterWords#rising} up out of something and back down,
+     * {@link Settlement.MusterWords#marching} out and back), a race that writes its own whole lines has them said as written, and one that
+     * writes none gets the sentence in its words. On a stub: no level is needed.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void theMustersWordsComeAsTemplatesOrARacesOwnLines(GameTestHelper h) {
+        Settlement.MusterWords pool = Settlement.MusterWords.rising("temple-city", "the spawn", "the pool");
+        String up = Muster.attackedLine(pool, "a Zombie", "", true), down = Muster.clearLine(pool, 1, 0, 2);
+        h.assertTrue(up.equals("The temple-city is attacked! A Zombie in the temple-city: the spawn rise from the pool to meet it."), "rising: " + up);
+        h.assertTrue(down.endsWith("2 defenders sink back into the pool."), "rising, the all-clear: " + down);
+        Settlement.MusterWords hold = Settlement.MusterWords.marching("hold", "the garrison", "the gates");
+        String out = Muster.attackedLine(hold, "3 Zombies", "Great Hall", false), back = Muster.clearLine(hold, 3, 1, 1);
+        h.assertTrue(out.equals("The hold is attacked! 3 Zombies in the Great Hall: the garrison marches out of the gates to meet them."), "marching: " + out);
+        h.assertTrue(back.endsWith("A defender marches back to the gates."), "marching, the all-clear: " + back);
+        Settlement own = new StubSettlement()
+                .answer("alarmLine", a -> "Oi! " + a[0] + " in da camp!")
+                .answer("allClearLine", a -> "Dat's dat: " + a[0] + " krumped.")
+                .settlement();
+        // one foe comes as "a Creeper" (Words.count); a race's own line gets it capitalised, as the engine's sentence does (the review of 0.4.1)
+        h.assertTrue(Muster.alarmText(own, "a Creeper", "", true).equals("Oi! A Creeper in da camp!"), "a race's own alarm: " + Muster.alarmText(own, "a Creeper", "", true));
+        h.assertTrue(Muster.clearText(own, 3, 0, 2).equals("Dat's dat: 3 krumped."), "a race's own all-clear: " + Muster.clearText(own, 3, 0, 2));
+        Settlement plain = new StubSettlement().settlement();
+        h.assertTrue(Muster.alarmText(plain, "A Creeper", "", true).equals("The settlement is attacked! A Creeper in the settlement: its defenders turn out to meet it."),
+                "the engine's own alarm: " + Muster.alarmText(plain, "A Creeper", "", true));
+        h.succeed();
+    }
+
+    /**
      * The muster's two lines to the owner (core/defence/Muster) on a settlement of the tests' own that gives no words for them: a foe comes into it and
      * the alarm is told; the foe goes, {@link Muster#ALL_CLEAR} quiet seconds pass and the all-clear is told. Neither has a race's word ("The warren is attacked!",
      * "the horde rises", "sink back into the tunnels" were the Skaven's, said to any race: the review of 20da67f). The all-clear's tail, which needs defenders

@@ -132,10 +132,50 @@ public interface Settlement extends RoomShoring.Warren {
      * Heart's words). {@code place} is what the settlement is called in them ("warren"), {@code ground} where a foe is that is in none of its rooms
      * ("the tunnels"), {@code rises} what its defenders do at the alarm, before "to meet it" ("the horde rises"), and {@code verb} (plural: "sink";
      * the singular adds an s) and {@code back} what they do at the all-clear ("back into the tunnels"). The engine's own name no race.
+     * <p>Two templates for the usual ways defenders come: {@link #rising} (up out of the ground, a pool, the tunnels) and {@link #marching} (out
+     * of halls, barracks, gates). A race whose voice won't fit the sentence at all writes the whole line itself ({@link #alarmLine},
+     * {@link #allClearLine}).
      */
     record MusterWords(String place, String ground, String rises, String verb, String back) {
-        /** What a race that says nothing of its own gets (the test of core/test/EngineWordsGameTests reads every line made of it). */
-        public static final MusterWords ENGINE = new MusterWords("settlement", "the settlement", "its defenders rise", "stand", "down");
+        /**
+         * What a race that says nothing of its own gets: defenders that "turn out" and "stand down", true of any race however its defenders
+         * come (it said "rise" once, which only a race that comes up out of the ground does). The test of core/test/EngineWordsGameTests
+         * reads every line made of it.
+         */
+        public static final MusterWords ENGINE = new MusterWords("settlement", "the settlement", "its defenders turn out", "stand", "down");
+
+        /**
+         * Defenders who come up out of something and go back down into it: {@code who} ("the spawn") rise from {@code from} ("the pool") and
+         * sink back into it. {@code place} names the settlement ("temple-city"); a foe in none of its rooms is "in the " + place.
+         */
+        public static MusterWords rising(String place, String who, String from) {
+            return new MusterWords(place, "the " + place, who + " rise from " + from, "sink", "back into " + from);
+        }
+
+        /**
+         * Defenders who march out of a hall, barracks or gate and back to it: {@code who} ("the garrison") marches out of {@code from} ("the
+         * gates") and its defenders march back to it. {@code who} is one body, so "marches".
+         */
+        public static MusterWords marching(String place, String who, String from) {
+            return new MusterWords(place, "the " + place, who + " marches out of " + from, "march", "back to " + from);
+        }
+    }
+
+    /**
+     * The alarm's whole line in the race's own voice, or null for the engine's sentence made of {@link #musterWords}: {@code foes} are what
+     * came, capitalised for the start of a sentence ("A Zombie", "3 Zombies and a Pillager"), {@code where} the room the nearest is in (none:
+     * in no room), {@code one} whether it is the one of them. For a race the sentence won't fit ("Oi! A Creeper in da camp!").
+     */
+    default String alarmLine(String foes, String where, boolean one) {
+        return null;
+    }
+
+    /**
+     * The all-clear's whole line in the race's own voice, or null for the engine's sentence: {@code slain} foes slain, {@code lost} of its own
+     * lost, {@code home} defenders stood down.
+     */
+    default String allClearLine(int slain, int lost, int home) {
+        return null;
     }
 
     /** The words of the muster's lines: {@link MusterWords#ENGINE} until a race says. */

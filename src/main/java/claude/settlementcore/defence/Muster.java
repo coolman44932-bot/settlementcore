@@ -413,7 +413,19 @@ public final class Muster {
         Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
         Mob head = in.stream().min(Comparator.comparingDouble(m -> m.distanceToSqr(heart))).orElseThrow();
         String where = h.placeOf(head.blockPosition());
-        h.tellOwner(attackedLine(h.musterWords(), count(in), where, in.size() == 1), ChatFormatting.RED);
+        h.tellOwner(alarmText(h, count(in), where, in.size() == 1), ChatFormatting.RED);
+    }
+
+    /** The alarm as {@code h} says it: its own whole line ({@link Settlement#alarmLine}) if it writes one, else the sentence in its words. */
+    public static String alarmText(Settlement h, String foes, String where, boolean one) {
+        String own = h.alarmLine(claude.settlementcore.Words.capital(foes), where, one);   // "a Zombie" comes lower case: a race's line may open with it
+        return own != null ? own : attackedLine(h.musterWords(), foes, where, one);
+    }
+
+    /** The all-clear as {@code h} says it: its own whole line ({@link Settlement#allClearLine}) if it writes one, else the sentence in its words. */
+    public static String clearText(Settlement h, int slain, int lost, int home) {
+        String own = h.allClearLine(slain, lost, home);
+        return own != null ? own : clearLine(h.musterWords(), slain, lost, home);
     }
 
     /**
@@ -433,7 +445,12 @@ public final class Muster {
     public static String clearLine(Settlement.MusterWords w, int slain, int lost, int home) {
         return "The " + w.place() + " is clear: " + slain + (slain == 1 ? " foe" : " foes") + " slain, " + lost + " of ours lost."
                 + (home > 0 ? " " + claude.settlementcore.Words.capital(claude.settlementcore.Words.count(home, "defender"))
-                + " " + (home == 1 ? w.verb() + "s" : w.verb()) + " " + w.back() + "." : "");
+                + " " + (home == 1 ? singular(w.verb()) : w.verb()) + " " + w.back() + "." : "");
+    }
+
+    /** A plural verb made singular, for one defender: "sink" to "sinks", "march" to "marches". */
+    static String singular(String verb) {
+        return verb.matches(".*(s|x|z|ch|sh)") ? verb + "es" : verb + "s";
     }
 
     private void standDown(ServerLevel level, Settlement h) {
@@ -450,7 +467,7 @@ public final class Muster {
                 clear(r);
             }
         }
-        h.tellOwner(clearLine(h.musterWords(), slain, lost, home), ChatFormatting.GREEN);
+        h.tellOwner(clearText(h, slain, lost, home), ChatFormatting.GREEN);
         defenders.clear();
         buffed.clear();
         foes.clear();
