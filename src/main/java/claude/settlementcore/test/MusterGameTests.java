@@ -6,19 +6,16 @@ import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.unit.Footing;
 import claude.settlementcore.unit.SettlerMob;
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Difficulty;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.monster.Slime;
-import net.minecraft.world.entity.monster.Spider;
+import net.minecraft.world.entity.monster.spider.Spider;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -34,7 +31,6 @@ import java.util.function.Predicate;
  * test world does not delete).
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class MusterGameTests {
 
     private static final int UP = 360;
@@ -107,8 +103,8 @@ public class MusterGameTests {
     }
 
     static Hoglin foeAt(ServerLevel level, BlockPos at, boolean inTheWorld) {
-        Hoglin foe = EntityType.HOGLIN.create(level);
-        foe.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 0, 0);
+        Hoglin foe = EntityType.HOGLIN.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
+        foe.snapTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 0, 0);
         foe.setNoAi(true);
         foe.setPersistenceRequired();
         foe.setImmuneToZombification(true);
@@ -622,8 +618,8 @@ public class MusterGameTests {
             BlockPos at = middle.offset(-1, 3, 4);
             hollow(level, at, 1, 1);
             level.setBlock(at.above(), Blocks.STONE.defaultBlockState(), 2);                         // a gap one high
-            Spider spider = EntityType.SPIDER.create(level);
-            spider.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 0, 0);
+            Spider spider = EntityType.SPIDER.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
+            spider.snapTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, 0, 0);
             spider.setNoAi(true);
             spider.setPersistenceRequired();
             level.addFreshEntity(spider);
@@ -687,13 +683,13 @@ public class MusterGameTests {
     /** The slimes the hostile batch let loose, put down as it ends (a test that failed leaves its slime hopping). */
     private static final List<Mob> LOOSE = new ArrayList<>();
 
-    @net.minecraft.gametest.framework.BeforeBatch(batch = "musterhostile")
+    @BeforeBatch(batch = "musterhostile")
     public static void hostileBegins(ServerLevel level) {
         was = level.getServer().getWorldData().getDifficulty();
         level.getServer().setDifficulty(Difficulty.NORMAL, true);
     }
 
-    @net.minecraft.gametest.framework.AfterBatch(batch = "musterhostile")
+    @AfterBatch(batch = "musterhostile")
     public static void hostileEnds(ServerLevel level) {
         LOOSE.forEach(Mob::discard);
         LOOSE.clear();
@@ -702,9 +698,9 @@ public class MusterGameTests {
 
     /** A slime of the smallest size with its AI on, in the hollow at {@code at} (the middle of its 2 by 2 floor), persistent. */
     private static Slime slimeIn(ServerLevel level, BlockPos at) {
-        Slime slime = EntityType.SLIME.create(level);
+        Slime slime = EntityType.SLIME.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
         slime.setSize(1, true);
-        slime.moveTo(at.getX() + 1.0, at.getY(), at.getZ() + 1.0, 0, 0);
+        slime.snapTo(at.getX() + 1.0, at.getY(), at.getZ() + 1.0, 0, 0);
         slime.setPersistenceRequired();
         level.addFreshEntity(slime);
         LOOSE.add(slime);

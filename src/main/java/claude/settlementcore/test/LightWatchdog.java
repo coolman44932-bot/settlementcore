@@ -5,7 +5,8 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.gametest.framework.GameTestServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ThreadedLevelLightEngine;
-import net.minecraft.util.thread.ProcessorMailbox;
+import net.minecraft.util.thread.ConsecutiveExecutor;
+import net.minecraft.util.thread.AbstractConsecutiveExecutor;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.server.ServerStoppingEvent;
@@ -44,9 +45,8 @@ public final class LightWatchdog {
 
     private static final Logger LOG = LogUtils.getLogger();
     private static final Field SCHEDULED = field(ThreadedLevelLightEngine.class, "scheduled");
-    private static final Field MAILBOX = field(ThreadedLevelLightEngine.class, "taskMailbox");
-    private static final Field STATUS = field(ProcessorMailbox.class, "status");
-    private static final int MAILBOX_SCHEDULED = 2;                   // ProcessorMailbox.SCHEDULED_BIT
+    private static final Field MAILBOX = field(ThreadedLevelLightEngine.class, "consecutiveExecutor");
+    private static final Field STATUS = field(AbstractConsecutiveExecutor.class, "status");
 
     private static final Map<ServerLevel, Stuck> STUCK = new IdentityHashMap<>();
     private static int kicks;
@@ -68,7 +68,7 @@ public final class LightWatchdog {
         if (SCHEDULED == null || MAILBOX == null || STATUS == null) {
             if (!warned) {
                 warned = true;
-                LOG.error("GameTest light watchdog is OFF: cannot reach ThreadedLevelLightEngine / ProcessorMailbox fields (has Minecraft changed?)");
+                LOG.error("GameTest light watchdog is OFF: cannot reach ThreadedLevelLightEngine / ConsecutiveExecutor fields (has Minecraft changed?)");
             }
             return;
         }
@@ -90,13 +90,14 @@ public final class LightWatchdog {
             if (now - st.tick() < STUCK_TICKS || ms < STUCK_MS) {
                 return;
             }
-            ProcessorMailbox<?> box = (ProcessorMailbox<?>) MAILBOX.get(engine);
-            int status = ((AtomicInteger) STATUS.get(box)).get();
-            if ((status & MAILBOX_SCHEDULED) != 0) {
+            ConsecutiveExecutor box = (ConsecutiveExecutor) MAILBOX.get(engine);
+            // 26.1's light executor (ConsecutiveExecutor, was ProcessorMailbox) is SLEEPING, RUNNING or CLOSED
+            String status = String.valueOf(((java.util.concurrent.atomic.AtomicReference<?>) STATUS.get(box)).get());
+            if (status.equals("RUNNING")) {
                 if (ms >= LONG_UPDATE_MS && !st.reported()[0]) {
                     st.reported()[0] = true;
                     LOG.warn("GameTest light watchdog: {}'s light update has been running {} ms ({} ticks), mailbox status {}, {} queued",
-                            level.dimension().location(), ms, now - st.tick(), status, box.size());
+                            level.dimension().identifier(), ms, now - st.tick(), status, box.size());
                 }
                 return;
             }
@@ -110,19 +111,17 @@ public final class LightWatchdog {
         }
     }
 
-    private static void kick(ServerLevel level, ThreadedLevelLightEngine engine, AtomicBoolean scheduled, ProcessorMailbox<?> box, String how) {
+    private static void kick(ServerLevel level, ThreadedLevelLightEngine engine, AtomicBoolean scheduled, ConsecutiveExecutor box, String how) {
         kicks++;
         int queued = box.size();
         if (queued > 0) {
             LOG.warn("GameTest light watchdog: {}'s light update was lost ({}): the mailbox sat idle with {} tasks; woken (kick {})",
-                    level.dimension().location(), how, queued, kicks);
-            @SuppressWarnings("unchecked")
-            ProcessorMailbox<Runnable> runnables = (ProcessorMailbox<Runnable>) box;
-            runnables.tell(() -> {
+                    level.dimension().identifier(), how, queued, kicks);
+            box.schedule(() -> {
             });
         } else {
             LOG.warn("GameTest light watchdog: {}'s light update was dropped ({}): scheduled with an empty idle mailbox; scheduled "
-                    + "again (kick {})", level.dimension().location(), how, kicks);
+                    + "again (kick {})", level.dimension().identifier(), how, kicks);
             scheduled.set(false);
             engine.tryScheduleUpdate();
         }
@@ -141,7 +140,7 @@ public final class LightWatchdog {
         ThreadedLevelLightEngine engine = level.getChunkSource().getLightEngine();
         try {
             AtomicBoolean scheduled = (AtomicBoolean) SCHEDULED.get(engine);
-            ProcessorMailbox<?> box = (ProcessorMailbox<?>) MAILBOX.get(engine);
+            ConsecutiveExecutor box = (ConsecutiveExecutor) MAILBOX.get(engine);
             if (!scheduled.get()) {
                 return false;
             }
@@ -149,7 +148,7 @@ public final class LightWatchdog {
             // flag, and a release that waited for an idle mailbox found it busy with those and left the flag taken: the run
             // hung again (2026-09-27). The mailbox runs one task at a time, so one update more is all this can cause.
             kicks++;
-            LOG.warn("GameTest light watchdog: {}'s light flag released after a test (kick {})", level.dimension().location(), kicks);
+            LOG.warn("GameTest light watchdog: {}'s light flag released after a test (kick {})", level.dimension().identifier(), kicks);
             scheduled.set(false);
             engine.tryScheduleUpdate();
             STUCK.remove(level);

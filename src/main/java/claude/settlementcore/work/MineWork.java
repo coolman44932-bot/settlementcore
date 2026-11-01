@@ -355,7 +355,7 @@ public class MineWork extends RoomWork {
                 end = rat.blockPosition();                       // a rat down the stair works the faces where it is: not a climb to the room and back
             } else {
                 List<Drift> faces = drifts.stream().filter(x -> x.level == 0).toList();
-                Drift d = faces.get(level.random.nextInt(faces.size()));
+                Drift d = faces.get(level.getRandom().nextInt(faces.size()));
                 end = d.next > 0 ? d.cells.get(Math.min(d.next, d.cells.size()) - 1) : d.mouth;
             }
             return routed(rat, new Chore("working the old faces", end, 2.4, workTicks(rat, 60), "faces", (l, r) -> {
@@ -699,7 +699,7 @@ public class MineWork extends RoomWork {
     }
 
     private static Direction direction(BlockPos from, BlockPos to) {
-        return Direction.getNearest(to.getX() - from.getX(), 0, to.getZ() - from.getZ());
+        return Direction.getApproximateNearest(to.getX() - from.getX(), 0, to.getZ() - from.getZ());
     }
 
     /** The room's old pit made ready: what stood in it for show (a ladder, the winch's chain and bucket) away, its gate open. */
@@ -709,7 +709,7 @@ public class MineWork extends RoomWork {
                 for (int dy = 1; dy <= 5; dy++) {
                     BlockPos p = winze.offset(dx, -dy, dz);
                     BlockState st = level.getBlockState(p);
-                    if (!st.isAir() && (st.is(Blocks.LADDER) || st.is(Blocks.CHAIN) || st.is(Blocks.CAULDRON))) {
+                    if (!st.isAir() && (st.is(Blocks.LADDER) || st.is(Blocks.IRON_CHAIN) || st.is(Blocks.CAULDRON))) {
                         level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_ALL);
                     }
                 }
@@ -987,7 +987,7 @@ public class MineWork extends RoomWork {
             return;
         }
         if (Currencies.ore(heart, s)) {
-            heart.addCurrency(1 + level.random.nextInt(3), "Ore Mine");
+            heart.addCurrency(1 + level.getRandom().nextInt(3), "Ore Mine");
             found++;
         } else {
             boolean ore = s.is(Tags.Blocks.ORES);
@@ -1029,7 +1029,7 @@ public class MineWork extends RoomWork {
 
     /** One roll of the old faces: what ore lies at this depth, as it lies in the world. */
     void trickle(ServerLevel level) {
-        ItemStack got = roll(level.random, winze != null && steps > 0 ? winzeStep(steps - 1).getY() : box().minY() + 1);
+        ItemStack got = roll(level.getRandom(), winze != null && steps > 0 ? winzeStep(steps - 1).getY() : box().minY() + 1);
         if (got.isEmpty()) {
             heart.addCurrency(1, "Ore Mine");
         } else {
@@ -1213,21 +1213,21 @@ public class MineWork extends RoomWork {
 
     @Override
     public void load(CompoundTag t) {
-        steps = winze == null ? 0 : t.getInt("winze_steps");
-        winzeStopped = t.getBoolean("winze_stopped");
-        winzeStop = t.getString("winze_stop");
-        winzeFinal = winzeStopped && (t.getBoolean("winze_final") || winzeStop.equals("at the bedrock"));   // a stop saved before pauses: only the bedrock's is for good
+        steps = winze == null ? 0 : t.getIntOr("winze_steps", 0);
+        winzeStopped = t.getBooleanOr("winze_stopped", false);
+        winzeStop = t.getStringOr("winze_stop", "");
+        winzeFinal = winzeStopped && (t.getBooleanOr("winze_final", false) || winzeStop.equals("at the bedrock"));   // a stop saved before pauses: only the bedrock's is for good
         for (int turn = 1; turn < steps / LEVEL; turn++) {
             openLevel(null, turn, false);                        // the levels' drifts set out again, in the order they were opened
         }
-        int[] next = t.getIntArray("next");
-        byte[] done = t.getByteArray("done");
+        int[] next = t.getIntArray("next").orElse(new int[0]);
+        byte[] done = t.getByteArray("done").orElse(new byte[0]);
         for (int i = 0; i < drifts.size() && i < next.length; i++) {
             drifts.get(i).next = next[i];
             drifts.get(i).done = i < done.length && done[i] != 0;
         }
-        found = t.getLong("found");
-        gnawed = t.getLong("gnawed");
-        nextTrickle = t.getLong("trickle");
+        found = t.getLongOr("found", 0L);
+        gnawed = t.getLongOr("gnawed", 0L);
+        nextTrickle = t.getLongOr("trickle", 0L);
     }
 }

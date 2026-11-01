@@ -59,7 +59,7 @@ public final class RoomStacking {
     /** Where nothing stands in the way: air, what has no collision (a crop, a torch), a chain or a hanging lamp. */
     public static boolean loose(BlockState s) {
         return s.isAir() || s.getCollisionShape(EmptyBlockGetter.INSTANCE, BlockPos.ZERO).isEmpty()
-                || s.is(Blocks.CHAIN) || s.getBlock() instanceof LanternBlock;
+                || s.is(Blocks.IRON_CHAIN) || s.getBlock() instanceof LanternBlock;
     }
 
     /** For each column of a room's footprint, the lowest cell of its floor there (anything it builds below its doorway). */

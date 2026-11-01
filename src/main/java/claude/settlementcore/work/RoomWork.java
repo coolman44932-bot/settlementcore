@@ -276,7 +276,7 @@ public abstract class RoomWork {
                     Container back = Bins.at(l2, from);
                     ItemStack left = back == null ? rest : Bins.insert(back, rest);
                     if (!left.isEmpty()) {
-                        r2.spawnAtLocation(left);
+                        r2.spawnAtLocation((net.minecraft.server.level.ServerLevel) r2.level(), left);
                     }
                 }
                 return null;

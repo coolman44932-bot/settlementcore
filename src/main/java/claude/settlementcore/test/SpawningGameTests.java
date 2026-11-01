@@ -7,12 +7,9 @@ import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.settlement.Spawning;
 import claude.settlementcore.unit.Footing;
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -24,7 +21,6 @@ import java.util.List;
  * spend of the test's own, which keeps what it was asked.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class SpawningGameTests {
 
     private static final Brood.Cost PUP = new Brood.Cost(1, 0, "Breeding");

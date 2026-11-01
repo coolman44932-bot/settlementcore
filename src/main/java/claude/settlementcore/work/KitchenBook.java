@@ -119,7 +119,7 @@ final class KitchenBook {
     private static RecipeManager bookFor;
 
     static synchronized KitchenBook of(ServerLevel level) {
-        RecipeManager rm = level.getRecipeManager();
+        RecipeManager rm = level.recipeAccess();
         if (book == null || rm != bookFor) {
             book = build(rm.getRecipes(), level.registryAccess());
             bookFor = rm;
@@ -130,7 +130,7 @@ final class KitchenBook {
     static KitchenBook build(java.util.Collection<RecipeHolder<?>> recipes, RegistryAccess access) {
         Set<Item> water = new HashSet<>();
         for (var h : BuiltInRegistries.ITEM.getTagOrEmpty(WATER)) {
-            if (new ItemStack(h.value()).getCraftingRemainingItem().isEmpty()) {
+            if (RecipeView.remainder(new ItemStack(h.value())).isEmpty()) {
                 water.add(h.value());                            // fresh water, not a bucket of it
             }
         }
@@ -146,7 +146,7 @@ final class KitchenBook {
             }
             ItemStack out;
             try {
-                out = r.getResultItem(access);
+                out = RecipeView.result(r, access);
             } catch (RuntimeException e) {
                 continue;
             }
@@ -155,12 +155,12 @@ final class KitchenBook {
             }
             List<Set<Item>> slots = new ArrayList<>();
             boolean fillable = true;
-            for (Ingredient ing : r.getIngredients()) {
+            for (Ingredient ing : RecipeView.ingredients(r)) {
                 if (ing.isEmpty()) {
                     continue;
                 }
                 Set<Item> takes = new HashSet<>();
-                for (ItemStack st : ing.getItems()) {
+                for (ItemStack st : RecipeView.items(ing)) {
                     if (!st.is(Items.BARRIER)) {
                         takes.add(st.getItem());
                     }
@@ -173,7 +173,7 @@ final class KitchenBook {
                 if (t == RecipeType.CRAFTING) {
                     for (Item i : takes) {
                         usedBy.merge(i, 1, Integer::sum);
-                        ItemStack rem = new ItemStack(i).getCraftingRemainingItem();
+                        ItemStack rem = RecipeView.remainder(new ItemStack(i));
                         if (!rem.isEmpty() && rem.is(i)) {
                             tools.add(i);                        // it comes back out of the grid: a cooking tool
                         }
@@ -186,7 +186,7 @@ final class KitchenBook {
             if (slots.stream().distinct().count() == 1 && out.getCount() > 1 && t == RecipeType.CRAFTING) {
                 continue;                                        // a crate opened or a food cut up: not cooking
             }
-            all.add(new Step(h.id(), slots, out.copy(), how(t, slots, out), station(t, slots, out), Fare.grade(out), fire));
+            all.add(new Step(h.id().identifier(), slots, out.copy(), how(t, slots, out), station(t, slots, out), Fare.grade(out), fire));
         }
         // the dishes: food made at a grid that is at least cooked fare, and is not a tool itself
         List<Step> dishes = new ArrayList<>();

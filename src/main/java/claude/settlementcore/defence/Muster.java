@@ -14,7 +14,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Entity;
-import net.minecraft.world.entity.FlyingMob;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.NeutralMob;
@@ -199,7 +198,7 @@ public final class Muster {
      * in or more is room enough that its foe is counted: the flood asks whether the foe is in a pocket, not whether the rats can come at it.)
      */
     public static boolean shutIn(ServerLevel level, Mob m, Map<Integer, Footing.Known> known) {
-        if (m.isPassenger() || flies(m) || m.isInWaterOrBubble()) {
+        if (m.isPassenger() || flies(m) || m.isInWater()) {
             return false;
         }
         int height = Math.max(1, (int) Math.ceil(m.getBbHeight() - 0.05));
@@ -210,7 +209,7 @@ public final class Muster {
 
     /** A foe that does not walk: one that flies (a ghast, a phantom, a vex, a bee) or has no gravity. It is in no hollow of the ground's. */
     private static boolean flies(Mob m) {
-        return m.isNoGravity() || m instanceof FlyingMob || m.getMoveControl() instanceof FlyingMoveControl
+        return m.isNoGravity() || m instanceof net.minecraft.world.entity.monster.Ghast || m instanceof net.minecraft.world.entity.monster.Phantom || m.getMoveControl() instanceof FlyingMoveControl
                 || m.getNavigation() instanceof FlyingPathNavigation;
     }
 
@@ -304,8 +303,8 @@ public final class Muster {
         Footing.Known known = new Footing.Known();
         BlockPos open = null;
         for (int t = 0; t < 48; t++) {
-            double d = (clanrat ? 6 : 3) + level.random.nextDouble() * 4 + t / 12.0;
-            Vec3 p = from.add(dir.scale(d)).add((level.random.nextDouble() - 0.5) * 6, 0, (level.random.nextDouble() - 0.5) * 6);
+            double d = (clanrat ? 6 : 3) + level.getRandom().nextDouble() * 4 + t / 12.0;
+            Vec3 p = from.add(dir.scale(d)).add((level.getRandom().nextDouble() - 0.5) * 6, 0, (level.getRandom().nextDouble() - 0.5) * 6);
             BlockPos base = BlockPos.containing(p);
             for (int dy = 0; dy <= 6; dy++) {
                 for (int s : new int[]{dy, -dy}) {

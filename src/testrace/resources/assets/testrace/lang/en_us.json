@@ -1,0 +1,7 @@
+{
+  "block.testrace.heart": "Test Heart",
+  "entity.testrace.worker": "Test Worker",
+  "entity.testrace.guard": "Test Guard",
+  "item.testrace.worker_spawn_egg": "Test Worker Spawn Egg",
+  "item.testrace.guard_spawn_egg": "Test Guard Spawn Egg"
+}

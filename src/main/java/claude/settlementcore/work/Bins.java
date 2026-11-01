@@ -252,8 +252,8 @@ public final class Bins {
                     .setValue(net.minecraft.world.level.block.BarrelBlock.FACING, s.facing()), net.minecraft.world.level.block.Block.UPDATE_ALL);
             if (level.getBlockEntity(p) instanceof BlockEntity be) {
                 net.minecraft.nbt.CompoundTag tag = new net.minecraft.nbt.CompoundTag();
-                tag.putString("CustomName", "{\"text\":\"" + name + "\"}");
-                be.loadWithComponents(tag, level.registryAccess());
+                tag.store("CustomName", net.minecraft.network.chat.ComponentSerialization.CODEC, net.minecraft.network.chat.Component.literal(name));
+                be.loadWithComponents(claude.settlementcore.Nbt.input(tag, level.registryAccess()));
                 be.setChanged();
                 n++;
             }

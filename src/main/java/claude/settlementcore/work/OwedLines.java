@@ -99,9 +99,9 @@ public final class OwedLines {
         lines.clear();
         for (Tag x : saved) {
             CompoundTag c = (CompoundTag) x;
-            ChatFormatting color = ChatFormatting.getByName(c.getString("color"));
+            ChatFormatting color = ChatFormatting.getByName(c.getStringOr("color", ""));
             if (!c.getString("line").isEmpty() && lines.size() < MAX) {
-                lines.add(new Line(c.getString("line"), color == null ? ChatFormatting.YELLOW : color, c.getBoolean("routine"), Math.max(1, c.getInt("count"))));
+                lines.add(new Line(c.getStringOr("line", ""), color == null ? ChatFormatting.YELLOW : color, c.getBooleanOr("routine", false), Math.max(1, c.getIntOr("count", 0))));
             }
         }
     }

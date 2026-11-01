@@ -162,8 +162,8 @@ public abstract class SettlerMob extends PathfinderMob {
     public int foesGivenUp;
 
     @Override
-    protected void customServerAiStep() {
-        super.customServerAiStep();
+    protected void customServerAiStep(net.minecraft.server.level.ServerLevel level) {
+        super.customServerAiStep(level);
         judgeReach();
     }
 
@@ -272,7 +272,7 @@ public abstract class SettlerMob extends PathfinderMob {
     static final class Blows {
         @SubscribeEvent
         static void landed(LivingDamageEvent.Post e) {
-            if (e.getSource().getEntity() instanceof SettlerMob s && e.getNewDamage() > 0 && s.getTarget() == e.getEntity()) {
+            if (e.getSource().getEntity() instanceof SettlerMob s && e.getInflictedDamage() > 0 && s.getTarget() == e.getEntity()) {
                 s.blowAt = s.tickCount;
             }
         }

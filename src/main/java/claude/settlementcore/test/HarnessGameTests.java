@@ -2,14 +2,11 @@ package claude.settlementcore.test;
 
 import claude.settlementcore.Core;
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ThreadedLevelLightEngine;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
@@ -20,7 +17,6 @@ import java.util.concurrent.locks.LockSupport;
  * (tools/gametest.py all --ns settlementcore; docs/plans/core-step2.md, C8).
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class HarnessGameTests {
 
     /**
@@ -80,7 +76,7 @@ public class HarnessGameTests {
     }
 
     /** The flag the self-test took is given back, pass or fail, before the next batch loads a chunk (LightWatchdog#release). */
-    @net.minecraft.gametest.framework.AfterBatch(batch = "lightwatchdog")
+    @AfterBatch(batch = "lightwatchdog")
     public static void released(ServerLevel level) {
         LightWatchdog.release(level);
     }

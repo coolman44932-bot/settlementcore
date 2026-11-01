@@ -94,8 +94,8 @@ public class CookWork extends RoomWork {
     static final java.util.concurrent.atomic.AtomicReference<Predicate<ItemStack>> ROASTS = new java.util.concurrent.atomic.AtomicReference<>();
 
     static ItemStack roasted(ServerLevel level, ItemStack raw) {
-        return level.getRecipeManager().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(raw), level)
-                .map(r -> r.value().assemble(new SingleRecipeInput(raw), level.registryAccess())).orElse(ItemStack.EMPTY);
+        return level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(raw), level)
+                .map(r -> r.value().assemble(new SingleRecipeInput(raw))).orElse(ItemStack.EMPTY);
     }
 
     List<BlockPos> pantry = List.of();
@@ -156,7 +156,7 @@ public class CookWork extends RoomWork {
         benches = b;
         water = w;
         if (ROASTS.get() == null) {
-            ROASTS.set(s -> level.getRecipeManager().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(s), level).isPresent());
+            ROASTS.set(s -> level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(s), level).isPresent());
         }
     }
 
@@ -360,7 +360,7 @@ public class CookWork extends RoomWork {
                 continue;
             }
             for (ItemStack used : in) {                          // a milk bucket's bucket, back to the Pantry
-                ItemStack rem = used.isEmpty() ? ItemStack.EMPTY : used.getCraftingRemainingItem();
+                ItemStack rem = used.isEmpty() ? ItemStack.EMPTY : RecipeView.remainder(used);
                 if (!rem.isEmpty()) {
                     rem.setCount(used.getCount());
                     ItemStack rest = Bins.insert(level, pantry, rem);
@@ -372,7 +372,7 @@ public class CookWork extends RoomWork {
             if (!d.intoPantry() && claude.settlementcore.food.Fare.spiceable(dish)) {
                 if (laceLeft <= 0 && heart.currency() > SPICE_RESERVE && heart.spendCurrency(1, "Spicing feasts")) {
                     laceLeft = claude.settlementcore.food.Fare.SPICED_PER_SHARD;   // a pinch of warpstone for the batch
-                    level.sendParticles(new net.minecraft.core.particles.DustParticleOptions(new org.joml.Vector3f(0.35f, 0.95f, 0.25f), 1f),
+                    level.sendParticles(new net.minecraft.core.particles.DustParticleOptions(0x59F240, 1f),
                             at.getX() + 0.5, at.getY() + 1.1, at.getZ() + 0.5, 12, 0.25, 0.2, 0.25, 0.02);
                     level.playSound(null, at, SoundEvents.AMETHYST_BLOCK_CHIME, SoundSource.BLOCKS, 0.7f, 0.6f);
                 }
@@ -408,7 +408,7 @@ public class CookWork extends RoomWork {
                 cooked += made;
             }
             level.playSound(null, at, d.at().equals("pot") ? SoundEvents.BREWING_STAND_BREW : SoundEvents.CAMPFIRE_CRACKLE,
-                    SoundSource.BLOCKS, 0.8f, 0.9f + level.random.nextFloat() * 0.2f);
+                    SoundSource.BLOCKS, 0.8f, 0.9f + level.getRandom().nextFloat() * 0.2f);
             level.sendParticles(net.minecraft.core.particles.ParticleTypes.CAMPFIRE_COSY_SMOKE, at.getX() + 0.5, at.getY() + 1.2,
                     at.getZ() + 0.5, 2, 0.2, 0.1, 0.2, 0.01);
         }
@@ -491,7 +491,7 @@ public class CookWork extends RoomWork {
 
     @Override
     public void load(CompoundTag t) {
-        cooked = t.getLong("cooked");
-        spiced = t.getLong("spiced");
+        cooked = t.getLongOr("cooked", 0L);
+        spiced = t.getLongOr("spiced", 0L);
     }
 }

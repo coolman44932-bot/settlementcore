@@ -401,14 +401,14 @@ public interface Settlement extends RoomShoring.Warren {
                     for (int dz = -r; dz <= r; dz++) {
                         BlockPos p = near.offset(dx, dy, dz);
                         if (level.getBlockState(p).isAir() && level.getBlockState(p.above()).isAir()
-                                && level.getBlockState(p.below()).isSolidRender(level, p.below())) {
+                                && level.getBlockState(p.below()).isSolidRender()) {
                             ring.add(p);
                         }
                     }
                 }
             }
             while (!ring.isEmpty()) {
-                BlockPos p = ring.remove(level.random.nextInt(ring.size()));
+                BlockPos p = ring.remove(level.getRandom().nextInt(ring.size()));
                 if (Footing.escapes(level, p, Footing.LIMIT, known)) {
                     return p;
                 }
@@ -451,7 +451,7 @@ public interface Settlement extends RoomShoring.Warren {
                 }
             }
             if (!ring.isEmpty()) {
-                return ring.get(level.random.nextInt(ring.size()));
+                return ring.get(level.getRandom().nextInt(ring.size()));
             }
         }
         return findStandable(level, mid);

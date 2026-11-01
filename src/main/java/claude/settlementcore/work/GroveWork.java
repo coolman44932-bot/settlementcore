@@ -15,7 +15,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
-import net.minecraft.world.level.block.FungusBlock;
+import net.minecraft.world.level.block.NetherFungusBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
@@ -105,7 +105,7 @@ public class GroveWork extends RoomWork {
                     return null;
                 });
             }
-            if (a.getBlock() instanceof FungusBlock && now - fedAt.getOrDefault(ground, Long.MIN_VALUE / 2) >= FEED_TICKS) {
+            if (a.getBlock() instanceof NetherFungusBlock && now - fedAt.getOrDefault(ground, Long.MIN_VALUE / 2) >= FEED_TICKS) {
                 return new Chore("feeding a sprout", up, 2.4, workTicks(rat, 20), ground, (l, r) -> {
                     fedAt.put(ground, l.getGameTime());
                     feed(l, ground);
@@ -135,12 +135,12 @@ public class GroveWork extends RoomWork {
     boolean feed(ServerLevel level, BlockPos ground) {
         BlockPos up = ground.above();
         BlockState a = level.getBlockState(up);
-        if (!(a.getBlock() instanceof FungusBlock f) || !f.isValidBonemealTarget(level, up, a)) {
+        if (!(a.getBlock() instanceof NetherFungusBlock f) || !f.isValidBonemealTarget(level, up, a)) {
             return false;
         }
         level.levelEvent(1505, up, 0);                          // the bone-meal sparkle
-        if (f.isBonemealSuccess(level, level.random, up, a)) {
-            f.performBonemeal(level, level.random, up, a);
+        if (f.isBonemealSuccess(level, level.getRandom(), up, a)) {
+            f.performBonemeal(level, level.getRandom(), up, a);
         }
         return stem(level.getBlockState(up));
     }
@@ -252,7 +252,7 @@ public class GroveWork extends RoomWork {
             BlockState a = level.getBlockState(sp.pos().above());
             if (stem(a)) {
                 grown++;
-            } else if (a.getBlock() instanceof FungusBlock) {
+            } else if (a.getBlock() instanceof NetherFungusBlock) {
                 sprouts++;
             }
         }
@@ -269,6 +269,6 @@ public class GroveWork extends RoomWork {
 
     @Override
     public void load(CompoundTag t) {
-        stems = t.getLong("stems");
+        stems = t.getLongOr("stems", 0L);
     }
 }

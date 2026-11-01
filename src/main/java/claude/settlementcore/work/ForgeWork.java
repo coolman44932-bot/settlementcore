@@ -179,7 +179,7 @@ public class ForgeWork extends RoomWork {
         if (s.isEmpty()) {
             return Optional.empty();
         }
-        return level.getRecipeManager().getRecipeFor((RecipeType<AbstractCookingRecipe>) type, new SingleRecipeInput(s), level);
+        return level.recipeAccess().getRecipeFor((RecipeType<AbstractCookingRecipe>) type, new SingleRecipeInput(s), level);
     }
 
     /** Whether any furnace of this kind would cook it. */
@@ -351,7 +351,7 @@ public class ForgeWork extends RoomWork {
                     ItemStack rest = store(l2, ingots, r2.carried());
                     r2.carry(ItemStack.EMPTY);
                     if (!rest.isEmpty()) {
-                        r2.spawnAtLocation(rest);
+                        r2.spawnAtLocation((net.minecraft.server.level.ServerLevel) r2.level(), rest);
                     }
                     return null;
                 }).returning(bin);
@@ -368,7 +368,7 @@ public class ForgeWork extends RoomWork {
             if (!hungry || !work) {
                 continue;
             }
-            ItemStack kind = Bins.peek(level, fuel, s -> AbstractFurnaceBlockEntity.isFuel(s)
+            ItemStack kind = Bins.peek(level, fuel, s -> level.fuelValues().isFuel(s)
                     && (fuelSlot.isEmpty() || ItemStack.isSameItemSameComponents(s, fuelSlot)));
             if (kind.isEmpty()) {
                 continue;
@@ -482,19 +482,19 @@ public class ForgeWork extends RoomWork {
                 if (r.isEmpty()) {
                     break;
                 }
-                int cook = r.get().value().getCookingTime();
+                int cook = r.get().value().cookingTime();
                 while (burn < cook) {
                     ItemStack fs = f.getItem(1);
                     if (fs.isEmpty()) {
-                        ItemStack more = Bins.take(level, fuel, AbstractFurnaceBlockEntity::isFuel, 64);
+                        ItemStack more = Bins.take(level, fuel, level.fuelValues()::isFuel, 64);
                         if (more.isEmpty()) {
                             break;
                         }
                         f.setItem(1, more);
                         fs = f.getItem(1);
                     }
-                    burn += fs.getBurnTime(type) / (type == RecipeType.SMELTING ? 1 : 2);   // blast furnaces and smokers burn fuel twice as fast
-                    ItemStack rem = fs.getCraftingRemainingItem();
+                    burn += fs.getBurnTime(type, level.fuelValues()) / (type == RecipeType.SMELTING ? 1 : 2);   // blast furnaces and smokers burn fuel twice as fast
+                    ItemStack rem = RecipeView.remainder(fs);
                     fs.shrink(1);
                     if (fs.isEmpty()) {
                         f.setItem(1, rem);
@@ -503,7 +503,7 @@ public class ForgeWork extends RoomWork {
                 if (burn < cook || ticks < cook) {
                     break;
                 }
-                ItemStack result = r.get().value().assemble(new SingleRecipeInput(in), level.registryAccess());
+                ItemStack result = r.get().value().assemble(new SingleRecipeInput(in));
                 ItemStack rest = store(level, ingots, result.copy());
                 if (!rest.isEmpty()) {
                     ItemStack o = f.getItem(2);
@@ -606,7 +606,7 @@ public class ForgeWork extends RoomWork {
 
     @Override
     public void load(net.minecraft.nbt.CompoundTag tag) {
-        smelted = tag.getLong("smelted");
-        pressed = tag.getLong("pressed");
+        smelted = tag.getLongOr("smelted", 0L);
+        pressed = tag.getLongOr("pressed", 0L);
     }
 }

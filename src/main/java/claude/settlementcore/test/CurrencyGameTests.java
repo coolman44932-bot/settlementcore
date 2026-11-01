@@ -7,15 +7,12 @@ import claude.settlementcore.settlement.Currencies;
 import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.work.Works;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +24,6 @@ import java.util.List;
  * flint scraps a ninth) and iron (ingot 1, block 9, nugget a ninth), each put away again when its test is over.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class CurrencyGameTests {
 
     /** Copper is a currency (an ingot a unit, nine flint scraps an ingot) while {@code test} runs, and is taken away again however it ends. */

@@ -41,7 +41,25 @@ public final class Den {
         if (!(e.getLevel() instanceof ServerLevel level) || level.dimension() != Level.OVERWORLD) {
             return;
         }
-        slept(level, e.getNewTime() - level.getDayTime());
+        slept(level, skipped(level, e.getAdjustment()));
+    }
+
+    /**
+     * How far {@code adjustment} moves the level's clock. Since 26.1 a night's sleep is an adjustment the clock is given after
+     * this event (to the wake-up marker, unless a mod set another) and before the sleepers wake, so the engine applies it here,
+     * reads the clock, and puts it back for the real one.
+     */
+    private static long skipped(ServerLevel level, net.neoforged.neoforge.common.util.ClockAdjustment adjustment) {
+        var clock = level.dimensionType().defaultClock().orElse(null);
+        if (clock == null || adjustment == null) {
+            return 0;
+        }
+        var clocks = level.getServer().clockManager();
+        long before = clocks.getTotalTicks(clock);
+        adjustment.apply(clocks, clock);
+        long after = clocks.getTotalTicks(clock);
+        clocks.setTotalTicks(clock, before);
+        return after - before;
     }
 
     /**

@@ -1,10 +1,10 @@
 package claude.settlementcore.test;
 
+import claude.settlementcore.Nbt;
 import claude.settlementcore.Core;
 import claude.settlementcore.settlement.Reserve;
 import claude.settlementcore.settlement.Roll;
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -13,10 +13,8 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.animal.Cow;
-import net.minecraft.world.entity.animal.Pig;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
+import net.minecraft.world.entity.animal.cow.Cow;
+import net.minecraft.world.entity.animal.pig.Pig;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +28,6 @@ import java.util.UUID;
  * that rises from the reserve and goes back if it cannot be made. Vanilla animals stand in for settlers.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class RollReserveGameTests {
 
     /** Two counts, and what takes from or adds to them: a take refuses at none of the kind, an add never goes under none. */
@@ -64,13 +61,13 @@ public class RollReserveGameTests {
         heart.add(7, 3);
         CompoundTag tag = new CompoundTag();
         heart.save(tag);
-        h.assertTrue(tag.keySet().equals(Set.of("horde_slaves", "horde_clanrats")) && tag.getInt("horde_slaves") == 7 && tag.getInt("horde_clanrats") == 3,
+        h.assertTrue(tag.keySet().equals(Set.of("horde_slaves", "horde_clanrats")) && tag.getIntOr("horde_slaves", 0) == 7 && tag.getIntOr("horde_clanrats", 0) == 3,
                 "the Heart's reserve saved as " + tag);
         Reserve pool = new Reserve("skinks", "saurus");
         pool.add(4, 2);
         CompoundTag poolTag = new CompoundTag();
         pool.save(poolTag);
-        h.assertTrue(poolTag.keySet().equals(Set.of("skinks", "saurus")) && poolTag.getInt("skinks") == 4 && poolTag.getInt("saurus") == 2,
+        h.assertTrue(poolTag.keySet().equals(Set.of("skinks", "saurus")) && poolTag.getIntOr("skinks", 0) == 4 && poolTag.getIntOr("saurus", 0) == 2,
                 "a Pool's reserve saved as " + poolTag);
 
         Reserve back = new Reserve("skinks", "saurus");
@@ -103,7 +100,7 @@ public class RollReserveGameTests {
         List<String> asked = new ArrayList<>();
         Reserve.Raiser<Pig> make = (lv, cell, soldier) -> {
             asked.add(cell.toShortString() + " " + soldier);
-            return EntityType.PIG.create(lv);
+            return EntityType.PIG.create(lv, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
         };
         Pig up = r.rise(level, at, true, make);
         h.assertTrue(up != null && r.soldiers() == 0 && r.workers() == 1 && asked.equals(List.of(at.toShortString() + " true")),
@@ -165,7 +162,7 @@ public class RollReserveGameTests {
         roll.save(tag);
         ListTag byHand = new ListTag();
         for (UUID id : List.of(x, y, z)) {
-            byHand.add(NbtUtils.createUUID(id));
+            byHand.add(Nbt.uuid(id));
         }
         h.assertTrue(tag.keySet().equals(Set.of("rats")) && byHand.equals(tag.get("rats")), "the roll saved as " + tag + ", not as the Heart saves rats: " + byHand);
         Roll other = new Roll("rats");

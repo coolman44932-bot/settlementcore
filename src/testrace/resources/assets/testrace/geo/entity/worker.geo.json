@@ -1,0 +1,216 @@
+{
+  "format_version": "1.12.0",
+  "minecraft:geometry": [
+    {
+      "description": {
+        "identifier": "geometry.testrace.worker",
+        "texture_width": 64,
+        "texture_height": 64,
+        "visible_bounds_width": 3,
+        "visible_bounds_height": 3.5,
+        "visible_bounds_offset": [
+          0,
+          1.5,
+          0
+        ]
+      },
+      "bones": [
+        {
+          "name": "root",
+          "pivot": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "name": "body",
+          "parent": "root",
+          "pivot": [
+            0,
+            6.0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -3.0,
+                6.0,
+                -1.75
+              ],
+              "size": [
+                6.0,
+                7.0,
+                3.5
+              ],
+              "uv": [
+                0,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "head",
+          "parent": "body",
+          "pivot": [
+            0,
+            13.0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -3.0,
+                13.0,
+                -3.0
+              ],
+              "size": [
+                6.0,
+                6.0,
+                6.0
+              ],
+              "uv": [
+                19.0,
+                0
+              ]
+            },
+            {
+              "origin": [
+                -3.5,
+                18.0,
+                -3.5
+              ],
+              "size": [
+                7.0,
+                1.5,
+                7.0
+              ],
+              "uv": [
+                20.0,
+                12.0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "right_arm",
+          "parent": "body",
+          "pivot": [
+            -4.0,
+            12.5,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -5.0,
+                6.0,
+                -1.0
+              ],
+              "size": [
+                2.0,
+                7.0,
+                2.0
+              ],
+              "uv": [
+                43.0,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "right_hand",
+          "parent": "right_arm",
+          "pivot": [
+            -4.0,
+            6.5,
+            0
+          ]
+        },
+        {
+          "name": "left_arm",
+          "parent": "body",
+          "pivot": [
+            4.0,
+            12.5,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                3.0,
+                6.0,
+                -1.0
+              ],
+              "size": [
+                2.0,
+                7.0,
+                2.0
+              ],
+              "uv": [
+                51.0,
+                0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "right_leg",
+          "parent": "root",
+          "pivot": [
+            -1.25,
+            6.0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                -2.5,
+                0,
+                -1.25
+              ],
+              "size": [
+                2.5,
+                6.0,
+                2.5
+              ],
+              "uv": [
+                0,
+                12.0
+              ]
+            }
+          ]
+        },
+        {
+          "name": "left_leg",
+          "parent": "root",
+          "pivot": [
+            1.25,
+            6.0,
+            0
+          ],
+          "cubes": [
+            {
+              "origin": [
+                0,
+                0,
+                -1.25
+              ],
+              "size": [
+                2.5,
+                6.0,
+                2.5
+              ],
+              "uv": [
+                10.0,
+                12.0
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -74,7 +74,7 @@ public final class Brood {
     public int scaled(int n) {
         float f = n * rate();
         int whole = (int) Math.floor(f);
-        return whole + (level.random.nextFloat() < f - whole ? 1 : 0);
+        return whole + (level.getRandom().nextFloat() < f - whole ? 1 : 0);
     }
 
     /**

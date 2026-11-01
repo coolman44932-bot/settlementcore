@@ -105,7 +105,7 @@ public final class RoomRelight {
 
     private static Block block(String s) {
         String id = s.split("\\[")[0];
-        return BuiltInRegistries.BLOCK.get(Identifier.parse(id.contains(":") ? id : "minecraft:" + id));
+        return BuiltInRegistries.BLOCK.getValue(Identifier.parse(id.contains(":") ? id : "minecraft:" + id));
     }
 
     /** A block state as the template wrote it ("spruce_fence_gate[facing=south,open=false,...]"). */

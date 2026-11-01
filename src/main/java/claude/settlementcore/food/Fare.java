@@ -1,5 +1,6 @@
 package claude.settlementcore.food;
 
+import claude.settlementcore.work.RecipeView;
 import claude.settlementcore.Core;
 import org.jetbrains.annotations.Nullable;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -206,7 +207,7 @@ public enum Fare {
             Recipe<?> r = h.value();
             ItemStack out;
             try {
-                out = r.getResultItem(access);
+                out = RecipeView.result(r, access);
             } catch (RuntimeException e) {
                 continue;                                        // a special recipe with no set result
             }
@@ -221,7 +222,7 @@ public enum Fare {
             if (t != RecipeType.CRAFTING) {
                 continue;
             }
-            List<Ingredient> used = r.getIngredients().stream().filter(i -> !i.isEmpty()).toList();
+            List<Ingredient> used = RecipeView.ingredients(r).stream().filter(i -> !i.isEmpty()).toList();
             List<Item> kinds = used.stream().map(Fare::firstItem).filter(Objects::nonNull).distinct().toList();
             if (kinds.isEmpty()) {
                 continue;
@@ -261,13 +262,13 @@ public enum Fare {
     }
 
     private static Item firstItem(Ingredient i) {
-        ItemStack[] any = i.getItems();
-        return any.length == 0 ? null : any[0].getItem();
+        List<ItemStack> any = RecipeView.items(i);
+        return any.isEmpty() ? null : any.get(0).getItem();
     }
 
     /** The first food an ingredient takes, or null if it takes none (a tool, a bowl, sugar) or only seasons (salt, a sauce). */
     private static Item firstFood(Ingredient i) {
-        for (ItemStack any : i.getItems()) {
+        for (ItemStack any : RecipeView.items(i)) {
             if (nutrition(any) > 0) {
                 return any.is(TAG_SEASONING) ? null : any.getItem();
             }
@@ -289,7 +290,6 @@ public enum Fare {
 
     /** What is left in the hand once one is eaten (a stew's bowl), or empty. */
     public static ItemStack leftover(ItemStack s) {
-        FoodProperties fp = s.get(DataComponents.FOOD);
-        return fp == null ? ItemStack.EMPTY : fp.usingConvertsTo().map(ItemStack::copy).orElse(ItemStack.EMPTY);
+        return RecipeView.useRemainder(s);
     }
 }

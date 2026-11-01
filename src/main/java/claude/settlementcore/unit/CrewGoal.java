@@ -381,7 +381,7 @@ public class CrewGoal extends Goal {
             if (rat.isWorker() && rat.getRandom().nextInt(3) == 0) {
                 for (int i = 0; i < 4 && wall == null; i++) {
                     BlockPos p = rat.blockPosition().relative(net.minecraft.core.Direction.from2DDataValue(rat.getRandom().nextInt(4)));
-                    if (rat.level().getBlockState(p).isSolidRender(rat.level(), p)) {
+                    if (rat.level().getBlockState(p).isSolidRender()) {
                         wall = p;
                     }
                 }

@@ -17,7 +17,6 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.core.registries.BuiltInRegistries;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtAccounter;
@@ -29,13 +28,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
-import net.minecraft.world.level.block.FarmBlock;
+import net.minecraft.world.level.block.FarmlandBlock;
 import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.minecraft.world.level.material.Fluids;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -67,7 +64,6 @@ import java.util.Set;
  * the raised buildings yet, and the id is the engine's own.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class SitingGameTests {
 
     public static final String PLATFORM = "raise_test_platform";
@@ -234,15 +230,15 @@ public class SitingGameTests {
 
         public Plan expectPlan(Siting.Result r, String scene) {
             if (r instanceof Refusal no) {
-                throw new net.minecraft.gametest.framework.GameTestAssertException(scene + " was refused: " + no.why() + " (at " + no.spot() + ")"
-                        + dumpLand(this, no.spot()));
+                throw new net.minecraft.gametest.framework.GameTestAssertException(net.minecraft.network.chat.Component.literal(scene + " was refused: " + no.why() + " (at " + no.spot() + ")"
+                        + dumpLand(this, no.spot())), 0);
             }
             return (Plan) r;
         }
 
         public Refusal expectRefusal(Siting.Result r, String scene) {
             if (r instanceof Plan p) {
-                throw new net.minecraft.gametest.framework.GameTestAssertException(scene + " was sited, not refused: " + p + dump(this, p, heights(p)));
+                throw new net.minecraft.gametest.framework.GameTestAssertException(net.minecraft.network.chat.Component.literal(scene + " was sited, not refused: " + p + dump(this, p, heights(p))), 0);
             }
             return (Refusal) r;
         }
@@ -601,7 +597,7 @@ public class SitingGameTests {
         s.set(s.bx0 + 5, land + 1, row, Blocks.OAK_FENCE.defaultBlockState());
         s.set(s.bx0 + 5, land + 2, row, Blocks.TORCH.defaultBlockState());
         for (int x = s.bx0 + 9; x <= s.bx0 + 11; x++) {
-            s.set(x, land, row, Blocks.FARMLAND.defaultBlockState().setValue(FarmBlock.MOISTURE, 0));
+            s.set(x, land, row, Blocks.FARMLAND.defaultBlockState().setValue(FarmlandBlock.MOISTURE, 0));
             s.set(x, land + 1, row, Blocks.WHEAT.defaultBlockState().setValue(CropBlock.AGE, 7));
         }
         tree(s, s.bx0 + 7, land + 1, row, 4, 1, 2);

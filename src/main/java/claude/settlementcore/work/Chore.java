@@ -97,7 +97,7 @@ public final class Chore {
             }
         }
         if (!rest.isEmpty()) {
-            rat.spawnAtLocation(rest);
+            rat.spawnAtLocation((net.minecraft.server.level.ServerLevel) rat.level(), rest);
         }
         rat.carry(net.minecraft.world.item.ItemStack.EMPTY);
     }

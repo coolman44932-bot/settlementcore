@@ -1,5 +1,6 @@
 package claude.settlementcore.work;
 
+import claude.settlementcore.Nbt;
 import claude.settlementcore.unit.SettlerMob;
 import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.settlement.Building;
@@ -219,7 +220,7 @@ public final class Works {
                 w = e.getValue().get();
                 String k = Long.toString(key.asLong());
                 if (saved.contains(k)) {
-                    w.load(saved.getCompound(k));
+                    w.load(saved.getCompoundOrEmpty(k));
                 }
                 rooms.put(key, w);
             }
@@ -241,7 +242,7 @@ public final class Works {
                 }
                 String k = Long.toString(b.door().asLong());
                 if (saved.contains(k)) {
-                    w.load(saved.getCompound(k));
+                    w.load(saved.getCompoundOrEmpty(k));
                 }
                 rooms.put(b.door(), w);
             }
@@ -509,14 +510,14 @@ public final class Works {
         if (at == null) {
             return;
         }
-        SettlerMob rat = w.crewType().create(level);
+        SettlerMob rat = w.crewType().create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
         if (rat == null) {
             return;
         }
         if (w.crewFromHorde() && !heart.takeFromReserve(clanrat)) {
             return;
         }
-        rat.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.random.nextFloat() * 360f, 0);
+        rat.snapTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.getRandom().nextFloat() * 360f, 0);
         rat.bindTo(heart);
         rat.finalizeSpawn(level, level.getCurrentDifficultyAt(at), EntitySpawnReason.MOB_SUMMONED, null);
         rat.makeCrew(w.key());
@@ -541,8 +542,8 @@ public final class Works {
         int floor = w.building.standingY();                      // the doorway's level first: not down a winze or up in a gallery
         for (int t = 0; t < 40; t++) {
             int r = 2 + t / 4;
-            int x = c.getX() + level.random.nextInt(2 * r + 1) - r;
-            int z = c.getZ() + level.random.nextInt(2 * r + 1) - r;
+            int x = c.getX() + level.getRandom().nextInt(2 * r + 1) - r;
+            int z = c.getZ() + level.getRandom().nextInt(2 * r + 1) - r;
             for (int dy = 0; dy <= 1; dy++) {                      // the doorway's level: never the bottom of a pit it cannot climb out of
                 for (int y : new int[]{floor + dy, floor - dy}) {
                     BlockPos p = new BlockPos(x, y, z);
@@ -1105,7 +1106,7 @@ public final class Works {
             for (ItemStack s : Bins.stacks(level, carts)) {
                 if (forge != null && ForgeWork.cooks(level, RecipeType.SMELTING, s)) {
                     move(s, name(m), name(forge), st -> Bins.insert(level, forge.oreBins(level), st));
-                } else if (forge != null && AbstractFurnaceBlockEntity.isFuel(s)) {
+                } else if (forge != null && level.fuelValues().isFuel(s)) {
                     move(s, name(m), name(forge), st -> Bins.insert(level, forge.fuelBins(level), st));
                 }
                 if (hoard) {
@@ -1358,8 +1359,8 @@ public final class Works {
         ListTag cl = new ListTag();
         for (var e : crew.entrySet()) {
             CompoundTag c = new CompoundTag();
-            c.putUUID("id", e.getKey());
-            c.put("room", NbtUtils.writeBlockPos(e.getValue()));
+            Nbt.putUUID(c, "id", e.getKey());
+            c.put("room", Nbt.pos(e.getValue()));
             if (clanratCrew.contains(e.getKey())) {
                 c.putBoolean("clanrat", true);
             }
@@ -1374,12 +1375,12 @@ public final class Works {
     }
 
     public void load(CompoundTag t, net.minecraft.core.HolderLookup.Provider registries) {
-        orders.load(t.getCompound("orders"), registries);
+        orders.load(t.getCompoundOrEmpty("orders"), registries);
         extension.load(t, registries);
-        saved = t.getCompound("rooms");
+        saved = t.getCompoundOrEmpty("rooms");
         rooms.clear();
         sites.clear();
-        refundDue = Math.max(0, t.getInt("refundDue"));
+        refundDue = Math.max(0, t.getIntOr("refundDue", 0));
         owed.load(t.getListOrEmpty("told"));
         for (Tag x : t.getListOrEmpty("sites")) {
             RaiseJob job = RaiseJob.load((CompoundTag) x);
@@ -1388,7 +1389,7 @@ public final class Works {
             } else {
                 // dropped (a plan or room that can't be read, a second site at a door): the price it was paid goes back at the first sync,
                 // not here, where there is no level and no currency yet; what was built of it stands
-                refundDue = (int) Math.min(Integer.MAX_VALUE, (long) refundDue + Math.max(0, ((CompoundTag) x).getInt("paid")));
+                refundDue = (int) Math.min(Integer.MAX_VALUE, (long) refundDue + Math.max(0, ((CompoundTag) x).getIntOr("paid", 0)));
             }
         }
         crew.clear();
@@ -1396,14 +1397,14 @@ public final class Works {
         fromReserve.clear();
         for (Tag x : t.getListOrEmpty("crew")) {
             CompoundTag c = (CompoundTag) x;
-            if (c.hasUUID("id")) {
-                NbtUtils.readBlockPos(c, "room").ifPresent(p -> {   // an entry with no room is no crew: it leaves no id in either set
-                    crew.put(c.getUUID("id"), p);
-                    if (c.getBoolean("clanrat")) {
-                        clanratCrew.add(c.getUUID("id"));
+            if (Nbt.hasUUID(c, "id")) {
+                Nbt.readPos(c, "room").ifPresent(p -> {   // an entry with no room is no crew: it leaves no id in either set
+                    crew.put(Nbt.getUUID(c, "id"), p);
+                    if (c.getBooleanOr("clanrat", false)) {
+                        clanratCrew.add(Nbt.getUUID(c, "id"));
                     }
-                    if (c.getBoolean("reserve")) {
-                        fromReserve.add(c.getUUID("id"));
+                    if (c.getBooleanOr("reserve", false)) {
+                        fromReserve.add(Nbt.getUUID(c, "id"));
                     }
                 });
             }

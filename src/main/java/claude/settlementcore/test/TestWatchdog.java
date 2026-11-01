@@ -24,9 +24,13 @@ import net.minecraft.server.level.ChunkResult;
 import net.minecraft.server.level.DistanceManager;
 import net.minecraft.server.level.FullChunkStatus;
 import net.minecraft.server.level.ServerLevel;
-import net.minecraft.server.level.TickingTracker;
+import net.minecraft.server.level.SimulationChunkTracker;
+import net.minecraft.server.level.ServerChunkCache;
+import net.minecraft.server.level.Ticket;
+import net.minecraft.server.level.TicketType;
+import net.minecraft.network.chat.Component;
 import net.minecraft.world.level.ChunkPos;
-import net.minecraft.world.level.ForcedChunksSavedData;
+import net.minecraft.world.level.TicketStorage;
 import net.minecraft.world.level.entity.PersistentEntitySectionManager;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -82,7 +86,6 @@ public final class TestWatchdog {
     private static final List<String> MISSING = new ArrayList<>();
     private static final Field TICKER_TESTS = field(GameTestTicker.class, "testInfos");
     private static final Field TICKER_RUNNER = field(GameTestTicker.class, "runner");
-    private static final Field RUNNER_BATCH = field(GameTestRunner.class, "currentBatch");
     private static final Field INFO_CHUNKS_LOADED = field(GameTestInfo.class, "chunksLoaded");
     private static final Field INFO_PLACED = field(GameTestInfo.class, "placedStructure");
     private static final Field LEVEL_ENTITIES = field(ServerLevel.class, "entityManager");
@@ -91,14 +94,17 @@ public final class TestWatchdog {
     private static final Field MAP_UPDATING = field(ChunkMap.class, "updatingChunkMap");
     private static final Field MAP_PENDING_UNLOADS = field(ChunkMap.class, "pendingUnloads");
     private static final Field MAP_TO_DROP = field(ChunkMap.class, "toDrop");
-    private static final Field DISTANCE_TICKETS = field(DistanceManager.class, "tickets");
-    private static final Field DISTANCE_TICKING = field(DistanceManager.class, "tickingTicketsTracker");
-    private static final Field FORCED_SET = field(ForcedChunksSavedData.class, "chunks");
+    private static final Field CACHE_TICKETS = field(ServerChunkCache.class, "ticketStorage");
+    private static final Field DISTANCE_SIMULATION = field(DistanceManager.class, "simulationChunkTracker");
+    private static final Field TICKETS_SIMULATION_LISTENER = field(TicketStorage.class, "simulationChunkUpdatedListener");
 
     private static final List<Consumer<ServerLevel>> AFTER_EACH_BATCH = new ArrayList<>();
 
     private static MinecraftServer server;
-    private static GameTestRunner hooked;
+    /** The ticket stores whose updates are watched for forces and un-forces. */
+    private static final java.util.Set<TicketStorage> WATCHED = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    /** The chunks with a forced ticket, as the watch saw them come and go. */
+    private static final LongOpenHashSet FORCED = new LongOpenHashSet();
     private static GameTestBatch batch;
     private static long batchTick;
     private static long batchNanos;
@@ -146,14 +152,6 @@ public final class TestWatchdog {
         if (runner == null) {
             return;
         }
-        if (runner != hooked) {
-            hooked = runner;
-            runner.addListener(new BatchWatch(level));
-            GameTestBatch now0 = get(RUNNER_BATCH, runner);
-            if (now0 != null) {
-                began(level, now0);                           // the first batch started before there was a runner to hook
-            }
-        }
         List<GameTestInfo> tests = ticking();
         for (GameTestInfo t : tests) {
             if (t.isDone()) {
@@ -168,10 +166,10 @@ public final class TestWatchdog {
                 continue;
             }
             if (w == null) {
-                WAITING.put(t, w = new Wait(now, System.nanoTime(), batch == null ? "?" : batch.name()));
+                WAITING.put(t, w = new Wait(now, System.nanoTime(), batch == null ? "?" : name(batch)));
             }
             w.sample(level, t, now);
-            if (now - w.tick >= STUCK_TICKS + t.getTestFunction().setupTicks() && System.nanoTime() - w.nanos >= STUCK_MS * 1_000_000L) {
+            if (now - w.tick >= STUCK_TICKS + t.getTest().setupTicks() && System.nanoTime() - w.nanos >= STUCK_MS * 1_000_000L) {
                 WAITING.remove(t);
                 fail(level, runner, t, w, now);
             }
@@ -203,43 +201,42 @@ public final class TestWatchdog {
         return c == null ? List.of() : List.copyOf(c);
     }
 
-    private static final class BatchWatch implements GameTestBatchListener {
-        private final ServerLevel level;
+    /** A batch starts (its structures placed, its tests about to tick): GameTests' batch listener, from the batch's first tick on. */
+    static void batchStarting(ServerLevel level, GameTestBatch b) {
+        server = level.getServer();
+        record(level);
+        began(level, b);
+    }
 
-        BatchWatch(ServerLevel level) {
-            this.level = level;
-        }
-
-        @Override
-        public void testBatchStarting(GameTestBatch b) {
-            began(level, b);
-        }
-
-        @Override
-        public void testBatchFinished(GameTestBatch b) {
-            for (Consumer<ServerLevel> hook : AFTER_EACH_BATCH) {
-                try {
-                    hook.accept(level);
-                } catch (RuntimeException ex) {
-                    LOG.error("GameTest watchdog: an after-batch hook failed at the end of '{}'", b.name(), ex);
-                }
+    /** A batch's last test is done, before the runner un-forces every forced chunk: the after-batch hooks. */
+    static void batchFinished(ServerLevel level, GameTestBatch b) {
+        for (Consumer<ServerLevel> hook : AFTER_EACH_BATCH) {
+            try {
+                hook.accept(level);
+            } catch (RuntimeException ex) {
+                LOG.error("GameTest watchdog: an after-batch hook failed at the end of '{}'", name(b), ex);
             }
         }
+    }
+
+    /** A batch as the log names it: its environment, and which part of it when it is split (50 tests a part). */
+    static String name(GameTestBatch b) {
+        return b.environment().getRegisteredName() + (b.index() > 0 ? "#" + b.index() : "");
     }
 
     private static void began(ServerLevel level, GameTestBatch b) {
         batch = b;
         batchTick = level.getServer().getTickCount();
         batchNanos = System.nanoTime();
-        if (!selfTested && !SELF_TEST.isEmpty() && b.name().toLowerCase().startsWith(SELF_TEST.toLowerCase())) {
+        if (!selfTested && !SELF_TEST.isEmpty() && b.environment().unwrapKey().map(k -> k.identifier().getPath()).orElse("").startsWith(SELF_TEST.toLowerCase())) {
             selfTested = true;
             GameTestInfo t = b.gameTestInfos().iterator().next();
             BoundingBox box = box(t);
             if (box != null) {
                 ChunkPos c = new ChunkPos(box.minX() >> 4, box.minZ() >> 4);
                 LOG.warn("GameTest watchdog self-test: un-forcing chunk {} of {} as batch '{}' starts; the watchdog should fail it",
-                        c, t.getTestName(), b.name());
-                level.setChunkForced(c.x, c.z, false);
+                        c, t.id(), name(b));
+                level.setChunkForced(c.x(), c.z(), false);
             }
         }
     }
@@ -264,7 +261,7 @@ public final class TestWatchdog {
                 return;
             }
             box.intersectingChunks().forEach(c -> {
-                long k = c.toLong();
+                long k = c.pack();
                 String s = state(level, k);
                 if (!s.equals(last.put(k, s))) {
                     List<String> h = history.computeIfAbsent(k, x -> new ArrayList<>());
@@ -281,7 +278,7 @@ public final class TestWatchdog {
             if (now - tick > longestTicks) {
                 longestTicks = now - tick;
                 longestMs = ms;
-                longestTest = t.getTestName();
+                longestTest = String.valueOf(t.id());
             }
         }
     }
@@ -289,7 +286,7 @@ public final class TestWatchdog {
     private static void fail(ServerLevel level, GameTestRunner runner, GameTestInfo t, Wait w, long now) {
         String report = report(level, t, w, now);
         failed++;
-        t.fail(new GameTestTimeoutException(report));
+        t.fail(new GameTestTimeoutException(Component.literal(report)));
         // what GameTestInfo.tick does for a test that finishes: the report, the batch's tracker (which starts the next batch)
         for (GameTestListener l : t.getListeners().toList()) {
             l.testFailed(t, runner);
@@ -316,15 +313,15 @@ public final class TestWatchdog {
         }
         GameTestBatch b = batch;
         if (b != null) {
-            sb.append("\n  batch '").append(b.name()).append("' began ").append(now - batchTick).append(" ticks (")
+            sb.append("\n  batch '").append(name(b)).append("' began ").append(now - batchTick).append(" ticks (")
                     .append((System.nanoTime() - batchNanos) / 1_000_000L).append(" ms) ago; its tests: ")
-                    .append(b.gameTestInfos().stream().map(x -> x.getTestName() + " (" + testState(x) + ")").collect(Collectors.joining(", ")));
+                    .append(b.gameTestInfos().stream().map(x -> x.id() + " (" + testState(x) + ")").collect(Collectors.joining(", ")));
         }
         ChunkMap map = level.getChunkSource().chunkMap;
         Map<?, ?> pending = get(MAP_PENDING_UNLOADS, map);
         LongSet drop = get(MAP_TO_DROP, map);
         PersistentEntitySectionManager<?> entities = get(LEVEL_ENTITIES, level);
-        sb.append("\n  server: tick ").append(now).append(", forced chunks ").append(level.getForcedChunks().size())
+        sb.append("\n  server: tick ").append(now).append(", forced chunks ").append(level.getForceLoadedChunks().size())
                 .append(", chunk holders ").append(map.size()).append(" (pending unload ").append(pending == null ? "?" : pending.size())
                 .append(", to drop ").append(drop == null ? "?" : drop.size()).append("), main-thread chunk tasks ")
                 .append(level.getChunkSource().getPendingTasksCount()).append(", ticket throttler ").append(map.getDistanceManager().getDebugStatus())
@@ -333,11 +330,11 @@ public final class TestWatchdog {
     }
 
     private static void chunkReport(StringBuilder sb, ServerLevel level, ChunkPos c, Wait w) {
-        long k = c.toLong();
+        long k = c.pack();
         ChunkMap map = level.getChunkSource().chunkMap;
         DistanceManager dm = map.getDistanceManager();
         boolean ticking = level.isPositionEntityTicking(c.getWorldPosition());
-        boolean forced = level.getForcedChunks().contains(k);
+        boolean forced = level.getForceLoadedChunks().contains(k);
         List<String> hist = w.history.get(k);
         if (ticking) {                                               // the healthy ones in a line, so the stuck ones stand out
             String since = hist == null || hist.isEmpty() ? "?" : hist.get(hist.size() - 1).split(" ", 2)[0];
@@ -354,9 +351,9 @@ public final class TestWatchdog {
         if (u != null) {
             sb.append(", last un-forced at tick ").append(u.tick).append(" (batch '").append(u.batch).append("') by ").append(u.by);
         }
-        Map<Long, ? extends Collection<?>> tickets = get(DISTANCE_TICKETS, dm);
-        Collection<?> mine = tickets == null ? null : tickets.get(k);
-        TickingTracker tracker = get(DISTANCE_TICKING, dm);
+        TicketStorage tickets = get(CACHE_TICKETS, level.getChunkSource());
+        Collection<?> mine = tickets == null ? null : tickets.getTickets(k);
+        SimulationChunkTracker tracker = get(DISTANCE_SIMULATION, dm);
         int simLevel = tracker == null ? -1 : tracker.getLevel(c);
         sb.append("\n    tickets: ").append(tickets == null ? "?" : mine == null || mine.isEmpty() ? "none" : mine)
                 .append("; simulation level ").append(simLevel < 0 ? "?" : simLevel).append(" -> in entity-ticking range: ")
@@ -383,7 +380,7 @@ public final class TestWatchdog {
         for (int dz = -2; dz <= 2; dz++) {
             sb.append("\n      ");
             for (int dx = -2; dx <= 2; dx++) {
-                ChunkHolder n = holder(map, ChunkPos.asLong(c.x + dx, c.z + dz));
+                ChunkHolder n = holder(map, ChunkPos.pack(c.x() + dx, c.z() + dz));
                 sb.append(n == null ? '-' : switch (n.getFullStatus()) {
                     case ENTITY_TICKING -> 'E';
                     case BLOCK_TICKING -> 'B';
@@ -400,9 +397,9 @@ public final class TestWatchdog {
     /** A chunk's state in one line, for the history of a waiting test's chunks. */
     private static String state(ServerLevel level, long k) {
         ChunkMap map = level.getChunkSource().chunkMap;
-        ChunkPos c = new ChunkPos(k);
+        ChunkPos c = ChunkPos.unpack(k);
         StringBuilder s = new StringBuilder(level.isPositionEntityTicking(c.getWorldPosition()) ? "ENTITY-TICKING" : "waiting");
-        s.append(level.getForcedChunks().contains(k) ? " forced" : " not-forced");
+        s.append(level.getForceLoadedChunks().contains(k) ? " forced" : " not-forced");
         ChunkHolder h = holder(map, k);
         if (h == null) {
             s.append(" no-holder");
@@ -421,7 +418,7 @@ public final class TestWatchdog {
      * {@code Level#getEntity} until it does.
      */
     public static String chunkState(ServerLevel level, int blockX, int blockZ) {
-        return state(level, ChunkPos.asLong(blockX >> 4, blockZ >> 4));
+        return state(level, ChunkPos.pack(blockX >> 4, blockZ >> 4));
     }
 
     private static String entities(ServerLevel level, long k) {
@@ -476,7 +473,7 @@ public final class TestWatchdog {
         BoundingBox b = BOXES.get(t);
         if (b == null) {
             try {
-                b = StructureUtils.getStructureBoundingBox(t.getStructureBlockEntity());
+                b = t.getTestInstanceBlockEntity().getStructureBoundingBox();
                 BOXES.put(t, b);
             } catch (RuntimeException ex) {
                 return null;
@@ -490,45 +487,38 @@ public final class TestWatchdog {
     private record Unforced(long tick, String batch, String by) {
     }
 
-    /** Swaps the level's forced-chunk set for a {@link Recorder} (once it exists: it is made at the first force). */
+    /**
+     * Watches the level's ticket store for forced tickets coming and going. Since 26.1 a forced chunk is a ticket in the
+     * store, and its forced-chunk set is made anew at every un-force, so the set can't be swapped for a recording one as on
+     * 1.21.1; the store's simulation listener (a forced ticket simulates) hears every add that raises a chunk and every
+     * remove, with the caller still on the stack.
+     */
     private static void record(ServerLevel level) {
-        if (FORCED_SET == null) {
+        TicketStorage tickets = get(CACHE_TICKETS, level.getChunkSource());
+        if (tickets == null || TICKETS_SIMULATION_LISTENER == null || !WATCHED.add(tickets)) {
             return;
         }
-        ForcedChunksSavedData data = level.getDataStorage().get(ForcedChunksSavedData.factory(), "chunks");
-        if (data == null || data.getChunks() instanceof Recorder) {
-            return;
-        }
+        FORCED.addAll(level.getForceLoadedChunks());
+        TicketStorage.ChunkUpdated inner = get(TICKETS_SIMULATION_LISTENER, tickets);
+        TicketStorage.ChunkUpdated watch = (node, newLevelFrom, onlyDecreased) -> {
+            if (inner != null) {
+                inner.update(node, newLevelFrom, onlyDecreased);
+            }
+            boolean forced = false;
+            for (Ticket t : tickets.getTickets(node)) {
+                forced |= t.getType() == TicketType.FORCED;
+            }
+            if (forced && FORCED.add(node) && server != null) {
+                FORCED_AT.put(node, server.getTickCount());
+                FORCED_BY.put(node, caller());
+            } else if (!forced && FORCED.remove(node)) {
+                unforced(node);
+            }
+        };
         try {
-            FORCED_SET.set(data, new Recorder(data.getChunks()));
+            TICKETS_SIMULATION_LISTENER.set(tickets, watch);
         } catch (ReflectiveOperationException ex) {
             LOG.error("GameTest watchdog: cannot watch the forced chunks", ex);
-        }
-    }
-
-    /** The forced-chunk set, noting when each chunk was forced, and when, in which batch and by whom it was let go. */
-    private static final class Recorder extends LongOpenHashSet {
-        Recorder(LongSet from) {
-            super(from);
-        }
-
-        @Override
-        public boolean add(long k) {
-            boolean added = super.add(k);
-            if (added && server != null) {
-                FORCED_AT.put(k, server.getTickCount());
-                FORCED_BY.put(k, caller());
-            }
-            return added;
-        }
-
-        @Override
-        public boolean remove(long k) {
-            boolean removed = super.remove(k);
-            if (removed) {
-                unforced(k);
-            }
-            return removed;
         }
     }
 
@@ -536,7 +526,8 @@ public final class TestWatchdog {
     private static String caller() {
         return StackWalker.getInstance().walk(s -> s
                 .dropWhile(f -> f.getClassName().startsWith(TestWatchdog.class.getName()) && !f.getMethodName().equals("began")
-                        || f.getClassName().startsWith("it.unimi") || f.getMethodName().equals("setChunkForced"))
+                        || f.getClassName().startsWith("it.unimi") || f.getClassName().equals(TicketStorage.class.getName())
+                        || f.getClassName().equals(ServerChunkCache.class.getName()) || f.getMethodName().equals("setChunkForced"))
                 .limit(6).map(f -> f.getClassName().substring(f.getClassName().lastIndexOf('.') + 1) + "." + f.getMethodName() + ":" + f.getLineNumber())
                 .collect(Collectors.joining(" < "))).intern();
     }
@@ -556,9 +547,9 @@ public final class TestWatchdog {
     private static void unforced(long k) {
         String by = caller();
         long tick = server == null ? -1 : server.getTickCount();
-        String b = batch == null ? "?" : batch.name();
+        String b = batch == null ? "?" : name(batch);
         UNFORCED.put(k, new Unforced(tick, b, by));
-        ChunkPos c = new ChunkPos(k);
+        ChunkPos c = ChunkPos.unpack(k);
         // whoever forced a chunk lets go of it, or the runner, which lets go of every forced chunk as a batch ends
         String forcer = FORCED_BY.remove(k);
         if (forcer != null && !owner(forcer).equals(owner(by)) && !owner(by).equals("GameTestRunner")) {
@@ -574,9 +565,9 @@ public final class TestWatchdog {
         }
         for (GameTestInfo t : live.keySet()) {
             BoundingBox box = t.isDone() ? null : box(t);
-            if (box != null && c.x >= box.minX() >> 4 && c.x <= box.maxX() >> 4 && c.z >= box.minZ() >> 4 && c.z <= box.maxZ() >> 4) {
+            if (box != null && c.x() >= box.minX() >> 4 && c.x() <= box.maxX() >> 4 && c.z() >= box.minZ() >> 4 && c.z() <= box.maxZ() >> 4) {
                 liveUnforces++;
-                LOG.warn("GameTest watchdog: chunk {} under {} ({}, batch '{}') was un-forced at tick {} by {}{}", c, t.getTestName(), testState(t), b, tick, by,
+                LOG.warn("GameTest watchdog: chunk {} under {} ({}, batch '{}') was un-forced at tick {} by {}{}", c, t.id(), testState(t), b, tick, by,
                         t.hasStarted() ? "" : ": until something else loads it to entity-ticking, the test cannot start");
             }
         }

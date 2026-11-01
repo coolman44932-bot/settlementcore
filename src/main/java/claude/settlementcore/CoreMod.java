@@ -1,19 +1,24 @@
 package claude.settlementcore;
 
+import claude.settlementcore.test.GameTests;
+import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.config.ModConfig;
 
 /**
  * Settlement Core as a mod: it registers its own settings (config/settlementcore-common.toml and -client.toml), which a
- * race that kept them before moves the player's values into first ({@link CoreConfig#adoptLegacy}). Everything else the
- * engine does, a race asks of it.
+ * race that kept them before moves the player's values into first ({@link CoreConfig#adoptLegacy}), and, where GameTests
+ * are on, its own tests ({@link GameTests}). Everything else the engine does, a race asks of it.
  */
 @Mod(Core.MODID)
 public final class CoreMod {
 
-    public CoreMod(ModContainer container) {
+    public CoreMod(IEventBus modBus, ModContainer container) {
         container.registerConfig(ModConfig.Type.COMMON, CoreConfig.SPEC, CoreConfig.COMMON_FILE);
         container.registerConfig(ModConfig.Type.CLIENT, CoreConfig.CLIENT_SPEC, CoreConfig.CLIENT_FILE);
+        CoreRegistries.register(modBus);
+        GameTests.registerEngine(modBus);
+        GameTests.register(container, modBus);
     }
 }

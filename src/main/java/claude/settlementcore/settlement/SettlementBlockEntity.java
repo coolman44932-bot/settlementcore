@@ -1,5 +1,6 @@
 package claude.settlementcore.settlement;
 
+import claude.settlementcore.Nbt;
 import claude.settlementcore.defence.Muster;
 import claude.settlementcore.food.Fare;
 import claude.settlementcore.food.Larder;
@@ -613,11 +614,11 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
     /** The mob of a rise, made and in the world, or null if none can be made (the race may make its own: a settler with a variant, say). */
     @Nullable
     protected SettlerMob makePerson(ServerLevel level, BlockPos at, boolean soldier, boolean teem) {
-        SettlerMob mob = (soldier ? soldierType() : workerType()).create(level);
+        SettlerMob mob = (soldier ? soldierType() : workerType()).create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
         if (mob == null) {
             return null;
         }
-        mob.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.random.nextFloat() * 360f, 0);
+        mob.snapTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.getRandom().nextFloat() * 360f, 0);
         mob.bindTo(this);
         mob.finalizeSpawn(level, level.getCurrentDifficultyAt(at), EntitySpawnReason.MOB_SUMMONED, null);
         level.addFreshEntity(mob);
@@ -630,11 +631,23 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
 
     // ------------------------------------------------------------------ save / load
 
+    /**
+     * The settlement's state, in one compound under {@value #SAVE_KEY} (since 26.1 a block entity saves through a ValueOutput,
+     * which can't hand over a whole tag: the engine's parts still write theirs, and the race's own fields sit beside it). Its
+     * items need the level's registries, so a settlement is saved only once it has a level, as every placed one has.
+     */
+    public static final String SAVE_KEY = "settlement";
+
     @Override
-    protected void saveAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.saveAdditional(tag, registries);
+    protected void saveAdditional(net.minecraft.world.level.storage.ValueOutput out) {
+        super.saveAdditional(out);
+        if (level == null) {
+            return;
+        }
+        HolderLookup.Provider registries = level.registryAccess();
+        CompoundTag tag = new CompoundTag();
         if (owner != null) {
-            tag.putUUID("owner", owner);
+            Nbt.putUUID(tag, "owner", owner);
         }
         tag.putString(keys.name(), name);
         tag.putInt(keys.currency(), currency);
@@ -647,29 +660,32 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         ListTag spoilList = new ListTag();
         for (ItemStack st : spoils) {
             if (!st.isEmpty()) {
-                spoilList.add(st.save(registries));
+                spoilList.add(claude.settlementcore.Nbt.item(st, registries));
             }
         }
         tag.put("spoils", spoilList);
         tag.putFloat("spawn_progress", spawnProgress);
+        out.store(SAVE_KEY, CompoundTag.CODEC, tag);
     }
 
     @Override
-    protected void loadAdditional(CompoundTag tag, HolderLookup.Provider registries) {
-        super.loadAdditional(tag, registries);
-        owner = tag.hasUUID("owner") ? tag.getUUID("owner") : null;
-        name = tag.getString(keys.name());
-        currency = tag.getInt(keys.currency());
+    protected void loadAdditional(net.minecraft.world.level.storage.ValueInput in) {
+        super.loadAdditional(in);
+        HolderLookup.Provider registries = in.lookup();
+        CompoundTag tag = in.read(SAVE_KEY, CompoundTag.CODEC).orElseGet(CompoundTag::new);
+        owner = Nbt.hasUUID(tag, "owner") ? Nbt.getUUID(tag, "owner") : null;
+        name = tag.getStringOr(keys.name(), "");
+        currency = tag.getIntOr(keys.currency(), 0);
         ration.load(tag);
         roll.load(tag);
         reserve.load(tag);
         book.load(tag);
-        works().load(tag.getCompound("works"), registries);
-        ledgerStores = new LongOpenHashSet(tag.getLongArray("ledger_stores"));
+        works().load(tag.getCompoundOrEmpty("works"), registries);
+        ledgerStores = new LongOpenHashSet(tag.getLongArray("ledger_stores").orElse(new long[0]));
         spoils.clear();
         for (Tag t : tag.getListOrEmpty("spoils")) {
-            ItemStack.parse(registries, t).ifPresent(spoils::add);
+            Nbt.parseItem(registries, t).ifPresent(spoils::add);
         }
-        spawnProgress = loaded(tag.getFloat("spawn_progress"));
+        spawnProgress = loaded(tag.getFloatOr("spawn_progress", 0f));
     }
 }

@@ -13,14 +13,11 @@ import claude.settlementcore.work.SiteWork;
 import claude.settlementcore.work.Works;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +33,6 @@ import java.util.regex.Pattern;
  * all-clear lines are read the same way (its words: {@code Settlement#musterWords}).
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class EngineWordsGameTests {
 
     /** The words of the races; "settlement", "builders" and "currency" are the engine's. */

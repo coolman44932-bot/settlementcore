@@ -1,0 +1,26 @@
+modLoader = "javafml"
+loaderVersion = "[1,)"
+license = "MIT"
+
+[[mods]]
+    modId = "testrace"
+    version = "${version}"
+    displayName = "Settlement Core Test Race"
+    authors = "built with Claude"
+    description = """
+A dev-only race on Settlement Core, to see the engine run and to copy from: a Heart that wakes when it is placed, Workers
+and Guards that rise from it, a crowd drawn the engine's way, and its own GameTests. Not for players' worlds."""
+
+[[dependencies.testrace]]
+    modId = "settlementcore"
+    type = "required"
+    versionRange = "[${version}]"
+    ordering = "AFTER"
+    side = "BOTH"
+
+[[dependencies.testrace]]
+    modId = "geckolib"
+    type = "required"
+    versionRange = "[${geckolib_version},6)"
+    ordering = "NONE"
+    side = "BOTH"

@@ -450,7 +450,7 @@ public final class SiteWork extends RoomWork {
                 SiteWork site = footedAt(rat);
                 if (site != null) {
                     site.shoves++;                               // counted, for the tests: the fall is no harm to anyone, so nothing else shows it
-                    site.hardestShove = Math.max(site.hardestShove, e.getDistance());
+                    site.hardestShove = Math.max(site.hardestShove, (float) e.getDistance());
                     e.setCanceled(true);
                 }
             }

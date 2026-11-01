@@ -162,8 +162,8 @@ public class RaiseJob extends DigJob {
      */
     @Nullable
     public static RaiseJob load(CompoundTag t) {
-        String room = t.getString("room");
-        if (!t.getBoolean("raise") || Rooms.get(room) == null) {
+        String room = t.getStringOr("room", "");
+        if (!t.getBooleanOr("raise", false) || Rooms.get(room) == null) {
             LOGGER.warn("Settlement Core: a saved site of '{}' can't be raised (no such building): dropped", room);
             return null;
         }
@@ -193,14 +193,14 @@ public class RaiseJob extends DigJob {
 
     @Override
     protected void loadMore(CompoundTag t) {
-        planTag = t.contains("reshape") ? t.getCompound("reshape") : null;
-        paid = t.getInt("paid");
-        heaved = t.getInt("heaved");
-        spared = t.getInt("spared");
-        tearing = t.getBoolean("tearing");
+        planTag = t.contains("reshape") ? t.getCompoundOrEmpty("reshape") : null;
+        paid = t.getIntOr("paid", 0);
+        heaved = t.getIntOr("heaved", 0);
+        spared = t.getIntOr("spared", 0);
+        tearing = t.getBooleanOr("tearing", false);
         torn.clear();
         if (tearing) {
-            torn.or(BitSet.valueOf(t.getLongArray("torn")));
+            torn.or(BitSet.valueOf(t.getLongArray("torn").orElse(new long[0])));
         }
         tearIdx = null;                                          // listed again from the world and the cells taken out (tearEnsure)
     }

@@ -10,7 +10,6 @@ import claude.settlementcore.settlement.Ration;
 import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.work.Works;
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
@@ -19,8 +18,6 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BarrelBlockEntity;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -35,7 +32,6 @@ import java.util.List;
  * a stub says what the second asks of one.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class RationGameTests {
 
     /** A larder of the test's own: the meals still in it, drawn in order, and what is held back for the cooks. */

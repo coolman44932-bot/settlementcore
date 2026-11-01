@@ -1,0 +1,6 @@
+{
+  "model": {
+    "type": "minecraft:model",
+    "model": "testrace:item/worker_spawn_egg"
+  }
+}

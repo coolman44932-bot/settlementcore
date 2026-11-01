@@ -773,31 +773,31 @@ public final class Siting {
          */
         @Nullable
         public static Plan load(CompoundTag t, PlanPlacement pl, List<RoomTemplates.Entry> template) {
-            int w = t.getInt("w");
-            int h = t.getInt("h");
+            int w = t.getIntOr("w", 0);
+            int h = t.getIntOr("h", 0);
             int n = w * h;
-            byte[] kinds = t.getByteArray("kind");
-            byte[] now = t.getByteArray("new");
-            byte[] ground = t.getByteArray("ground");
-            byte[] top = t.getByteArray("top");
-            byte[] look = t.getByteArray("look");
+            byte[] kinds = t.getByteArray("kind").orElse(new byte[0]);
+            byte[] now = t.getByteArray("new").orElse(new byte[0]);
+            byte[] ground = t.getByteArray("ground").orElse(new byte[0]);
+            byte[] top = t.getByteArray("top").orElse(new byte[0]);
+            byte[] look = t.getByteArray("look").orElse(new byte[0]);
             ListTag states = t.getListOrEmpty("states");
-            int[] nums = t.getIntArray("numbers");
+            int[] nums = t.getIntArray("numbers").orElse(new int[0]);
             if (w < 1 || h < 1 || w > AREA_MAX || h > AREA_MAX || kinds.length != n || now.length != n || ground.length != n
                     || top.length != n || look.length != n || states.size() % 3 != 0 || (nums.length != 7 && nums.length != 9)) {
                 LOGGER.warn("Settlement Core: a saved site plan is broken ({}x{}, {} kinds): dropped", w, h, kinds.length);
                 return null;
             }
             List<Look> looks = new ArrayList<>();
-            var blocks = BuiltInRegistries.BLOCK.asLookup();
+            var blocks = BuiltInRegistries.BLOCK;
             for (int k = 0; k < states.size(); k += 3) {
-                Look l = new Look(NbtUtils.readBlockState(blocks, states.getCompound(k)), NbtUtils.readBlockState(blocks, states.getCompound(k + 1)),
-                        NbtUtils.readBlockState(blocks, states.getCompound(k + 2)));
+                Look l = new Look(NbtUtils.readBlockState(blocks, states.getCompoundOrEmpty(k)), NbtUtils.readBlockState(blocks, states.getCompoundOrEmpty(k + 1)),
+                        NbtUtils.readBlockState(blocks, states.getCompoundOrEmpty(k + 2)));
                 // a block that is gone (its mod removed) reads back as air: never lay air as ground
                 looks.add(l.top().isAir() || l.soil().isAir() || l.deep().isAir() ? PLAIN : l);
             }
-            long[] seals = t.getLongArray("seals");
-            byte[] sealLooks = t.getByteArray("seal_looks");
+            long[] seals = t.getLongArray("seals").orElse(new long[0]);
+            byte[] sealLooks = t.getByteArray("seal_looks").orElse(new byte[0]);
             if (sealLooks.length != seals.length) {
                 seals = new long[0];
                 sealLooks = new byte[0];
@@ -808,19 +808,19 @@ public final class Siting {
                     return null;
                 }
             }
-            long[] trees = t.getLongArray("trees");
+            long[] trees = t.getLongArray("trees").orElse(new long[0]);
             Arrays.sort(trees);
-            int floor = t.getInt("floor");
+            int floor = t.getIntOr("floor", 0);
             for (int i = 0; i < n; i++) {
                 if (kinds[i] < 0 || kinds[i] >= Reshape.Kind.values().length || Math.abs(look[i]) > looks.size()) {
                     LOGGER.warn("Settlement Core: a saved site plan has a broken column {}: dropped", i);
                     return null;
                 }
             }
-            return new Plan(pl, template, t.getInt("x0"), t.getInt("z0"), w, h, floor, t.getBoolean("reshaped"), kinds.clone(),
+            return new Plan(pl, template, t.getIntOr("x0", 0), t.getIntOr("z0", 0), w, h, floor, t.getBooleanOr("reshaped", false), kinds.clone(),
                     heights(now, floor), heights(ground, floor), heights(top, floor), look.clone(), looks, trees, seals, sealLooks.clone(),
                     new Numbers(nums[0], nums[1], nums[2], nums[3], nums[4], nums[5], nums[6], nums.length > 7 ? nums[7] : 0,
-                            nums.length > 8 && nums[8] != 0), t.getString("goes_round"));
+                            nums.length > 8 && nums[8] != 0), t.getStringOr("goes_round", ""));
         }
 
         private static int[] heights(byte[] offsets, int floor) {

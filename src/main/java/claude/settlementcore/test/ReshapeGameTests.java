@@ -7,10 +7,7 @@ import claude.settlementcore.room.Reshape.Kind;
 import claude.settlementcore.room.Reshape.Rect;
 import claude.settlementcore.room.Reshape.Result;
 import claude.settlementcore.room.Reshape.Side;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayDeque;
 import java.util.Arrays;
@@ -27,7 +24,6 @@ import java.util.Random;
  * {@link #aKeptColumnIsUnchangedAndTheRampGoesRoundIt}, on the field before the clamp).
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class ReshapeGameTests {
 
     // --- the scenes --------------------------------------------------------------------------------------------------

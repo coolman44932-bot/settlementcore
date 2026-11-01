@@ -13,7 +13,6 @@ import claude.settlementcore.test.SitingGameTests.Site;
 import claude.settlementcore.work.SiteWork;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
@@ -23,8 +22,6 @@ import net.minecraft.world.level.block.LanternBlock;
 import net.minecraft.world.level.block.VineBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -42,7 +39,6 @@ import java.util.UUID;
  * cleared to the build limit before and after, so leftovers of "works" at 355/370 and "muzzle" at 376 never cover it).
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class RaiseJobGameTests {
 
     /**
@@ -180,7 +176,7 @@ public class RaiseJobGameTests {
                 if (reloads == 0 && earthLays >= works.size() / 2 || reloads == 1 && courseLays >= want.size() / 2) {
                     reloads++;
                     CompoundTag saved = SitingGameTests.roundTrip(job.save());
-                    h.assertTrue(saved.getBoolean("raise") && saved.contains("reshape") && saved.contains("paid") && saved.contains("heaved"),
+                    h.assertTrue(saved.getBooleanOr("raise", false) && saved.contains("reshape") && saved.contains("paid") && saved.contains("heaved"),
                             "the half-raised site saves as " + saved.keySet());
                     RaiseJob back = RaiseJob.load(saved);
                     h.assertTrue(back != null, "the half-raised site didn't load back");
@@ -337,11 +333,11 @@ public class RaiseJobGameTests {
             BlockPos f = over.west();                            // the cell the block goes into, beside the cell over the hole
             s.set(over.getX(), over.getY(), over.getZ(), AIR);
             s.set(f.getX(), f.getY(), f.getZ(), AIR);
-            net.minecraft.world.entity.animal.Pig pig = net.minecraft.world.entity.EntityType.PIG.create(level);
+            net.minecraft.world.entity.animal.pig.Pig pig = net.minecraft.world.entity.EntityType.PIG.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
             h.assertTrue(pig != null, "no pig to set down");
             try {
                 pig.setNoAi(true);
-                pig.moveTo(x0 + 3.12, g + 2, z0 + 3.5, 0f, 0f);  // over the layer's edge: its body in both cells, as a builder's at its work
+                pig.snapTo(x0 + 3.12, g + 2, z0 + 3.5, 0f, 0f);  // over the layer's edge: its body in both cells, as a builder's at its work
                 level.addFreshEntity(pig);
                 h.assertTrue(pig.getBoundingBox().intersects(new net.minecraft.world.phys.AABB(f)) && level.noCollision(pig),
                         "the pig at " + pig.position() + " isn't standing free in the cell " + f.toShortString() + " and the cell over the hole");
@@ -391,14 +387,14 @@ public class RaiseJobGameTests {
             BlockPos a = f.east();                               // and the open cell beside it
             s.set(f.getX(), f.getY(), f.getZ(), AIR);
             s.set(a.getX(), a.getY(), a.getZ(), AIR);
-            net.minecraft.world.entity.animal.Pig pig = net.minecraft.world.entity.EntityType.PIG.create(level);
+            net.minecraft.world.entity.animal.pig.Pig pig = net.minecraft.world.entity.EntityType.PIG.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
             h.assertTrue(pig != null, "no pig to set down");
             try {
                 pig.setNoAi(true);
                 for (int round = 0; round < 2; round++) {
                     boolean taken = round == 1;
                     s.set(f.getX(), f.getY(), f.getZ(), AIR);
-                    pig.moveTo(x0 + 3.9, g + 2, z0 + 3.5, 0f, 0f);   // over the edge of F, in A
+                    pig.snapTo(x0 + 3.9, g + 2, z0 + 3.5, 0f, 0f);   // over the edge of F, in A
                     if (round == 0) {
                         level.addFreshEntity(pig);
                     }
@@ -445,7 +441,7 @@ public class RaiseJobGameTests {
             BlockState standing = Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, false);
             BlockState vine = Blocks.VINE.defaultBlockState().setValue(VineBlock.UP, true);
             held(h, level, p, hanging, true, false, true, "a hanging lantern under stone");
-            held(h, level, p, Blocks.CHAIN.defaultBlockState(), true, false, true, "a chain under stone");
+            held(h, level, p, Blocks.IRON_CHAIN.defaultBlockState(), true, false, true, "a chain under stone");
             held(h, level, p, vine, true, false, true, "vines under stone");
             held(h, level, p, Blocks.COBWEB.defaultBlockState(), true, false, true, "a cobweb under stone");
             held(h, level, p, standing, true, false, false, "a standing lantern over air");
@@ -578,7 +574,7 @@ public class RaiseJobGameTests {
             c.room();
             c.box(0, 5, 0, 8, 5, 8, BRICK);                      // the roof
             c.set(6, 4, 2, hangingLantern());                    // under the roof cell (6,5,2)
-            c.set(3, 4, 6, Blocks.CHAIN.defaultBlockState());    // a chain under (3,5,6), and a lantern on it
+            c.set(3, 4, 6, Blocks.IRON_CHAIN.defaultBlockState());    // a chain under (3,5,6), and a lantern on it
             c.set(3, 3, 6, hangingLantern());
         });
     }
@@ -592,8 +588,8 @@ public class RaiseJobGameTests {
         return handBuilt(BLOCKED, "Test Blocked Lamp", 7, c -> {
             c.room();
             c.box(0, 5, 0, 8, 5, 8, BRICK);                      // the roof
-            c.set(3, 4, 6, Blocks.CHAIN.defaultBlockState());    // two chains under the roof cell (3,5,6), and a lantern on them
-            c.set(3, 3, 6, Blocks.CHAIN.defaultBlockState());
+            c.set(3, 4, 6, Blocks.IRON_CHAIN.defaultBlockState());    // two chains under the roof cell (3,5,6), and a lantern on them
+            c.set(3, 3, 6, Blocks.IRON_CHAIN.defaultBlockState());
             c.set(3, 2, 6, hangingLantern());
             c.set(5, 3, 3, BRICK);                               // the blocker
         });
@@ -623,7 +619,7 @@ public class RaiseJobGameTests {
             c.box(4, 1, 7, 4, 2, 7, AIR);
             c.box(1, 4, 1, 7, 4, 7, BRICK);                      // the roof
             c.set(3, 3, 3, hangingLantern());                    // under the roof cell (3,4,3)
-            c.set(5, 3, 5, Blocks.CHAIN.defaultBlockState());    // a chain under (5,4,5), and a lantern on it
+            c.set(5, 3, 5, Blocks.IRON_CHAIN.defaultBlockState());    // a chain under (5,4,5), and a lantern on it
             c.set(5, 2, 5, hangingLantern());
         });
     }
@@ -672,7 +668,7 @@ public class RaiseJobGameTests {
             c.set(1, 4, 1, Blocks.COBWEB.defaultBlockState());   // in the corner, the walls beside it
             pillar(c, 3, 4, 3);
             pillar(c, 5, 4, 3);
-            c.set(4, 3, 4, Blocks.CHAIN.defaultBlockState().setValue(net.minecraft.world.level.block.ChainBlock.AXIS, net.minecraft.core.Direction.Axis.X));
+            c.set(4, 3, 4, Blocks.IRON_CHAIN.defaultBlockState().setValue(net.minecraft.world.level.block.ChainBlock.AXIS, net.minecraft.core.Direction.Axis.X));
             for (int z : new int[]{6, 2}) {                      // a beam over two pillars, and a column hanging from its middle, free of both
                 pillar(c, 3, z, 4);
                 pillar(c, 7, z, 4);
@@ -1024,7 +1020,7 @@ public class RaiseJobGameTests {
             }
             BlockPos lantern = s.pl.world(new BlockPos(5, 2, 5));          // the lantern on the chain: hangs over the floor cell the builder is in
             if (!RaiseJob.hangs(level.getBlockState(lantern))) {
-                level.setBlock(lantern.above(), Blocks.CHAIN.defaultBlockState(), 2);   // laid by hand as the crew does it late: the stand rule doesn't ask who laid it
+                level.setBlock(lantern.above(), Blocks.IRON_CHAIN.defaultBlockState(), 2);   // laid by hand as the crew does it late: the stand rule doesn't ask who laid it
                 level.setBlock(lantern, hangingLantern(), 2);
             }
             BlockPos under = lantern.below();
@@ -1132,8 +1128,8 @@ public class RaiseJobGameTests {
             ServerLevel level = s.level;
             BlockState vineUp = Blocks.VINE.defaultBlockState().setValue(VineBlock.UP, true);
             BlockState vineSouth = wallVine(VineBlock.SOUTH);
-            BlockState chainX = Blocks.CHAIN.defaultBlockState().setValue(net.minecraft.world.level.block.ChainBlock.AXIS, Direction.Axis.X);
-            for (var e : new Object[][]{{hangingLantern(), true}, {Blocks.LANTERN.defaultBlockState(), false}, {Blocks.CHAIN.defaultBlockState(), true},
+            BlockState chainX = Blocks.IRON_CHAIN.defaultBlockState().setValue(net.minecraft.world.level.block.ChainBlock.AXIS, Direction.Axis.X);
+            for (var e : new Object[][]{{hangingLantern(), true}, {Blocks.LANTERN.defaultBlockState(), false}, {Blocks.IRON_CHAIN.defaultBlockState(), true},
                     {chainX, false}, {vineUp, true}, {vineSouth, false}, {Blocks.COBWEB.defaultBlockState(), true}, {Blocks.CAVE_VINES_PLANT.defaultBlockState(), true},
                     {Blocks.WEEPING_VINES.defaultBlockState(), true}, {Blocks.HANGING_ROOTS.defaultBlockState(), true}, {BRICK, false}}) {
                 BlockState st = (BlockState) e[0];
@@ -1149,12 +1145,12 @@ public class RaiseJobGameTests {
             held(h, level, p, vineSouth, true, false, false, "a wall vine against nothing");
             // a chain laid sideways between two walls; a chain hanging, with only a wall beside it (hangs, but the eaves hold it too)
             s.set(p.getX() - 1, p.getY(), p.getZ(), stone);
-            held(h, level, p, Blocks.CHAIN.defaultBlockState(), true, false, true, "a hanging chain with a wall beside it and nothing over it");
+            held(h, level, p, Blocks.IRON_CHAIN.defaultBlockState(), true, false, true, "a hanging chain with a wall beside it and nothing over it");
             s.set(p.getX() + 1, p.getY(), p.getZ(), stone);
             held(h, level, p, chainX, true, false, true, "a chain between two walls");
             s.set(p.getX() - 1, p.getY(), p.getZ(), AIR);
             s.set(p.getX() + 1, p.getY(), p.getZ(), AIR);
-            held(h, level, p, Blocks.CHAIN.defaultBlockState(), true, false, false, "a chain hanging from nothing");
+            held(h, level, p, Blocks.IRON_CHAIN.defaultBlockState(), true, false, false, "a chain hanging from nothing");
             // a cobweb in a corner
             s.set(p.getX() - 1, p.getY(), p.getZ(), stone);
             s.set(p.getX(), p.getY(), p.getZ() - 1, stone);

@@ -13,7 +13,7 @@ import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntitySpawnReason;
 import net.minecraft.world.entity.animal.Animal;
-import net.minecraft.world.entity.animal.Sheep;
+import net.minecraft.world.entity.animal.sheep.Sheep;
 import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
@@ -130,11 +130,11 @@ public class PensWork extends RoomWork {
         cuts += meat.getCount();
         ItemStack rest = store(level, butcher, meat);
         if (!rest.isEmpty()) {
-            a.spawnAtLocation(rest);
+            a.spawnAtLocation((net.minecraft.server.level.ServerLevel) a.level(), rest);
         }
-        level.getChunkSource().broadcastAndSend(a, new net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket(a));
+        level.getChunkSource().sendToTrackingPlayersAndSelf(a, new net.minecraft.network.protocol.game.ClientboundHurtAnimationPacket(a));
         level.playSound(null, a.blockPosition(), net.minecraft.sounds.SoundEvents.SHEEP_SHEAR, SoundSource.NEUTRAL, 0.8f, 0.7f);
-        level.sendParticles(new net.minecraft.core.particles.DustParticleOptions(new org.joml.Vector3f(0.35f, 0.95f, 0.25f), 1f),
+        level.sendParticles(new net.minecraft.core.particles.DustParticleOptions(0x59F240, 1f),
                 a.getX(), a.getY() + a.getBbHeight() * 0.6, a.getZ(), 6, 0.25, 0.2, 0.25, 0.02);   // warp-green: it knits back
         carved++;
         return true;
@@ -148,11 +148,11 @@ public class PensWork extends RoomWork {
 
     @Nullable
     Animal whelp(ServerLevel level, EntityType<? extends Animal> type, BlockPos at, boolean warped) {
-        Animal a = type.create(level);
+        Animal a = type.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
         if (a == null) {
             return null;
         }
-        a.moveTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.random.nextFloat() * 360f, 0);
+        a.snapTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.getRandom().nextFloat() * 360f, 0);
         a.finalizeSpawn(level, level.getCurrentDifficultyAt(at), EntitySpawnReason.BREEDING, null);
         a.setBaby(true);
         a.setPersistenceRequired();
@@ -260,7 +260,7 @@ public class PensWork extends RoomWork {
     @Nullable
     ItemStack milk(ServerLevel level) {
         for (var h : net.minecraft.core.registries.BuiltInRegistries.ITEM.getTagOrEmpty(MILK)) {
-            if (new ItemStack(h.value()).getCraftingRemainingItem().isEmpty()) {
+            if (RecipeView.remainder(new ItemStack(h.value())).isEmpty()) {
                 return new ItemStack(h.value(), 2);
             }
         }
@@ -273,7 +273,7 @@ public class PensWork extends RoomWork {
     }
 
     /** Milk a cow into the Butcher's Bin (a bucket taken from the Fodder Bin for vanilla's milk). */
-    boolean milkCow(ServerLevel level, net.minecraft.world.entity.animal.Cow cow) {
+    boolean milkCow(ServerLevel level, net.minecraft.world.entity.animal.cow.Cow cow) {
         ItemStack m = milk(level);
         if (m == null || !Bins.hasRoom(level, butcher, m)) {
             return false;
@@ -284,7 +284,7 @@ public class PensWork extends RoomWork {
         milkedAt.put(cow.getUUID(), level.getGameTime());
         ItemStack rest = store(level, butcher, m);
         if (!rest.isEmpty()) {
-            cow.spawnAtLocation(rest);
+            cow.spawnAtLocation(level, rest);
         }
         level.playSound(null, cow.blockPosition(), net.minecraft.sounds.SoundEvents.COW_MILK, SoundSource.NEUTRAL, 1f, 1f);
         milked += m.getCount();
@@ -328,11 +328,11 @@ public class PensWork extends RoomWork {
                 continue;
             }
             for (int i = 0; i < 2; i++) {
-                Animal a = type.create(level);
+                Animal a = type.create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
                 if (a == null) {
                     continue;
                 }
-                a.moveTo(sp.pos().getX() + 0.5 + (i - 0.5), sp.pos().getY(), sp.pos().getZ() + 0.5, level.random.nextFloat() * 360f, 0);
+                a.snapTo(sp.pos().getX() + 0.5 + (i - 0.5), sp.pos().getY(), sp.pos().getZ() + 0.5, level.getRandom().nextFloat() * 360f, 0);
                 a.finalizeSpawn(level, level.getCurrentDifficultyAt(sp.pos()), EntitySpawnReason.STRUCTURE, null);
                 a.setPersistenceRequired();
                 level.addFreshEntity(a);
@@ -374,7 +374,7 @@ public class PensWork extends RoomWork {
                 if (now - boon().fedAt(a) >= boon().upkeep() + 1200) {
                     boon().fade(a);   // no shard to keep it: the warp fades
                     boon().burst(level, a, 6);
-                } else if (level.random.nextInt(3) == 0) {
+                } else if (level.getRandom().nextInt(3) == 0) {
                     boon().burst(level, a, 1);
                 }
             }
@@ -446,7 +446,7 @@ public class PensWork extends RoomWork {
                 if (a instanceof Sheep sh && sh.readyForShearing() && free(a.getUUID(), now)) {
                     return new Chore("shearing", a.blockPosition(), POLE, 12, a.getUUID(), a, (l, r) -> {
                         if (sh.isAlive() && sh.readyForShearing()) {
-                            sh.shear(SoundSource.NEUTRAL);               // the wool falls on the floor; gathered up after
+                            sh.shear(level, SoundSource.NEUTRAL, new ItemStack(net.minecraft.world.item.Items.SHEARS));               // the wool falls on the floor; gathered up after
                         }
                         return null;
                     });
@@ -473,7 +473,7 @@ public class PensWork extends RoomWork {
             }
             // milk the cows
             for (Animal a : adults) {
-                if (a instanceof net.minecraft.world.entity.animal.Cow cow && now - milkedAt.getOrDefault(a.getUUID(), Long.MIN_VALUE / 2) >= MILK_TICKS
+                if (a instanceof net.minecraft.world.entity.animal.cow.Cow cow && now - milkedAt.getOrDefault(a.getUUID(), Long.MIN_VALUE / 2) >= MILK_TICKS
                         && free(a.getUUID(), now) && milk(level) != null) {
                     return new Chore("milking", a.blockPosition(), POLE, 14, a.getUUID(), a, (l, r) -> {
                         if (cow.isAlive() && !cow.isBaby()) {
@@ -632,7 +632,7 @@ public class PensWork extends RoomWork {
                 var baby = a.getBreedOffspring(level, b);
                 if (baby instanceof Animal child) {
                     child.setBaby(true);
-                    child.moveTo(a.getX(), a.getY(), a.getZ(), 0, 0);
+                    child.snapTo(a.getX(), a.getY(), a.getZ(), 0, 0);
                     child.setPersistenceRequired();
                     level.addFreshEntityWithPassengers(child);
                     herd = new ArrayList<>(herd);
@@ -649,9 +649,9 @@ public class PensWork extends RoomWork {
             }
             for (Animal a : adults) {
                 if (a instanceof Sheep sh && sh.readyForShearing()) {
-                    sh.shear(SoundSource.NEUTRAL);
+                    sh.shear(level, SoundSource.NEUTRAL, new ItemStack(net.minecraft.world.item.Items.SHEARS));
                 }
-                if (a instanceof net.minecraft.world.entity.animal.Cow cow && cow.isAlive()) {
+                if (a instanceof net.minecraft.world.entity.animal.cow.Cow cow && cow.isAlive()) {
                     for (int i = 0; i < Math.min(8, seconds * 20 / MILK_TICKS); i++) {
                         if (!milkCow(level, cow)) {
                             break;
@@ -742,15 +742,15 @@ public class PensWork extends RoomWork {
 
     @Override
     public void load(CompoundTag t) {
-        stocked = t.getBoolean("stocked");
-        born = t.getLong("born");
-        butchered = t.getLong("butchered");
-        whelped = t.getLong("whelped");
-        carved = t.getLong("carved");
-        warped = t.getLong("warped");
-        renewed = t.getLong("renewed");
-        sickened = t.getLong("sickened");
-        feral = t.getLong("feral");
-        putDown = t.getLong("put_down");
+        stocked = t.getBooleanOr("stocked", false);
+        born = t.getLongOr("born", 0L);
+        butchered = t.getLongOr("butchered", 0L);
+        whelped = t.getLongOr("whelped", 0L);
+        carved = t.getLongOr("carved", 0L);
+        warped = t.getLongOr("warped", 0L);
+        renewed = t.getLongOr("renewed", 0L);
+        sickened = t.getLongOr("sickened", 0L);
+        feral = t.getLongOr("feral", 0L);
+        putDown = t.getLongOr("put_down", 0L);
     }
 }

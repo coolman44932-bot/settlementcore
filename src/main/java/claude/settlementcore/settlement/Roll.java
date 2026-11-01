@@ -1,5 +1,6 @@
 package claude.settlementcore.settlement;
 
+import claude.settlementcore.Nbt;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.NbtUtils;
@@ -85,7 +86,7 @@ public final class Roll {
     public void save(CompoundTag tag) {
         ListTag list = new ListTag();
         for (UUID id : ids) {
-            list.add(NbtUtils.createUUID(id));
+            list.add(Nbt.uuid(id));
         }
         tag.put(key, list);
     }
@@ -94,7 +95,7 @@ public final class Roll {
     public void load(CompoundTag tag) {
         ids.clear();
         for (Tag t : tag.getListOrEmpty(key)) {
-            ids.add(NbtUtils.loadUUID(t));
+            ids.add(Nbt.uuid(t));
         }
     }
 }

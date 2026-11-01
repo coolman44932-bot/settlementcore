@@ -1,5 +1,6 @@
 package claude.settlementcore.test;
 
+import claude.settlementcore.Nbt;
 import claude.settlementcore.Core;
 import claude.settlementcore.room.PlanPlacement;
 import claude.settlementcore.room.RoomRelight;
@@ -13,7 +14,6 @@ import it.unimi.dsi.fastutil.longs.LongSet;
 import it.unimi.dsi.fastutil.longs.LongSets;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -21,8 +21,6 @@ import net.minecraft.nbt.NbtUtils;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -38,7 +36,6 @@ import java.util.Set;
  * 1 a glowstone at (1,1,1), at version 2 a sea lantern at (1,2,1), each where the room has air).
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class BuildingBookGameTests {
 
     static final String ROOM = "book_test_room", LAMPS = "book_lamp_room";
@@ -129,7 +126,7 @@ public class BuildingBookGameTests {
         CompoundTag withDoor = new CompoundTag();
         withDoor.putString("room", "some_room");
         withDoor.putIntArray("box", new int[]{10, 20, 30, 16, 24, 36});
-        withDoor.put("door", NbtUtils.writeBlockPos(new BlockPos(10, 21, 33)));
+        withDoor.put("door", Nbt.pos(new BlockPos(10, 21, 33)));
         withDoor.putString("facing", Direction.EAST.getSerializedName());
         withDoor.putInt("relit", 3);
         withDoor.putBoolean("walled", true);
@@ -162,8 +159,8 @@ public class BuildingBookGameTests {
 
         CompoundTag out = new CompoundTag();
         book.save(out);
-        long[] shored = out.getLongArray("shored");
-        long[] expected = heart.getLongArray("shored");
+        long[] shored = out.getLongArray("shored").orElse(new long[0]);
+        long[] expected = heart.getLongArray("shored").orElse(new long[0]);
         Arrays.sort(shored);
         Arrays.sort(expected);
         out.remove("shored");

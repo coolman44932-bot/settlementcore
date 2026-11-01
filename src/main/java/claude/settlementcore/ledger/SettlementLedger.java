@@ -58,7 +58,6 @@ public final class SettlementLedger {
             "repair chest", "armoury", "feeding trough");
 
     /** How long a store's chunk is held loaded after the Ledger last reached for it. */
-    private static final TicketType<ChunkPos> REACH = TicketType.create("settlementcore_ledger", Comparator.comparingLong(ChunkPos::toLong), 20 * 30);
 
     private SettlementLedger() {
     }
@@ -157,7 +156,7 @@ public final class SettlementLedger {
             for (int cx = box.minX() >> 4; cx <= box.maxX() >> 4; cx++) {
                 for (int cz = box.minZ() >> 4; cz <= box.maxZ() >> 4; cz++) {
                     if (level.getChunkSource().getChunkNow(cx, cz) != null) {
-                        looked.add(ChunkPos.asLong(cx, cz));
+                        looked.add(ChunkPos.pack(cx, cz));
                     }
                 }
             }
@@ -173,7 +172,7 @@ public final class SettlementLedger {
         }
         for (long p : known) {
             BlockPos bp = BlockPos.of(p);
-            if (!looked.contains(ChunkPos.asLong(bp.getX() >> 4, bp.getZ() >> 4))) {
+            if (!looked.contains(ChunkPos.pack(bp.getX() >> 4, bp.getZ() >> 4))) {
                 now.add(p);                                             // not looked at: kept as it was
                 found.add(bp);
             }
@@ -227,24 +226,24 @@ public final class SettlementLedger {
      */
     public static int wake(ServerLevel level, Settlement heart) {
         LongOpenHashSet chunks = new LongOpenHashSet();
-        chunks.add(ChunkPos.asLong(heart.getBlockPos()));
+        chunks.add(ChunkPos.pack(heart.getBlockPos()));
         for (long p : heart.ledgerStores()) {
-            chunks.add(ChunkPos.asLong(BlockPos.of(p)));
+            chunks.add(ChunkPos.pack(BlockPos.of(p)));
         }
         if (heart.ledgerStores().isEmpty()) {
             for (BoundingBox box : rooms(heart)) {                      // never counted: every room of the warren, once
                 for (int cx = box.minX() >> 4; cx <= box.maxX() >> 4; cx++) {
                     for (int cz = box.minZ() >> 4; cz <= box.maxZ() >> 4; cz++) {
-                        chunks.add(ChunkPos.asLong(cx, cz));
+                        chunks.add(ChunkPos.pack(cx, cz));
                     }
                 }
             }
         }
         int unloaded = 0;
         for (long c : chunks) {
-            ChunkPos cp = new ChunkPos(c);
-            level.getChunkSource().addRegionTicket(REACH, cp, 0, cp);   // FULL: its block entities, no ticking
-            if (level.getChunkSource().getChunkNow(cp.x, cp.z) == null) {
+            ChunkPos cp = ChunkPos.unpack(c);
+            level.getChunkSource().addTicketWithRadius(claude.settlementcore.CoreRegistries.LEDGER_TICKET.get(), cp, 0);   // FULL: its block entities, no ticking
+            if (level.getChunkSource().getChunkNow(cp.x(), cp.z()) == null) {
                 unloaded++;
             }
         }
@@ -288,7 +287,7 @@ public final class SettlementLedger {
             lines.add(new Line(e.getKey().item(), e.getValue()[0], STORES));
         }
         lines.sort(Comparator.comparingLong(Line::count).reversed()
-                .thenComparing(l -> l.item().getItem().builtInRegistryHolder().key().location().toString()));
+                .thenComparing(l -> l.item().getItem().builtInRegistryHolder().key().identifier().toString()));
         if (heart.currency() > 0) {
             lines.add(0, new Line(new ItemStack(heart.currencyItem()), heart.currency(), WARPSTONE));
         }

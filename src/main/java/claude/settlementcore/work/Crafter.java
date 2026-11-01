@@ -24,6 +24,7 @@ import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Optional;
 import java.util.Map;
 import java.util.Set;
 
@@ -55,15 +56,15 @@ public final class Crafter {
 
     /** Every crafting-table recipe that makes {@code item} (special ones, a firework's or a map's, left out). */
     public static List<RecipeHolder<CraftingRecipe>> recipesFor(ServerLevel level, Item item) {
-        RecipeManager rm = level.getRecipeManager();
+        RecipeManager rm = level.recipeAccess();
         synchronized (Crafter.class) {
             if (rm != indexed) {
                 Map<Item, List<RecipeHolder<CraftingRecipe>>> m = new IdentityHashMap<>();
-                for (RecipeHolder<CraftingRecipe> r : rm.getAllRecipesFor(RecipeType.CRAFTING)) {
-                    if (r.value().isSpecial() || r.value().getIngredients().isEmpty()) {
+                for (RecipeHolder<CraftingRecipe> r : rm.recipeMap().byType(RecipeType.CRAFTING)) {
+                    if (r.value().isSpecial() || RecipeView.ingredients(r.value()).isEmpty()) {
                         continue;
                     }
-                    ItemStack out = r.value().getResultItem(level.registryAccess());
+                    ItemStack out = RecipeView.result(r.value(), level.registryAccess());
                     if (!out.isEmpty()) {
                         m.computeIfAbsent(out.getItem(), k -> new ArrayList<>()).add(r);
                     }
@@ -78,7 +79,7 @@ public final class Crafter {
     /** Whether any crafting-table recipe makes {@code like} (its item and its components). */
     public static boolean craftable(ServerLevel level, ItemStack like) {
         for (RecipeHolder<CraftingRecipe> r : recipesFor(level, like.getItem())) {
-            if (ItemStack.isSameItemSameComponents(r.value().getResultItem(level.registryAccess()), like)) {
+            if (ItemStack.isSameItemSameComponents(RecipeView.result(r.value(), level.registryAccess()), like)) {
                 return true;
             }
         }
@@ -156,7 +157,7 @@ public final class Crafter {
         List<String> best = null;
         boolean any = false;
         for (RecipeHolder<CraftingRecipe> r : recipesFor(level, target.getItem())) {
-            if (!ItemStack.isSameItemSameComponents(r.value().getResultItem(level.registryAccess()), target)) {
+            if (!ItemStack.isSameItemSameComponents(RecipeView.result(r.value(), level.registryAccess()), target)) {
                 continue;
             }
             any = true;
@@ -202,7 +203,7 @@ public final class Crafter {
          */
         boolean craft(RecipeHolder<CraftingRecipe> r, int depth, Set<Item> making, List<Step> steps, boolean report) {
             CraftingRecipe rec = r.value();
-            List<Ingredient> ings = rec.getIngredients();
+            List<Optional<Ingredient>> ings = RecipeView.slots(rec);
             boolean shaped = rec instanceof ShapedRecipe;
             int w, h;
             if (shaped) {
@@ -210,7 +211,7 @@ public final class Crafter {
                 h = ((ShapedRecipe) rec).getHeight();
             } else {
                 int n = 0;
-                for (Ingredient i : ings) {
+                for (Optional<Ingredient> i : ings) {
                     n += i.isEmpty() ? 0 : 1;
                 }
                 if (n > 9) {
@@ -222,10 +223,11 @@ public final class Crafter {
             boolean ok = true;
             int slot = 0;
             for (int i = 0; i < ings.size(); i++) {
-                Ingredient ing = ings.get(i);
-                if (ing.isEmpty()) {
+                Optional<Ingredient> slotted = ings.get(i);
+                if (slotted.isEmpty() || slotted.get().isEmpty()) {
                     continue;
                 }
+                Ingredient ing = slotted.get();
                 ItemStack got = source(ing, depth, making, steps);
                 if (got.isEmpty()) {
                     ok = false;
@@ -245,7 +247,7 @@ public final class Crafter {
                 return false;
             }
             steps.add(new Step(r, grid, w, h));
-            ItemStack out = rec.getResultItem(level.registryAccess());
+            ItemStack out = RecipeView.result(rec, level.registryAccess());
             stock.merge(Key.of(out), out.getCount(), Integer::sum);
             return true;
         }
@@ -268,7 +270,7 @@ public final class Crafter {
                 return ItemStack.EMPTY;
             }
             Set<Item> tried = new HashSet<>();
-            for (ItemStack opt : ing.getItems()) {
+            for (ItemStack opt : RecipeView.items(ing)) {
                 Item it = opt.getItem();
                 if (!tried.add(it) || making.contains(it)) {
                     continue;
@@ -277,7 +279,7 @@ public final class Crafter {
                     if (--budget <= 0) {
                         return ItemStack.EMPTY;
                     }
-                    ItemStack made = sub.value().getResultItem(level.registryAccess());
+                    ItemStack made = RecipeView.result(sub.value(), level.registryAccess());
                     if (!ing.test(made)) {
                         continue;
                     }
@@ -313,15 +315,15 @@ public final class Crafter {
 
     /** A making, as the Warlord would name what the Hoard lacks: "Iron Ingot", "any Planks" for a tag of many kinds. */
     static String name(Ingredient ing) {
-        ItemStack[] opts = ing.getItems();
-        if (opts.length == 0) {
+        List<ItemStack> opts = RecipeView.items(ing);
+        if (opts.isEmpty()) {
             return "something";
         }
         Set<Item> kinds = new HashSet<>();
         for (ItemStack o : opts) {
             kinds.add(o.getItem());
         }
-        String first = opts[0].getHoverName().getString();
+        String first = opts.get(0).getHoverName().getString();
         if (kinds.size() <= 1) {
             return first;
         }
@@ -383,7 +385,7 @@ public final class Crafter {
                 giveBack(level, heart, hoard, pool, fromHoard, shards, by);
                 return null;
             }
-            ItemStack out = s.recipe().value().assemble(input, level.registryAccess());
+            ItemStack out = s.recipe().value().assemble(input);
             NonNullList<ItemStack> rest = s.recipe().value().getRemainingItems(input);
             for (ItemStack r : rest) {
                 if (!r.isEmpty()) {

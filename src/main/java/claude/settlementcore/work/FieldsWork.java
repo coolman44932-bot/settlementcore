@@ -16,7 +16,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CropBlock;
-import net.minecraft.world.level.block.FarmBlock;
+import net.minecraft.world.level.block.FarmlandBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.jetbrains.annotations.Nullable;
 
@@ -63,7 +63,7 @@ public class FieldsWork extends RoomWork {
                         continue;
                     }
                     BlockState s = level.getBlockState(m);
-                    if (s.getBlock() instanceof FarmBlock) {
+                    if (s.getBlock() instanceof FarmlandBlock) {
                         BlockState above = level.getBlockState(m.above());
                         Block had = plots.get(m);
                         plots.put(m.immutable(), above.getBlock() instanceof CropBlock ? above.getBlock() : had == null ? Blocks.WHEAT : had);
@@ -92,10 +92,10 @@ public class FieldsWork extends RoomWork {
         List<BlockPos> all = new ArrayList<>(plots.keySet());
         int n = Math.max(1, all.size() / BOOST_PER);
         for (int i = 0; i < n; i++) {
-            BlockPos crop = all.get(level.random.nextInt(all.size())).above();
+            BlockPos crop = all.get(level.getRandom().nextInt(all.size())).above();
             BlockState s = level.getBlockState(crop);
             if (s.getBlock() instanceof CropBlock c && !c.isMaxAge(s) && level.isLoaded(crop)) {
-                s.randomTick(level, crop, level.random);
+                s.randomTick(level, crop, level.getRandom());
             }
         }
     }
@@ -144,11 +144,11 @@ public class FieldsWork extends RoomWork {
             if (!free(plot, now) || !above.isAir()) {
                 continue;
             }
-            if (ground.getBlock() instanceof FarmBlock) {
+            if (ground.getBlock() instanceof FarmlandBlock) {
                 Block kind = seedless(plots.get(plot));
                 if (Bins.count(level, bins, st -> sows(st, kind)) > 0) {
                     return new Chore("sowing", crop, 2.2, workTicks(rat, 8), plot, (l, r) -> {
-                        if (l.getBlockState(crop).isAir() && l.getBlockState(plot).getBlock() instanceof FarmBlock
+                        if (l.getBlockState(crop).isAir() && l.getBlockState(plot).getBlock() instanceof FarmlandBlock
                                 && !Bins.take(l, bins, st -> sows(st, kind), 1).isEmpty()) {
                             l.setBlock(crop, kind.defaultBlockState(), Block.UPDATE_ALL);
                         }
@@ -225,7 +225,7 @@ public class FieldsWork extends RoomWork {
                 if (c.isMaxAge(s)) {
                     reap(level, plot);
                 } else {
-                    s.randomTick(level, crop, level.random);
+                    s.randomTick(level, crop, level.getRandom());
                 }
             }
         }
@@ -259,7 +259,7 @@ public class FieldsWork extends RoomWork {
         for (var e : plots.entrySet()) {
             BlockPos plot = e.getKey();
             Block kind = seedless(e.getValue());
-            if (level.getBlockState(plot.above()).isAir() && level.getBlockState(plot).getBlock() instanceof net.minecraft.world.level.block.FarmBlock
+            if (level.getBlockState(plot.above()).isAir() && level.getBlockState(plot).getBlock() instanceof net.minecraft.world.level.block.FarmlandBlock
                     && Bins.count(level, bins, st -> sows(st, kind)) == 0) {
                 bare.merge(kind.getName().getString(), 1, Integer::sum);
             }
@@ -313,6 +313,6 @@ public class FieldsWork extends RoomWork {
 
     @Override
     public void load(CompoundTag t) {
-        harvested = t.getLong("harvested");
+        harvested = t.getLongOr("harvested", 0L);
     }
 }

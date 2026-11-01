@@ -4,15 +4,12 @@ import claude.settlementcore.Core;
 import claude.settlementcore.room.DigJob;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.UUID;
 
@@ -22,7 +19,6 @@ import java.util.UUID;
  * save is what it was. And the claim's own rules the seams touched: a dig that pokes over the build height still finishes.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class DigJobSeamGameTests {
 
     /** A kind of job with a key of its own, as RaiseJob's earthworks will be. */
@@ -40,11 +36,11 @@ public class DigJobSeamGameTests {
 
         @Override
         protected void loadMore(CompoundTag t) {
-            extra = t.getInt("extra");
+            extra = t.getIntOr("extra", 0);
         }
 
         static Keyed reload(CompoundTag t) {
-            return new Keyed(t.getString("room"), savedDoor(t), savedFacing(t)).readSaved(t);
+            return new Keyed(t.getStringOr("room", ""), savedDoor(t), savedFacing(t)).readSaved(t);
         }
     }
 

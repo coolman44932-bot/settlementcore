@@ -1,5 +1,6 @@
 package claude.settlementcore.settlement;
 
+import claude.settlementcore.Nbt;
 import claude.settlementcore.room.PlanPlacement;
 import claude.settlementcore.room.RoomRelight;
 import claude.settlementcore.room.RoomShoring;
@@ -306,7 +307,7 @@ public final class BuildingBook {
             t.putIntArray("box", new int[]{b.box().minX(), b.box().minY(), b.box().minZ(),
                     b.box().maxX(), b.box().maxY(), b.box().maxZ()});
             if (b.door() != null && b.facing() != null) {
-                t.put("door", NbtUtils.writeBlockPos(b.door()));
+                t.put("door", Nbt.pos(b.door()));
                 t.putString("facing", b.facing().getSerializedName());
             }
             t.putInt("relit", relit.getOrDefault(key(b), 0));
@@ -320,26 +321,26 @@ public final class BuildingBook {
     /** Read from the keys {@link #save} writes (and the Heart's): the book is what the tag says. */
     public void load(CompoundTag tag) {
         shored.clear();
-        shored.addAll(it.unimi.dsi.fastutil.longs.LongArrayList.wrap(tag.getLongArray("shored")));
+        shored.addAll(it.unimi.dsi.fastutil.longs.LongArrayList.wrap(tag.getLongArray("shored").orElse(new long[0])));
         buildings.clear();
         walled.clear();
         stacked.clear();
         relit.clear();
         for (Tag t : tag.getListOrEmpty("buildings")) {
             CompoundTag c = (CompoundTag) t;
-            int[] b = c.getIntArray("box");
+            int[] b = c.getIntArray("box").orElse(new int[0]);
             if (b.length != 6) {
                 continue;
             }
-            BlockPos door = NbtUtils.readBlockPos(c, "door").orElse(null);
-            Direction facing = Direction.byName(c.getString("facing"));
-            Building built = new Building(c.getString("room"), new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]), door, facing);
+            BlockPos door = Nbt.readPos(c, "door").orElse(null);
+            Direction facing = Direction.byName(c.getStringOr("facing", ""));
+            Building built = new Building(c.getStringOr("room", ""), new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]), door, facing);
             buildings.add(built);
-            relit.put(key(built), c.getInt("relit"));
-            if (c.getBoolean("walled")) {
+            relit.put(key(built), c.getIntOr("relit", 0));
+            if (c.getBooleanOr("walled", false)) {
                 walled.add(key(built));
             }
-            if (c.getBoolean("stacked")) {
+            if (c.getBooleanOr("stacked", false)) {
                 stacked.add(key(built));
             }
         }

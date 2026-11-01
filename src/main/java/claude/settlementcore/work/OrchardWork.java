@@ -21,7 +21,7 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.CaveVines;
 import net.minecraft.world.level.block.CocoaBlock;
 import net.minecraft.world.level.block.CropBlock;
-import net.minecraft.world.level.block.FarmBlock;
+import net.minecraft.world.level.block.FarmlandBlock;
 import net.minecraft.world.level.block.SaplingBlock;
 import net.minecraft.world.level.block.SweetBerryBushBlock;
 import net.minecraft.world.level.block.state.BlockState;
@@ -107,7 +107,7 @@ public class OrchardWork extends RoomWork {
         if (s.getBlock() instanceof CocoaBlock) {
             return true;
         }
-        return s.getBlock() instanceof CropBlock && !(level.getBlockState(p.below()).getBlock() instanceof FarmBlock);
+        return s.getBlock() instanceof CropBlock && !(level.getBlockState(p.below()).getBlock() instanceof FarmlandBlock);
     }
 
     public static boolean ripe(BlockState s) {
@@ -178,10 +178,10 @@ public class OrchardWork extends RoomWork {
         }
         int n = Math.max(1, growing.size() / BOOST_PER);
         for (int i = 0; i < n; i++) {
-            BlockPos p = growing.get(level.random.nextInt(growing.size()));
+            BlockPos p = growing.get(level.getRandom().nextInt(growing.size()));
             BlockState s = level.getBlockState(p);
             if (level.isLoaded(p) && s.isRandomlyTicking() && !ripe(s)) {
-                s.randomTick(level, p, level.random);
+                s.randomTick(level, p, level.getRandom());
                 if (s.getBlock() instanceof SaplingBlock && level.getBlockState(p).is(BlockTags.LOGS)) {
                     rescanSoon();                                // a sapling grew by itself: its fruit, to be found
                 }
@@ -227,7 +227,7 @@ public class OrchardWork extends RoomWork {
                         if (!plant(l2, ground, held)) {
                             ItemStack rest = Bins.insert(l2, crates, held);
                             if (!rest.isEmpty()) {
-                                r2.spawnAtLocation(rest);
+                                r2.spawnAtLocation((net.minecraft.server.level.ServerLevel) r2.level(), rest);
                             }
                         }
                         return null;
@@ -371,9 +371,9 @@ public class OrchardWork extends RoomWork {
             if (!ripe(s)) {
                 return false;
             }
-            got.add(new ItemStack(Items.SWEET_BERRIES, 2 + level.random.nextInt(2)));
+            got.add(new ItemStack(Items.SWEET_BERRIES, 2 + level.getRandom().nextInt(2)));
             after = s.setValue(SweetBerryBushBlock.AGE, 1);
-            level.playSound(null, p, SoundEvents.SWEET_BERRY_BUSH_PICK_BERRIES, SoundSource.BLOCKS, 1f, 0.8f + level.random.nextFloat() * 0.4f);
+            level.playSound(null, p, SoundEvents.SWEET_BERRY_BUSH_PICK_BERRIES, SoundSource.BLOCKS, 1f, 0.8f + level.getRandom().nextFloat() * 0.4f);
         } else if (s.is(Blocks.CAVE_VINES) || s.is(Blocks.CAVE_VINES_PLANT)) {
             if (!CaveVines.hasGlowBerries(s)) {
                 return false;
@@ -381,7 +381,7 @@ public class OrchardWork extends RoomWork {
             got.add(new ItemStack(Items.GLOW_BERRIES));
             after = s.setValue(CaveVines.BERRIES, false);
             pickedAt.put(p, level.getGameTime());
-            level.playSound(null, p, SoundEvents.CAVE_VINES_PICK_BERRIES, SoundSource.BLOCKS, 1f, 0.8f + level.random.nextFloat() * 0.4f);
+            level.playSound(null, p, SoundEvents.CAVE_VINES_PICK_BERRIES, SoundSource.BLOCKS, 1f, 0.8f + level.getRandom().nextFloat() * 0.4f);
         } else if (hangingFruit(level, p, s) && ripe(s)) {
             got.addAll(Block.getDrops(s, level, p, null));
             after = s.getBlock() instanceof CocoaBlock ? s.setValue(CocoaBlock.AGE, 0) : ((CropBlock) s.getBlock()).getStateForAge(0);
@@ -427,8 +427,8 @@ public class OrchardWork extends RoomWork {
             return false;
         }
         level.levelEvent(1505, up, 0);                          // the bone-meal sparkle
-        if (sb.isBonemealSuccess(level, level.random, up, a)) {
-            sb.performBonemeal(level, level.random, up, a);
+        if (sb.isBonemealSuccess(level, level.getRandom(), up, a)) {
+            sb.performBonemeal(level, level.getRandom(), up, a);
         }
         if (level.getBlockState(up).is(BlockTags.LOGS)) {
             rescanSoon();                                        // the new tree's fruit, to be found
@@ -455,7 +455,7 @@ public class OrchardWork extends RoomWork {
             BlockState s = level.getBlockState(p);
             if (s.is(Blocks.OAK_LEAVES) || s.is(Blocks.DARK_OAK_LEAVES)) {
                 oak = true;
-                if (level.random.nextInt(4) == 0) {
+                if (level.getRandom().nextInt(4) == 0) {
                     level.sendParticles(new net.minecraft.core.particles.BlockParticleOption(net.minecraft.core.particles.ParticleTypes.BLOCK, s),
                             p.getX() + 0.5, p.getY() + 0.3, p.getZ() + 0.5, 2, 0.3, 0.1, 0.3, 0.02);
                 }
@@ -498,7 +498,7 @@ public class OrchardWork extends RoomWork {
                 if (ripe(s)) {
                     pick(level, p);
                 } else if (s.isRandomlyTicking()) {
-                    s.randomTick(level, p, level.random);
+                    s.randomTick(level, p, level.getRandom());
                 }
             }
         }
@@ -603,6 +603,6 @@ public class OrchardWork extends RoomWork {
 
     @Override
     public void load(CompoundTag t) {
-        picked = t.getLong("picked");
+        picked = t.getLongOr("picked", 0L);
     }
 }

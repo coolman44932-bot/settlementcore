@@ -279,14 +279,14 @@ public final class Ration {
 
     /** Read from the keys {@link #save} writes: four piles from before the gorge grade load with none of that, and a larder from before the fare is all raw. */
     public void load(CompoundTag tag) {
-        int[] saved = tag.getIntArray("larder");
+        int[] saved = tag.getIntArray("larder").orElse(new int[0]);
         Arrays.fill(points, 0);
         if (saved.length >= 4) {
             System.arraycopy(saved, 0, points, 0, Math.min(saved.length, points.length));
         } else {
-            points[Fare.RAW] = tag.getInt("food");
+            points[Fare.RAW] = tag.getIntOr("food", 0);
         }
-        hunger = tag.getFloat("hunger");
-        starvingSeconds = tag.getInt("starving");
+        hunger = tag.getFloatOr("hunger", 0f);
+        starvingSeconds = tag.getIntOr("starving", 0);
     }
 }

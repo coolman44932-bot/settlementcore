@@ -4,10 +4,7 @@ import claude.settlementcore.Core;
 import claude.settlementcore.CoreConfig;
 import com.electronwill.nightconfig.core.CommentedConfig;
 import com.electronwill.nightconfig.toml.TomlParser;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -24,7 +21,6 @@ import java.util.Map;
  * folder is never touched.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class ConfigGameTests {
 
     /** A race's old keys, in the engine's order, to the engine's keys: one of each section and type. */

@@ -1,5 +1,16 @@
 package claude.settlementcore.unit;
 
+import com.geckolib.animatable.GeoEntity;
+import com.geckolib.animation.state.AnimationPoint;
+import com.geckolib.animation.state.KeyFrameEvent;
+import com.geckolib.cache.animation.keyframeevent.ParticleKeyframeData;
+import com.geckolib.cache.animation.keyframeevent.SoundKeyframeData;
+import com.geckolib.model.GeoModel;
+import com.geckolib.renderer.base.GeoRenderer;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.mojang.logging.LogUtils;
+import net.minecraft.client.Minecraft;
 import net.minecraft.core.particles.DustParticleOptions;
 import net.minecraft.core.particles.ParticleOptions;
 import net.minecraft.core.particles.ParticleTypes;
@@ -8,34 +19,40 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.sounds.SoundEvent;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.util.GsonHelper;
 import net.minecraft.util.Mth;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
-import org.joml.Vector3f;
-import software.bernie.geckolib.animatable.GeoEntity;
-import software.bernie.geckolib.animation.keyframe.event.ParticleKeyframeEvent;
-import software.bernie.geckolib.animation.keyframe.event.SoundKeyframeEvent;
+import org.jetbrains.annotations.Nullable;
+import org.slf4j.Logger;
+
+import java.io.Reader;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Sound and particle keyframes from the Blockbench session's animation files (Verminlord, Rat Ogre),
  * played client-side. Sounds are "vanilla_id|pitch|volume". Particles carry the effect ("warp":
  * green warpstone dust; "warpfire": a cone of green fire along the entity's facing; otherwise a
  * vanilla simple particle id), a count in the locator field, and the spawn point in the script
- * field as "right,up,forward" blocks from the entity origin (Blockbench appends ";").
+ * field as "right,up,forward" blocks from the entity origin (Blockbench appends ";"). GeckoLib 5
+ * no longer keeps a particle keyframe's script when it bakes an animation, so the scripts are read
+ * from the animation file itself ({@link Scripts}).
  */
 public final class GeoEvents {
 
-    public static final Vector3f WARP_GREEN = new Vector3f(0.45F, 1.0F, 0.2F);
+    /** The warpstone green, as the 0xRRGGBB a dust particle takes (0.45, 1.0, 0.2). */
+    public static final int WARP_GREEN = 0x73FF33;
 
     private GeoEvents() {
     }
 
-    public static <T extends LivingEntity & GeoEntity> void playSound(SoundKeyframeEvent<T> event) {
-        T e = event.getAnimatable();
-        String[] parts = event.getKeyframeData().getSound().split("\\|");
-        SoundEvent sound = BuiltInRegistries.SOUND_EVENT.get(Identifier.parse(parts[0].trim()));
+    public static <T extends LivingEntity & GeoEntity> void playSound(KeyFrameEvent<T, SoundKeyframeData> event) {
+        T e = event.animatable();
+        String[] parts = event.keyframeData().getSound().split("\\|");
+        SoundEvent sound = BuiltInRegistries.SOUND_EVENT.getValue(Identifier.parse(parts[0].trim()));
         if (sound == null) {
             return;
         }
@@ -44,20 +61,23 @@ public final class GeoEvents {
         e.level().playLocalSound(e.getX(), e.getY(), e.getZ(), sound, SoundSource.HOSTILE, volume, pitch, false);
     }
 
-    public static <T extends LivingEntity & GeoEntity> void spawnParticles(ParticleKeyframeEvent<T> event) {
-        T e = event.getAnimatable();
+    public static <T extends LivingEntity & GeoEntity> void spawnParticles(KeyFrameEvent<T, ParticleKeyframeData> event) {
+        T e = event.animatable();
         Level level = e.level();
-        String effect = event.getKeyframeData().getEffect().trim();
+        ParticleKeyframeData data = event.keyframeData();
+        String effect = data.getEffect().trim();
         int count = 8;
         try {
-            count = Integer.parseInt(event.getKeyframeData().getLocator().trim());
+            count = Integer.parseInt(data.getLocatorName() == null ? "" : data.getLocatorName().trim());
         } catch (NumberFormatException ignored) {
         }
         float yaw = e.yBodyRot * Mth.DEG_TO_RAD;
         Vec3 forward = new Vec3(-Mth.sin(yaw), 0, Mth.cos(yaw));
         Vec3 right = new Vec3(-Mth.cos(yaw), 0, -Mth.sin(yaw));
         Vec3 at = e.position().add(0, e.getBbHeight() * 0.5, 0);
-        String[] off = event.getKeyframeData().script().replace(";", "").split(",");
+        AnimationPoint playing = event.controller().getCurrentAnimationPoint();
+        String script = Scripts.of(e, playing == null ? null : playing.animation().name(), data);
+        String[] off = script == null ? new String[0] : script.replace(";", "").split(",");
         if (off.length == 3) {
             double r = Double.parseDouble(off[0].trim()), u = Double.parseDouble(off[1].trim()), f = Double.parseDouble(off[2].trim());
             at = e.position().add(right.scale(r)).add(forward.scale(f)).add(0, u, 0);
@@ -77,7 +97,7 @@ public final class GeoEvents {
         ParticleOptions particle;
         if ("warp".equals(effect)) {
             particle = new DustParticleOptions(WARP_GREEN, 1.6F);
-        } else if (BuiltInRegistries.PARTICLE_TYPE.get(Identifier.parse(effect)) instanceof SimpleParticleType simple) {
+        } else if (BuiltInRegistries.PARTICLE_TYPE.getValue(Identifier.parse(effect)) instanceof SimpleParticleType simple) {
             particle = simple;
         } else {
             return;
@@ -85,6 +105,76 @@ public final class GeoEvents {
         for (int i = 0; i < count; i++) {
             level.addParticle(particle, at.x + rand.nextGaussian() * 0.25, at.y + rand.nextGaussian() * 0.25, at.z + rand.nextGaussian() * 0.25,
                     rand.nextGaussian() * 0.04, rand.nextDouble() * 0.06, rand.nextGaussian() * 0.04);
+        }
+    }
+
+    /** Resources reloaded: the animation files may have changed (client/HordeLod#clearCaches). */
+    public static void clearScripts() {
+        Scripts.FILES.clear();
+    }
+
+    /**
+     * The particle keyframes' scripts ("pre_effect_script"), read once per animation file from the entity's GeckoLib model.
+     * Client only (it is reached only from a keyframe, which plays on the client), so it is the one place here that names client classes.
+     */
+    private static final class Scripts {
+
+        private static final Logger LOG = LogUtils.getLogger();
+        /** By animation file: by animation name, the scripts by "time|effect|locator". */
+        static final Map<Identifier, Map<String, Map<String, String>>> FILES = new HashMap<>();
+
+        @SuppressWarnings({"unchecked", "rawtypes"})
+        @Nullable
+        static String of(LivingEntity e, @Nullable String animation, ParticleKeyframeData data) {
+            if (!(Minecraft.getInstance().getEntityRenderDispatcher().getRenderer(e) instanceof GeoRenderer<?, ?, ?> renderer)) {
+                return null;
+            }
+            Identifier file = ((GeoModel) renderer.getGeoModel()).getAnimationResource((com.geckolib.animatable.GeoAnimatable) e);
+            Map<String, Map<String, String>> byAnimation = FILES.computeIfAbsent(file, Scripts::read);
+            String key = key(data.getTime(), data.getEffect(), data.getLocatorName());
+            Map<String, String> scripts = animation == null ? null : byAnimation.get(animation);
+            if (scripts != null && scripts.containsKey(key)) {
+                return scripts.get(key);
+            }
+            for (Map<String, String> other : byAnimation.values()) {
+                if (other.containsKey(key)) {
+                    return other.get(key);                       // played from a stage other than the controller's current one
+                }
+            }
+            return null;
+        }
+
+        private static String key(double time, String effect, @Nullable String locator) {
+            return time + "|" + effect + "|" + (locator == null ? "" : locator);
+        }
+
+        private static Map<String, Map<String, String>> read(Identifier file) {
+            Map<String, Map<String, String>> byAnimation = new HashMap<>();
+            try (Reader in = Minecraft.getInstance().getResourceManager().openAsReader(file)) {
+                JsonObject animations = GsonHelper.getAsJsonObject(GsonHelper.parse(in), "animations");
+                for (Map.Entry<String, JsonElement> anim : animations.entrySet()) {
+                    JsonObject effects = anim.getValue().isJsonObject() ? GsonHelper.getAsJsonObject(anim.getValue().getAsJsonObject(), "particle_effects", null) : null;
+                    if (effects == null) {
+                        continue;
+                    }
+                    Map<String, String> scripts = new HashMap<>();
+                    for (Map.Entry<String, JsonElement> at : effects.entrySet()) {
+                        double time = Double.parseDouble(at.getKey());
+                        Iterable<JsonElement> each = at.getValue().isJsonArray() ? at.getValue().getAsJsonArray() : java.util.List.of(at.getValue());
+                        for (JsonElement fx : each) {
+                            JsonObject o = fx.getAsJsonObject();
+                            String script = GsonHelper.getAsString(o, "pre_effect_script", null);
+                            if (script != null) {
+                                scripts.put(key(time, GsonHelper.getAsString(o, "effect"), GsonHelper.getAsString(o, "locator", null)), script);
+                            }
+                        }
+                    }
+                    byAnimation.put(anim.getKey(), scripts);
+                }
+            } catch (Exception ex) {
+                LOG.warn("GeoEvents: cannot read the particle scripts of {}; its particles spawn at the middle of the entity", file, ex);
+            }
+            return byAnimation;
         }
     }
 }

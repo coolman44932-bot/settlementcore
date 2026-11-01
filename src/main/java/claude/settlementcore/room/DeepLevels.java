@@ -610,8 +610,8 @@ public final class DeepLevels {
             var st = level.getBlockState(p.below()).isAir() ? net.minecraft.world.level.block.Blocks.STONE.defaultBlockState() : level.getBlockState(p.below());
             level.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, st), p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5, 6, 0.4, 0.4, 0.4, 0.1);
         }
-        level.playSound(null, at, SoundEvents.ROOTED_DIRT_BREAK, SoundSource.BLOCKS, 0.7f, 0.6f + level.random.nextFloat() * 0.3f);
-        if (level.random.nextInt(3) == 0) {
+        level.playSound(null, at, SoundEvents.ROOTED_DIRT_BREAK, SoundSource.BLOCKS, 0.7f, 0.6f + level.getRandom().nextFloat() * 0.3f);
+        if (level.getRandom().nextInt(3) == 0) {
             level.playSound(null, at, SoundEvents.SILVERFISH_AMBIENT, SoundSource.HOSTILE, 0.6f, 0.7f);
         }
     }
@@ -669,13 +669,13 @@ public final class DeepLevels {
         scanned = false;
         for (Tag x : t.getListOrEmpty("levels")) {
             CompoundTag c = (CompoundTag) x;
-            int[] b = c.getIntArray("source_box");
+            int[] b = c.getIntArray("source_box").orElse(new int[0]);
             if (b.length != 6) {
                 continue;
             }
-            Level l = new Level(c.getString("source"), new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]), c.getInt("tier"));
-            l.done = c.getInt("done");
-            l.announced = c.getBoolean("announced");
+            Level l = new Level(c.getStringOr("source", ""), new BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]), c.getIntOr("tier", 0));
+            l.done = c.getIntOr("done", 0);
+            l.announced = c.getBooleanOr("announced", false);
             for (Tag y : c.getListOrEmpty("jobs")) {
                 CompoundTag jt = (CompoundTag) y;
                 DigJob j = DigJob.load(jt);
@@ -683,12 +683,12 @@ public final class DeepLevels {
                 j.spoilsTo(heart::takeSpoils);
                 j.walls(heart);
                 l.jobs.add(j);
-                l.kinds.add(jt.getString("kind"));
+                l.kinds.add(jt.getStringOr("kind", ""));
             }
             levels.add(l);
         }
         for (Tag x : t.getListOrEmpty("opened")) {
-            opened.add(x.getAsString());
+            opened.add(x.asString().orElse(""));
         }
     }
 }

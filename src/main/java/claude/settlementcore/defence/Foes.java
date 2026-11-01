@@ -10,8 +10,8 @@ import net.minecraft.world.entity.ai.goal.Goal;
 import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.ai.goal.target.TargetGoal;
 import net.minecraft.world.entity.monster.Enemy;
-import net.minecraft.world.entity.monster.ZombifiedPiglin;
-import net.minecraft.world.entity.monster.Zombie;
+import net.minecraft.world.entity.monster.zombie.ZombifiedPiglin;
+import net.minecraft.world.entity.monster.zombie.Zombie;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.raid.Raider;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -42,7 +42,7 @@ public final class Foes {
 
     /** Whether this mob is one of the clan's foes: a raider, or the undead (not a zombified piglin). */
     public static boolean foe(PathfinderMob m) {
-        return m instanceof Raider || (m instanceof Zombie || m instanceof Enemy && m.getType().is(EntityTypeTags.UNDEAD))
+        return m instanceof Raider || (m instanceof Zombie || m instanceof Enemy && m.getType().builtInRegistryHolder().is(EntityTypeTags.UNDEAD))
                 && !(m instanceof ZombifiedPiglin);
     }
 

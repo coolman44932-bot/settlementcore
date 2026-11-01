@@ -1,52 +1,46 @@
 package claude.settlementcore.client;
 
 import claude.settlementcore.unit.SettlerMob;
+import com.geckolib.animatable.GeoEntity;
+import com.geckolib.constant.DefaultAnimations;
+import com.geckolib.model.DefaultedEntityGeoModel;
+import com.geckolib.renderer.base.BoneSnapshots;
+import com.geckolib.renderer.base.GeoRenderState;
+import com.geckolib.renderer.base.RenderPassInfo;
+import net.minecraft.client.renderer.entity.state.LivingEntityRenderState;
 import net.minecraft.resources.Identifier;
-import software.bernie.geckolib.animation.AnimationState;
-import software.bernie.geckolib.cache.object.GeoBone;
-import software.bernie.geckolib.model.DefaultedEntityGeoModel;
 
 /**
- * A horde creature's model, with far animation throttled (client/HordeLod): a far rat works out its pose
- * only every few frames and holds it in between.
+ * A horde creature's model, drawn by a {@link HordeRenderer} (which throttles far animation, client/HordeLod: a far
+ * rat works out its pose only every few frames and holds it in between).
  *
- * <p>GeckoLib's bones are shared by every rat of a kind, so each rat's pose has to be put back on them
- * before it is drawn. The pose is saved as the animation left it, before the per-rat touches in
- * {@link #customAnimations} (the look, which kit bones show), and on a held frame it is restored and
- * those touches are made again: they may be additive (the Rat Ogre's look) and must not stack.
- * Subclasses override {@link #customAnimations}, never {@link #setCustomAnimations}.
+ * <p>GeckoLib 5 poses a model at draw time from what was taken off the rat into its render state, so the
+ * per-rat touches on top of the animation (the look, which kit bones show) are made in
+ * {@link #customAnimations}, from the render state, every frame, after the animation's pose (worked out
+ * fresh or held): they may be additive (the Rat Ogre's look) and never stack, as each frame's bone values
+ * start from nothing. What they need off the rat goes into the render state in {@link #addAdditionalStateData}.
  */
-public abstract class HordeGeoModel<T extends SettlerMob & software.bernie.geckolib.animatable.GeoEntity> extends DefaultedEntityGeoModel<T> {
+public abstract class HordeGeoModel<T extends SettlerMob & GeoEntity> extends DefaultedEntityGeoModel<T> {
 
-    private GeoBone[] bones;
+    private final boolean turnsHead;
 
     protected HordeGeoModel(Identifier assetSubpath, boolean turnsHead) {
-        super(assetSubpath, turnsHead);
+        super(assetSubpath);
+        this.turnsHead = turnsHead;
     }
 
-    @Override
-    public void handleAnimations(T rat, long instanceId, AnimationState<T> state, float partialTick) {
-        if (HordeLod.BENCH_NO_ANIM_FAR && HordeLod.distSqr(rat) > HordeLod.ANIM_FULL && rat.lodPose != null) {
-            return;
-        }
-        bones = HordeLod.boneArray(getAnimationProcessor().getRegisteredBones(), bones);
-        if (!HordeLod.animateThisFrame(rat, HordeLod.distSqr(rat)) && HordeLod.restorePose(rat.lodPose, bones)) {
-            customAnimations(rat, instanceId, state);           // held pose; the look and kit stay live
-            return;
-        }
-        super.handleAnimations(rat, instanceId, state, partialTick);
+    /** Whether the "head" bone follows where the rat looks (GeckoLib 4's DefaultedEntityGeoModel did this itself). */
+    public boolean turnsHead() {
+        return turnsHead;
     }
 
-    @Override
-    public final void setCustomAnimations(T rat, long instanceId, AnimationState<T> state) {
-        if (bones != null) {
-            rat.lodPose = HordeLod.savePose(rat.lodPose, bones);    // as the animation left it
+    /**
+     * Per-rat touches on top of the animation, through {@code snapshots}; by default the head turn, which
+     * sets the "head" bone's turn to where the rat looks (overriding the animation's), as GeckoLib 4 did.
+     */
+    public <R extends LivingEntityRenderState & GeoRenderState> void customAnimations(RenderPassInfo<R> info, BoneSnapshots snapshots) {
+        if (turnsHead) {
+            DefaultAnimations.hardcodedHeadRotation(info, snapshots, "head");
         }
-        customAnimations(rat, instanceId, state);
-    }
-
-    /** Per-rat touches on top of the animation (GeckoLib's head turn by default). */
-    protected void customAnimations(T rat, long instanceId, AnimationState<T> state) {
-        super.setCustomAnimations(rat, instanceId, state);
     }
 }

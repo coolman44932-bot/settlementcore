@@ -44,7 +44,7 @@ public final class HaulLog {
         }, buf -> {
             String from = ByteBufCodecs.STRING_UTF8.decode(buf), to = ByteBufCodecs.STRING_UTF8.decode(buf);
             String id = ByteBufCodecs.STRING_UTF8.decode(buf);
-            Item item = id.isEmpty() ? null : BuiltInRegistries.ITEM.get(Identifier.parse(id));
+            Item item = id.isEmpty() ? null : BuiltInRegistries.ITEM.getValue(Identifier.parse(id));
             return new Flow(from, to, item == Items.AIR ? null : item, ByteBufCodecs.VAR_LONG.decode(buf));
         });
 

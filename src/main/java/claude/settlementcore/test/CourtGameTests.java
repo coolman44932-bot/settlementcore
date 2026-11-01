@@ -10,15 +10,12 @@ import claude.settlementcore.test.SettlementBlockEntityGameTests.TestSettlement;
 import claude.settlementcore.work.Works;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -33,7 +30,6 @@ import java.util.Map;
  * by cell.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class CourtGameTests {
 
     static final int UP = 360;

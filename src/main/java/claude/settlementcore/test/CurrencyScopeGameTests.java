@@ -7,15 +7,12 @@ import claude.settlementcore.work.Crafter;
 import claude.settlementcore.work.ForgeWork;
 import claude.settlementcore.work.HoardWork;
 import net.minecraft.core.BlockPos;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.level.block.Blocks;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.HashMap;
 import java.util.List;
@@ -29,7 +26,6 @@ import java.util.Map;
  * Skaven's side of the same scoping (a real mine, a real forge) is in the root project's SeamGameTests.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class CurrencyScopeGameTests {
 
     /** Copper and iron are both registered, each with its own ore, while {@code test} runs. */

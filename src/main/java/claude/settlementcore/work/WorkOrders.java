@@ -1,5 +1,6 @@
 package claude.settlementcore.work;
 
+import claude.settlementcore.Nbt;
 import net.minecraft.core.HolderLookup;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
@@ -189,7 +190,7 @@ public final class WorkOrders {
         ListTag l = new ListTag();
         for (Order o : orders.values()) {
             CompoundTag c = new CompoundTag();
-            c.put("item", o.item.save(registries));
+            c.put("item", Nbt.item(o.item, registries));
             c.putInt("keep", o.keep);
             c.putInt("once", o.once);
             l.add(c);
@@ -204,9 +205,9 @@ public final class WorkOrders {
         orders.clear();
         for (Tag x : t.getListOrEmpty("orders")) {
             CompoundTag c = (CompoundTag) x;
-            ItemStack.parse(registries, c.getCompound("item")).ifPresent(s -> set(s, c.getInt("keep"), c.getInt("once")));
+            Nbt.parseItem(registries, c.getCompoundOrEmpty("item")).ifPresent(s -> set(s, c.getIntOr("keep", 0), c.getIntOr("once", 0)));
         }
-        slingers = t.getInt("slingers");
-        teams = t.getInt("teams");
+        slingers = t.getIntOr("slingers", 0);
+        teams = t.getIntOr("teams", 0);
     }
 }

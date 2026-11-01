@@ -105,12 +105,13 @@ public final class RoomTemplates {
             if (mod == null) {
                 continue;
             }
-            Path path = mod.getFile().findResource("data", ns, "structure", "room", id + ".nbt");
-            if (!Files.isRegularFile(path)) {
+            String path = "data/" + ns + "/structure/room/" + id + ".nbt";
+            var jar = mod.getFile().getContents();
+            if (!jar.containsFile(path)) {
                 continue;
             }
-            try (InputStream in = Files.newInputStream(path)) {
-                return entries(in, BuiltInRegistries.BLOCK.asLookup());
+            try (InputStream in = jar.openFile(path)) {
+                return entries(in, BuiltInRegistries.BLOCK);
             } catch (Exception e) {
                 LOG.error("Under-Empire: failed to read room template {} from the mod {}", id, ns, e);
             }
@@ -207,14 +208,14 @@ public final class RoomTemplates {
         ListTag palette = root.getListOrEmpty("palette");
         BlockState[] states = new BlockState[palette.size()];
         for (int i = 0; i < palette.size(); i++) {
-            states[i] = NbtUtils.readBlockState(blocks, palette.getCompound(i));
+            states[i] = NbtUtils.readBlockState(blocks, palette.getCompoundOrEmpty(i));
         }
         ListTag cells = root.getListOrEmpty("blocks");
         for (int i = 0; i < cells.size(); i++) {
-            CompoundTag b = cells.getCompound(i);
+            CompoundTag b = cells.getCompoundOrEmpty(i);
             ListTag pos = b.getListOrEmpty("pos");
-            BlockPos p = new BlockPos(pos.getInt(0), pos.getInt(1), pos.getInt(2));
-            out.add(new Entry(p, states[b.getInt("state")], b.contains("nbt") ? b.getCompound("nbt") : null));
+            BlockPos p = new BlockPos(pos.getIntOr(0, 0), pos.getIntOr(1, 0), pos.getIntOr(2, 0));
+            out.add(new Entry(p, states[b.getIntOr("state", 0)], b.contains("nbt") ? b.getCompoundOrEmpty("nbt") : null));
         }
         return out;
     }

@@ -16,7 +16,6 @@ import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.HolderLookup;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.server.level.ServerLevel;
@@ -28,8 +27,6 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntityType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -45,7 +42,6 @@ import java.util.UUID;
  * one. What is left to the Great Plan's own tests (the pool's, slice G2) is a settler of a real type rising into the world.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class SettlementBlockEntityGameTests {
 
     private static final SettlementBlockEntity.Keys KEYS = new SettlementBlockEntity.Keys("name", "gold", "people", "skinks", "saurus");
@@ -215,16 +211,18 @@ public class SettlementBlockEntityGameTests {
         public void takeSpoils(ServerLevel level, BlockPos pos, BlockState was, net.minecraft.world.level.block.entity.BlockEntity be) {
         }
 
-        /** A chunk's save of it: what {@code saveAdditional} writes. */
+        /** A chunk's save of it: what {@code saveAdditional} writes, the settlement's compound (under SAVE_KEY in the chunk). */
         CompoundTag saved(HolderLookup.Provider registries) {
-            CompoundTag tag = new CompoundTag();
-            saveAdditional(tag, registries);
-            return tag;
+            var out = net.minecraft.world.level.storage.TagValueOutput.createWithContext(net.minecraft.util.ProblemReporter.DISCARDING, registries);
+            saveAdditional(out);
+            return out.buildResult().getCompoundOrEmpty(SAVE_KEY);
         }
 
         /** A chunk's load of it, as a fresh block entity reads what was saved. */
         void load(CompoundTag tag, HolderLookup.Provider registries) {
-            loadAdditional(tag, registries);
+            CompoundTag chunk = new CompoundTag();
+            chunk.put(SAVE_KEY, tag);
+            loadAdditional(claude.settlementcore.Nbt.input(chunk, registries));
         }
     }
 
@@ -293,7 +291,7 @@ public class SettlementBlockEntityGameTests {
         h.assertTrue(back.ledgerStores().equals(stores) && back.spoils().size() == 1 && back.spoils().get(0).is(Items.DIAMOND) && back.spoils().get(0).getCount() == 5,
                 "the stores or the spoils came back as " + back.ledgerStores() + " and " + back.spoils());
         CompoundTag again = back.saved(level.registryAccess());
-        long[] storesAgain = again.getLongArray("ledger_stores"), storesWas = tag.getLongArray("ledger_stores");
+        long[] storesAgain = again.getLongArray("ledger_stores").orElse(new long[0]), storesWas = tag.getLongArray("ledger_stores").orElse(new long[0]);
         java.util.Arrays.sort(storesAgain);
         java.util.Arrays.sort(storesWas);
         again.remove("ledger_stores");
@@ -429,7 +427,7 @@ public class SettlementBlockEntityGameTests {
             tag.putFloat("spawn_progress", saved[i]);
             TestSettlement back = TestSettlement.of(h, new BlockPos(2, 2, 2));
             back.load(tag, level.registryAccess());
-            float now = back.saved(level.registryAccess()).getFloat("spawn_progress");
+            float now = back.saved(level.registryAccess()).getFloatOr("spawn_progress", 0f);
             h.assertTrue(now == kept[i], "a saved progress of " + saved[i] + " was kept as " + now + ", not " + kept[i]);
             back.setRemoved();
         }
@@ -454,7 +452,7 @@ public class SettlementBlockEntityGameTests {
         int made = dropped.rounds;
         seconds(h, dropped, 3);
         h.assertTrue(dropped.rounds - made >= 3 && dropped.rounds - made <= 4, "the clock did not come back to a round a second: " + (dropped.rounds - made) + " rounds in 3 seconds more");
-        h.assertTrue(corrupt.saved(level.registryAccess()).getFloat("spawn_progress") <= corrupt.every,
+        h.assertTrue(corrupt.saved(level.registryAccess()).getFloatOr("spawn_progress", 0f) <= corrupt.every,
                 "a billion loaded was not trimmed to the round by its first second: " + corrupt.saved(level.registryAccess()).getFloat("spawn_progress"));
         for (TestSettlement t : List.of(source, corrupt, dropped)) {
             t.setRemoved();
@@ -499,7 +497,7 @@ public class SettlementBlockEntityGameTests {
         back.load(tag, level.registryAccess());
         back.every = s.every;
         back.pace = s.pace;
-        float kept = back.saved(level.registryAccess()).getFloat("spawn_progress");
+        float kept = back.saved(level.registryAccess()).getFloatOr("spawn_progress", 0f);
         h.assertTrue(kept == 5000f, "a round 5000 seconds along was loaded at " + kept + ", not 5000");
         seconds(h, back, 2);
         h.assertTrue(back.rounds == 0, "the reloaded round came early: " + back.rounds + " rounds at 7000");

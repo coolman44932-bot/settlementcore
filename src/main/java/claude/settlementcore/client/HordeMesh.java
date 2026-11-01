@@ -23,6 +23,10 @@ import java.util.Arrays;
  * GeckoLib at all. Faces turned away are still left out, tested against the camera as it is now; light,
  * the hurt flash and colour are the rat's own now.
  *
+ * <p>On GeckoLib 5 a model is drawn after the frame's submissions, so a kept model is filled in two steps
+ * of one frame: rooted and its held item kept when the rat is submitted (HordeRenderer), its body when
+ * GeckoLib's deferred draw runs, and {@link #done} at the end of that draw.
+ *
  * <p>Kept in the model's space means before the body turns: GeckoLib stands a model up as
  * scale, then turn about the vertical by the body's heading, then a hundredth of a block up, and the
  * turn commutes with both, so a rat that has turned since is drawn with the difference added.
@@ -35,9 +39,10 @@ final class HordeMesh {
     /** The rat's body (its own texture). */
     float[] body = new float[QUAD * 64];
     int bodyQuads;
-    /** Its held item as a flat sprite (the block atlas). */
+    /** Its held item as a flat sprite, and the atlas the sprite is on. */
     float[] item = new float[QUAD * 2];
     int itemQuads;
+    @Nullable Identifier itemAtlas;
     @Nullable Identifier texture;
     /** From the entity's spot to the model's space, when kept (scale, body turn, lift). */
     final Matrix4f root = new Matrix4f();
@@ -52,9 +57,6 @@ final class HordeMesh {
     private final Matrix3f toModelNormal = new Matrix3f();
     private boolean rooted;
 
-    /** The mesh being kept while GeckoLib draws a rat, if any (rendering is single-threaded). */
-    @Nullable static HordeMesh capturing;
-
     private static final Vector3f P = new Vector3f();
     private static final Vector3f N = new Vector3f();
     private static final Matrix4f M = new Matrix4f();
@@ -63,6 +65,7 @@ final class HordeMesh {
     void begin() {
         bodyQuads = 0;
         itemQuads = 0;
+        itemAtlas = null;
         rooted = false;
         ready = false;
     }
@@ -124,14 +127,14 @@ final class HordeMesh {
     }
 
     /**
-     * Place it where the rat stands now, for {@link #drawBody} and {@link #drawItem}: {@code spot} is the
-     * pose the renderer was handed (the entity's spot, camera-relative), {@code bodyYawNow} its heading now.
+     * Place it where the rat stands now, for {@link #drawBody} and {@link #drawItem} right after: {@code spot}
+     * is the pose the renderer was handed (the entity's spot, camera-relative), {@code bodyYawNow} its heading now.
      */
-    void place(PoseStack spot, float bodyYawNow) {
+    void place(PoseStack.Pose spot, float bodyYawNow) {
         // GeckoLib turns the model by (180 - heading) about the vertical: add how far it has turned since
         float turn = (float) Math.toRadians(bodyYaw - bodyYawNow);
-        M.set(spot.last().pose()).mul(root).rotateY(turn);
-        MN.set(spot.last().normal()).mul(rootTurn).rotateY(turn);
+        M.set(spot.pose()).mul(root).rotateY(turn);
+        MN.set(spot.normal()).mul(rootTurn).rotateY(turn);
     }
 
     void drawBody(VertexConsumer buffer, int light, int overlay, int colour, boolean cull) {
@@ -144,7 +147,7 @@ final class HordeMesh {
     }
 
     boolean hasItem() {
-        return itemQuads > 0;
+        return itemQuads > 0 && itemAtlas != null;
     }
 
     private static void emit(float[] a, int quads, VertexConsumer buffer, int light, int overlay, int colour, boolean cull) {

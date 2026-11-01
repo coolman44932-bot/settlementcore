@@ -1,5 +1,6 @@
 package claude.settlementcore.room;
 
+import claude.settlementcore.Nbt;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.nbt.CompoundTag;
@@ -123,7 +124,7 @@ public class DigJob {
      */
     public static boolean plant(BlockState s) {
         return s.is(net.minecraft.tags.BlockTags.FLOWERS) || s.is(net.minecraft.tags.BlockTags.SMALL_FLOWERS)
-                || s.is(net.minecraft.tags.BlockTags.TALL_FLOWERS) || s.is(net.minecraft.tags.BlockTags.SAPLINGS)
+                || s.getBlock() instanceof net.minecraft.world.level.block.TallFlowerBlock || s.is(net.minecraft.tags.BlockTags.SAPLINGS)
                 || s.is(net.minecraft.tags.BlockTags.CAVE_VINES) || s.is(net.minecraft.world.level.block.Blocks.SHORT_GRASS)
                 || s.is(net.minecraft.world.level.block.Blocks.TALL_GRASS) || s.is(net.minecraft.world.level.block.Blocks.FERN)
                 || s.is(net.minecraft.world.level.block.Blocks.LARGE_FERN) || s.is(net.minecraft.world.level.block.Blocks.DEAD_BUSH)
@@ -776,7 +777,7 @@ public class DigJob {
                 tag.putInt("x", t.pos().getX());
                 tag.putInt("y", t.pos().getY());
                 tag.putInt("z", t.pos().getZ());
-                be.loadWithComponents(tag, level.registryAccess());
+                be.loadWithComponents(Nbt.input(tag, level.registryAccess()));
                 be.setChanged();
             }
         }
@@ -785,7 +786,7 @@ public class DigJob {
     public CompoundTag save() {
         CompoundTag t = new CompoundTag();
         t.putString("room", roomId);
-        t.put("door", NbtUtils.writeBlockPos(door));
+        t.put("door", Nbt.pos(door));
         t.putString("facing", facing.getSerializedName());
         t.putLongArray("finished", finished.toLongArray());
         t.putInt("template", templatePrint);
@@ -815,16 +816,16 @@ public class DigJob {
     }
 
     public static DigJob load(CompoundTag t) {
-        return new DigJob(t.getString("room"), savedDoor(t), savedFacing(t)).readSaved(t);
+        return new DigJob(t.getStringOr("room", ""), savedDoor(t), savedFacing(t)).readSaved(t);
     }
 
     /** The door a saved job was dug from: a kind of job's own load makes itself with it ({@link #readSaved}). */
     protected static BlockPos savedDoor(CompoundTag t) {
-        return NbtUtils.readBlockPos(t, "door").orElse(BlockPos.ZERO);
+        return Nbt.readPos(t, "door").orElse(BlockPos.ZERO);
     }
 
     protected static Direction savedFacing(CompoundTag t) {
-        Direction facing = Direction.byName(t.getString("facing"));
+        Direction facing = Direction.byName(t.getStringOr("facing", ""));
         return facing == null ? Direction.EAST : facing;
     }
 
@@ -833,19 +834,19 @@ public class DigJob {
      * {@code new RaiseJob(t.getString("room"), savedDoor(t), savedFacing(t)).readSaved(t)}.
      */
     protected final <J extends DigJob> J readSaved(CompoundTag t) {
-        finished = BitSet.valueOf(t.getLongArray("finished"));
-        templatePrint = t.getInt("template");
-        walled = t.getBoolean("walled") || finished.isEmpty();   // begun before the shoring: walled up when finished
+        finished = BitSet.valueOf(t.getLongArray("finished").orElse(new long[0]));
+        templatePrint = t.getIntOr("template", 0);
+        walled = t.getBooleanOr("walled", false) || finished.isEmpty();   // begun before the shoring: walled up when finished
         if (t.contains("keep_out")) {
-            keepOut = t.getLongArray("keep_out");
+            keepOut = t.getLongArray("keep_out").orElse(new long[0]);
         } else if (finished.cardinality() > 0) {
             keepOut = new long[0];          // begun before keep-out existed: keep its task list as it was
         }
-        if (t.getBoolean("unshored")) {
+        if (t.getBooleanOr("unshored", false)) {
             unshored();
         }
-        if (t.getBoolean("natural_only")) {
-            int[] b = t.getIntArray("also_cut");
+        if (t.getBooleanOr("natural_only", false)) {
+            int[] b = t.getIntArray("also_cut").orElse(new int[0]);
             naturalOnly(b.length == 6 ? new net.minecraft.world.level.levelgen.structure.BoundingBox(b[0], b[1], b[2], b[3], b[4], b[5]) : null);
         }
         loadMore(t);

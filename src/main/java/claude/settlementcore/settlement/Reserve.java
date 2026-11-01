@@ -98,8 +98,8 @@ public final class Reserve {
         if (!tag.contains(workersKey)) {
             return false;
         }
-        workers = tag.getInt(workersKey);
-        soldiers = tag.getInt(soldiersKey);
+        workers = tag.getIntOr(workersKey, 0);
+        soldiers = tag.getIntOr(soldiersKey, 0);
         return true;
     }
 }

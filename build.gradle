@@ -13,6 +13,19 @@ base { archivesName = 'settlementcore' }
 // Mojang ships Java 25 with 26.1, so mods target it
 java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
+// The test race (src/testrace, mod id testrace): a dev-only race on the engine, to see it run and to copy from. Its own source
+// set and its own jar (testraceJar); the engine's jar never holds it.
+sourceSets {
+    testrace {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    testraceImplementation.extendsFrom implementation
+    testraceRuntimeOnly.extendsFrom runtimeOnly
+}
+
 repositories {
     mavenCentral()
     maven {
@@ -29,11 +42,20 @@ dependencies {
 
 neoForge {
     version = project.neo_version
+    addModdingDependenciesTo sourceSets.testrace
+    // GeckoLib 5 makes every EntityRenderState a GeoRenderState by interface injection; its jar doesn't carry the file, so
+    // compiling against it needs this copy (from its sources jar's META-INF/interface_injections.json)
+    interfaceInjectionData {
+        from(file('geckolib_interface_injections.json'))
+    }
 
     runs {
         configureEach {
-            // the engine's tests and nothing else's (-Ptestns=a,b for more)
-            systemProperty 'neoforge.enabledGameTestNamespaces', project.findProperty('testns') ?: 'settlementcore'
+            // the runs load the test race too, so its classes (and the engine's) are on their classpath
+            sourceSet = sourceSets.testrace
+            // -Ptestns=settlementcore : only those mods' GameTests are registered (test/GameTests; 26.1 has no
+            // neoforge.enabledGameTestNamespaces any more). Unset, every loaded mod's tests are.
+            systemProperty 'settlementcore.testns', project.findProperty('testns') ?: ''
         }
         client {
             client()
@@ -68,6 +90,9 @@ neoForge {
         settlementcore {
             sourceSet sourceSets.main
         }
+        testrace {
+            sourceSet sourceSets.testrace
+        }
     }
 }
 
@@ -77,14 +102,25 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xmaxerrs', '3000']
 }
 
-tasks.named('processResources', ProcessResources).configure {
-    def props = [version: project.version, minecraft_version: project.minecraft_version, neo_version: project.neo_version,
-                 geckolib_version: project.geckolib_version]
-    inputs.properties props
-    filesMatching('META-INF/neoforge.mods.toml') {
-        expand props
+['processResources', 'processTestraceResources'].each { name ->
+    tasks.named(name, ProcessResources).configure {
+        def props = [version: project.version, minecraft_version: project.minecraft_version, neo_version: project.neo_version,
+                     geckolib_version: project.geckolib_version]
+        inputs.properties props
+        filesMatching('META-INF/neoforge.mods.toml') {
+            expand props
+        }
     }
 }
+
+// build/libs/settlementcore-testrace-<version>.jar: the test race, for a dev instance beside the engine's jar
+tasks.register('testraceJar', Jar) {
+    group = 'build'
+    description = "Builds the test race's jar."
+    archiveBaseName = 'settlementcore-testrace'
+    from sourceSets.testrace.output
+}
+tasks.named('assemble') { dependsOn 'testraceJar' }
 
 jar {
     manifest {

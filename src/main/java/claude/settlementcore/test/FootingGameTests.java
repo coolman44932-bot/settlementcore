@@ -4,7 +4,6 @@ import claude.settlementcore.Core;
 import claude.settlementcore.unit.Footing;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
-import net.minecraft.gametest.framework.GameTest;
 import net.minecraft.gametest.framework.GameTestHelper;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.Blocks;
@@ -14,8 +13,6 @@ import net.minecraft.world.level.block.TrapDoorBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.DoubleBlockHalf;
 import net.minecraft.world.level.block.state.properties.Half;
-import net.neoforged.neoforge.gametest.GameTestHolder;
-import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
 
 /**
  * Whether a cell has a way out (core/unit/Footing#escapes), asked of the engine directly: the number of cells that is room enough, the open
@@ -23,7 +20,6 @@ import net.neoforged.neoforge.gametest.PrefixGameTestTemplate;
  * in. Their ground is the plot of MusterGameTests, laid at +360 over the test and cleared after.
  */
 @GameTestHolder(Core.MODID)
-@PrefixGameTestTemplate(false)
 public class FootingGameTests {
 
     /**
