@@ -10,6 +10,7 @@ import com.geckolib.animatable.instance.AnimatableInstanceCache;
 import com.geckolib.animatable.manager.AnimatableManager;
 import com.geckolib.animation.AnimationController;
 import com.geckolib.animation.RawAnimation;
+import com.geckolib.animation.object.PlayState;
 import com.geckolib.util.GeckoLibUtil;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.particles.ParticleTypes;
@@ -352,7 +353,7 @@ public abstract class TestUnit extends SettlerMob implements GeoEntity {
     public boolean doHurtTarget(ServerLevel level, net.minecraft.world.entity.Entity target) {
         boolean hit = super.doHurtTarget(level, target);
         if (hit) {
-            triggerAnim("main", "attack");
+            triggerAnim("attack", "attack");
             attacksForTests++;
         }
         return hit;
@@ -401,7 +402,11 @@ public abstract class TestUnit extends SettlerMob implements GeoEntity {
                 return test.setAndContinue(WORK);
             }
             return test.setAndContinue(test.isMoving() ? WALK : IDLE);
-        }).triggerableAnim("attack", ATTACK));                  // a blow: triggered from the server, played whole (0.5 s), then back to the loops
+        }));
+        // A blow, on a controller of its own after main: stopped until the server triggers it, it plays the clip once over the loops (the
+        // later controller wins the bones it keys: the right arm, the body), then finishes and stops drawing, and main shows through.
+        // On main itself a trigger silences the predicate for good (GeckoLib 5.5.2 never clears it when the clip ends: the review of a4fb33b).
+        controllers.add(new AnimationController<TestUnit>("attack", 2, test -> PlayState.STOP).triggerableAnim("attack", ATTACK));
     }
 
     @Override
