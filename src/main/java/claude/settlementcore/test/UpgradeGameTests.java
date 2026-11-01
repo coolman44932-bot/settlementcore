@@ -60,23 +60,25 @@ public class UpgradeGameTests {
         h.succeed();
     }
 
-    /** The night's length is the adjustment's, read without moving the clock, and a marker's agrees with where the clock really goes. */
+    /** The night's length is the adjustment's, read without touching the clock (applied and set back, it marked the manager dirty), and a marker's agrees with where the clock really goes. */
     @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
     public static void aNightsSleepIsReadOffTheClockWithoutMovingIt(GameTestHelper h) {
         ServerLevel level = h.getLevel();
         var clock = level.dimensionType().defaultClock().orElseThrow();
         var clocks = level.getServer().clockManager();
         long before = clocks.getTotalTicks(clock);
+        clocks.setDirty(false);                                  // a clock moved, even and back, marks the manager dirty and tells every player
         long relative = Den.skipped(level, new ClockAdjustment.Relative(1200));
         long absolute = Den.skipped(level, new ClockAdjustment.Absolute(before + 500));
         ClockAdjustment wake = new ClockAdjustment.Marker(ClockTimeMarkers.WAKE_UP_FROM_SLEEP);
         long read = Den.skipped(level, wake);
-        h.assertTrue(clocks.getTotalTicks(clock) == before, "reading the adjustments moved the clock: " + before + " -> " + clocks.getTotalTicks(clock));
+        h.assertTrue(clocks.getTotalTicks(clock) == before && !clocks.isDirty(), "reading the adjustments touched the clock: " + before + " -> "
+                + clocks.getTotalTicks(clock) + (clocks.isDirty() ? ", the manager marked dirty (moved and set back)" : ""));
         h.assertTrue(relative == 1200 && absolute == 500, "a relative 1200 read " + relative + ", an absolute 500 ahead read " + absolute);
         wake.apply(clocks, clock);
         long moved = clocks.getTotalTicks(clock) - before;
         clocks.setTotalTicks(clock, before);
-        h.assertTrue(read == moved && read >= 0, "the wake-up marker read " + read + " ticks, but moves the clock " + moved);
+        h.assertTrue(read == moved && read > 0, "the wake-up marker read " + read + " ticks, but moves the clock " + moved);
         h.succeed();
     }
 }

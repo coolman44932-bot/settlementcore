@@ -524,14 +524,23 @@ public final class TestWatchdog {
     }
 
     /**
-     * The forces the store's listener did not hear: one on a chunk that already had a lower simulating ticket (a player's) raises
-     * nothing, and the first batch's are made before the watch begins. Seen here a tick late, with no caller.
+     * The forces and un-forces the store's listener did not hear (one on a chunk that already had a lower simulating ticket, a
+     * player's, changes no level): seen here a tick late, with no caller, so the set the watch keeps stays the store's.
      */
     private static void caughtUp(ServerLevel level, long now) {
-        for (long k : level.getForceLoadedChunks()) {
+        LongSet forced = level.getForceLoadedChunks();
+        for (long k : forced) {
             if (FORCED.add(k)) {
                 FORCED_AT.put(k, now);
                 FORCED_BY.put(k, "? (seen forced at tick " + now + ")");
+            }
+        }
+        if (FORCED.size() > forced.size()) {
+            for (long k : FORCED.toLongArray()) {
+                if (!forced.contains(k)) {
+                    FORCED.remove(k);
+                    unforced(k);
+                }
             }
         }
     }
