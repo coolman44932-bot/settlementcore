@@ -1,13 +1,12 @@
 """The test race's assets, deterministically (python settlementcore/tools/gen_testrace_assets.py; needs Pillow).
 
 Writes under src/testrace/resources/assets/testrace/:
-  geo/entity/{worker,guard}.geo.json            box-UV humanoids: root > body > head, arms, legs (the Guard: a helmet's crest and a shield)
-  animations/entity/{worker,guard}.animation.json   idle, walk, work (the engine's crew pose) loops, the same for both
-  textures/entity/{worker,guard}.png            flat shades per cube, painted from the UV layout
   blockstates/heart.json, models/block/heart.json, items/heart.json, textures/block/heart.png
   items/*_spawn_egg.json, models/item/*_spawn_egg.json, textures/item/*_spawn_egg.png
   lang/en_us.json
-Placeholders by design: the race is the engine's demo and template, not a look.
+The Worker's and Guard's models, clips and textures are Blockbench's since 2026-11-01 (block bench/bbsrc/testrace_build.js, TRB):
+this script no longer writes them, so running it never overwrites them. Its humanoid()/animations() are kept for a race that
+wants box figures to start from (main() --figures).
 """
 import json
 import math
@@ -162,10 +161,12 @@ def egg_png(rel, shell, spots):
 
 
 def main():
-    humanoid("worker", 1.0, (230, 190, 150), (90, 130, 70), worker_extra)
-    humanoid("guard", 1.2, (220, 180, 140), (70, 80, 150), guard_extra)
-    animations("worker")
-    animations("guard")
+    import sys
+    if "--figures" in sys.argv:                          # box figures only on request: the real models come from Blockbench
+        humanoid("worker", 1.0, (230, 190, 150), (90, 130, 70), worker_extra)
+        humanoid("guard", 1.2, (220, 180, 140), (70, 80, 150), guard_extra)
+        animations("worker")
+        animations("guard")
     solid_png("textures/block/heart.png", (60, 200, 110), (20, 90, 50))
     write("blockstates/heart.json", {"variants": {"": {"model": "testrace:block/heart"}}})
     write("models/block/heart.json", {"parent": "minecraft:block/cube_all", "textures": {"all": "testrace:block/heart"}})

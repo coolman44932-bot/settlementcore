@@ -65,6 +65,8 @@ public abstract class TestUnit extends SettlerMob implements GeoEntity {
     static final RawAnimation IDLE = RawAnimation.begin().thenLoop("animation.testrace.idle");
     static final RawAnimation WALK = RawAnimation.begin().thenLoop("animation.testrace.walk");
     static final RawAnimation WORK = RawAnimation.begin().thenLoop("animation.testrace.work");
+    /** A blow (a melee swing): once, rest to rest, the blow landing at 0.25 s. */
+    static final RawAnimation ATTACK = RawAnimation.begin().thenPlay("animation.testrace.attack");
 
     private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache(this);
 
@@ -381,6 +383,9 @@ public abstract class TestUnit extends SettlerMob implements GeoEntity {
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<TestUnit>("main", 4, test -> {
             TestUnit u = test.animatable();
+            if (u.swinging) {
+                return test.setAndContinue(ATTACK);              // the swing is synced to clients by vanilla's animate packet
+            }
             if (u.isDigging()) {
                 return test.setAndContinue(WORK);
             }
