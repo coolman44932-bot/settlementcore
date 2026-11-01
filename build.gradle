@@ -69,7 +69,7 @@ neoForge {
         gameTestServer {
             type = 'gameTestServer'
             gameDirectory = project.file('runs/gametest')
-            // -Ponly=settlement,raise : just those batches or tests, by name (test/TestFilter)
+            // -Ponly=settlement,raise : just those batches, tests or test classes, by name (test/GameTests)
             systemProperty 'settlementcore.only', project.findProperty('only') ?: ''
             // -Pwatchdogselftest=<batch> : un-force a chunk of that batch's first test as it starts; the watchdog
             // (test/TestWatchdog) should then fail that test with its report instead of the run hanging

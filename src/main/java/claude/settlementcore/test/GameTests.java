@@ -123,7 +123,8 @@ public final class GameTests {
                 }
                 String path = snake(holder.getSimpleName()) + "/" + snake(m.getName());
                 if (!only.isEmpty() && !only.contains(t.batch().toLowerCase(Locale.ROOT)) && !only.contains(m.getName().toLowerCase(Locale.ROOT))
-                        && !only.contains(snake(m.getName())) && !only.contains(holder.getSimpleName().toLowerCase(Locale.ROOT))) {
+                        && !only.contains(snake(m.getName())) && !only.contains(holder.getSimpleName().toLowerCase(Locale.ROOT))
+                        && !only.contains(snake(holder.getSimpleName()))) {
                     continue;
                 }
                 m.setAccessible(true);

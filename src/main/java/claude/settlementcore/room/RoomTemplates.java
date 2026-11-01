@@ -11,6 +11,8 @@ import net.minecraft.nbt.NbtAccounter;
 import net.minecraft.nbt.NbtIo;
 import net.minecraft.nbt.NbtUtils;
 import net.minecraft.nbt.Tag;
+import net.minecraft.util.datafix.DataFixTypes;
+import net.minecraft.util.datafix.DataFixers;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.packs.resources.Resource;
@@ -36,7 +38,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Loads room templates (data/underempire/structure/room/&lt;id&gt;.nbt) straight from the server's
+ * Loads room templates (data/&lt;the race's namespace&gt;/structure/room/&lt;id&gt;.nbt) straight from the server's
  * resources. Reading the file ourselves gives the full block list including air, which is what a
  * dig needs: air entries are the cells the rats gnaw out.
  */
@@ -203,8 +205,18 @@ public final class RoomTemplates {
 
     /** A template file's cells, air and all, with their block states looked up in {@code blocks}. */
     private static List<Entry> entries(InputStream in, HolderGetter<Block> blocks) throws IOException {
+        return entries(NbtIo.readCompressed(in, NbtAccounter.unlimitedHeap()), blocks);
+    }
+
+    /**
+     * A template's cells from its file's tag, brought up to this game's version first (also for the tests). A template saved on
+     * an older Minecraft names its blocks as that game did, and a name this one no longer knows reads back as air, silently: on
+     * 26.1 a 1.21.1 room's chains (now iron chains) were gone from it (the review of cccf720). Vanilla's structure loader runs the
+     * same fixer; a tag with no DataVersion is from before they had one (500, as vanilla takes it).
+     */
+    public static List<Entry> entries(CompoundTag file, HolderGetter<Block> blocks) {
         List<Entry> out = new ArrayList<>();
-        CompoundTag root = NbtIo.readCompressed(in, NbtAccounter.unlimitedHeap());
+        CompoundTag root = DataFixTypes.STRUCTURE.updateToCurrentVersion(DataFixers.getDataFixer(), file, NbtUtils.getDataVersion(file, 500));
         ListTag palette = root.getListOrEmpty("palette");
         BlockState[] states = new BlockState[palette.size()];
         for (int i = 0; i < palette.size(); i++) {

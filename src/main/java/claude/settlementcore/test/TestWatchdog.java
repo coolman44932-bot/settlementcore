@@ -148,6 +148,7 @@ public final class TestWatchdog {
         ServerLevel level = s.overworld();
         long now = s.getTickCount();
         record(level);
+        caughtUp(level, now);
         GameTestRunner runner = get(TICKER_RUNNER, GameTestTicker.SINGLETON);
         if (runner == null) {
             return;
@@ -522,6 +523,19 @@ public final class TestWatchdog {
         }
     }
 
+    /**
+     * The forces the store's listener did not hear: one on a chunk that already had a lower simulating ticket (a player's) raises
+     * nothing, and the first batch's are made before the watch begins. Seen here a tick late, with no caller.
+     */
+    private static void caughtUp(ServerLevel level, long now) {
+        for (long k : level.getForceLoadedChunks()) {
+            if (FORCED.add(k)) {
+                FORCED_AT.put(k, now);
+                FORCED_BY.put(k, "? (seen forced at tick " + now + ")");
+            }
+        }
+    }
+
     /** Who is calling setChunkForced: the first few frames past it, innermost first. */
     private static String caller() {
         return StackWalker.getInstance().walk(s -> s
@@ -552,7 +566,7 @@ public final class TestWatchdog {
         ChunkPos c = ChunkPos.unpack(k);
         // whoever forced a chunk lets go of it, or the runner, which lets go of every forced chunk as a batch ends
         String forcer = FORCED_BY.remove(k);
-        if (forcer != null && !owner(forcer).equals(owner(by)) && !owner(by).equals("GameTestRunner")) {
+        if (forcer != null && !forcer.startsWith("?") && !owner(forcer).equals(owner(by)) && !owner(by).equals("GameTestRunner")) {
             foreignUnforces++;
             LOG.warn("GameTest watchdog: chunk {} forced at tick {} by {} was un-forced at tick {} (batch '{}') by {}",
                     c, FORCED_AT.get(k), forcer, tick, b, by);

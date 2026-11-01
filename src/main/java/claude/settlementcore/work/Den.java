@@ -6,7 +6,10 @@ import claude.settlementcore.Core;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.chat.Component;
+import net.minecraft.core.registries.Registries;
 import net.minecraft.server.level.ServerLevel;
+import net.neoforged.neoforge.common.util.ClockAdjustment;
+import org.jspecify.annotations.Nullable;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.Level;
 import net.neoforged.bus.api.SubscribeEvent;
@@ -45,21 +48,30 @@ public final class Den {
     }
 
     /**
-     * How far {@code adjustment} moves the level's clock. Since 26.1 a night's sleep is an adjustment the clock is given after
-     * this event (to the wake-up marker, unless a mod set another) and before the sleepers wake, so the engine applies it here,
-     * reads the clock, and puts it back for the real one.
+     * How far {@code adjustment} would move the level's clock (also for the tests). Since 26.1 a night's sleep is an adjustment
+     * the clock is given after this event (to the wake-up marker, unless a mod set another) and before the sleepers wake. It is
+     * worked out, never applied: moving the clock and back sent every player two time packets (the review of cccf720). A marker
+     * is found where the clock manager finds it, among the timelines' markers.
      */
-    private static long skipped(ServerLevel level, net.neoforged.neoforge.common.util.ClockAdjustment adjustment) {
+    public static long skipped(ServerLevel level, @Nullable ClockAdjustment adjustment) {
         var clock = level.dimensionType().defaultClock().orElse(null);
         if (clock == null || adjustment == null) {
             return 0;
         }
-        var clocks = level.getServer().clockManager();
-        long before = clocks.getTotalTicks(clock);
-        adjustment.apply(clocks, clock);
-        long after = clocks.getTotalTicks(clock);
-        clocks.setTotalTicks(clock, before);
-        return after - before;
+        long now = level.getServer().clockManager().getTotalTicks(clock);
+        return switch (adjustment) {
+            case ClockAdjustment.Relative r -> r.ticks();
+            case ClockAdjustment.Absolute a -> a.ticks() - now;
+            case ClockAdjustment.Marker m -> {
+                long[] to = {now};
+                level.registryAccess().lookupOrThrow(Registries.TIMELINE).listElements().forEach(t -> t.value().registerTimeMarkers((key, marker) -> {
+                    if (key.equals(m.marker()) && marker.clock().equals(clock)) {
+                        to[0] = marker.resolveTimeToMoveTo(now);
+                    }
+                }));
+                yield to[0] - now;
+            }
+        };
     }
 
     /**
