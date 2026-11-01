@@ -15,20 +15,20 @@ It adds nothing by itself: a race mod builds on it."""
 [[dependencies.settlementcore]]
     modId = "neoforge"
     type = "required"
-    versionRange = "[21.1,)"
+    versionRange = "[${neo_version},)"
     ordering = "NONE"
     side = "BOTH"
 
 [[dependencies.settlementcore]]
     modId = "minecraft"
     type = "required"
-    versionRange = "[1.21.1,1.22)"
+    versionRange = "[${minecraft_version}]"
     ordering = "NONE"
     side = "BOTH"
 
 [[dependencies.settlementcore]]
     modId = "geckolib"
     type = "required"
-    versionRange = "[4.9,5)"
+    versionRange = "[${geckolib_version},6)"
     ordering = "NONE"
     side = "BOTH"

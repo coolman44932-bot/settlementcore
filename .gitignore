@@ -1,0 +1,21 @@
+# Gradle and build output
+.gradle/
+build/
+
+# Dev runs: GameTest worlds, clients, logs
+run/
+runs/
+
+# Profiling captures and build logs
+*.log
+*.jfr
+
+# Python caches
+__pycache__/
+*.pyc
+
+# IDE files
+.idea/
+*.iml
+out/
+.vscode/

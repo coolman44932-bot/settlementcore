@@ -1,49 +1,85 @@
 plugins {
-    id 'java'
-    // the version comes from the root project's plugins block (a second one here is an error)
-    id 'net.neoforged.moddev'
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.148'
 }
 
-// Settlement Core, the settlement engine every race mod builds on (docs/plans/core-step2.md). It has no runs of its own:
-// the root project's runs load it beside the Under-Empire (the root's neoForge { mods { settlementcore } }).
-version = '0.3.1'
-group = 'claude.underempire'
+// Settlement Core, the settlement engine every race mod builds on: rooms dug from plans, their crews and work, the haul and
+// the hoard, larders and fare, a settlement that defends itself, and crowds drawn fast. Its own repo since 2026-10-31 (split
+// out of under-empire's :core with its history, then moved from 1.21.1 to 26.1.2). It registers nothing: a race does.
+version = project.mod_version
+group = 'claude.settlementcore'
 base { archivesName = 'settlementcore' }
 
-java {
-    toolchain.languageVersion = JavaLanguageVersion.of(21)
-}
+// Mojang ships Java 25 with 26.1, so mods target it
+java.toolchain.languageVersion = JavaLanguageVersion.of(25)
 
 repositories {
     mavenCentral()
     maven {
         name = 'GeckoLib'
         url = 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/'
-        content { includeGroup 'software.bernie.geckolib' }
+        content { includeGroup 'com.geckolib' }
     }
 }
 
 dependencies {
-    // GeckoLib: the crowd renderer (core/client) draws every race's units through it
-    implementation "software.bernie.geckolib:geckolib-neoforge-1.21.1:${geckolib_version}"
+    // GeckoLib: the crowd renderer (client/) draws every race's units through it
+    implementation "com.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 }
 
 neoForge {
-    version = '21.1.248'
-    parchment {
-        minecraftVersion = project.parchment_minecraft_version
-        mappingsVersion = project.parchment_mappings_version
+    version = project.neo_version
+
+    runs {
+        configureEach {
+            // the engine's tests and nothing else's (-Ptestns=a,b for more)
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.findProperty('testns') ?: 'settlementcore'
+        }
+        client {
+            client()
+            gameDirectory = project.file('runs/client')
+        }
+        server {
+            server()
+            gameDirectory = project.file('runs/server')
+            programArgument '--nogui'
+        }
+        gameTestServer {
+            type = 'gameTestServer'
+            gameDirectory = project.file('runs/gametest')
+            // -Ponly=settlement,raise : just those batches or tests, by name (test/TestFilter)
+            systemProperty 'settlementcore.only', project.findProperty('only') ?: ''
+            // -Pwatchdogselftest=<batch> : un-force a chunk of that batch's first test as it starts; the watchdog
+            // (test/TestWatchdog) should then fail that test with its report instead of the run hanging
+            systemProperty 'settlementcore.watchdog.selftest', project.findProperty('watchdogselftest') ?: ''
+            // -Pcrewtrace : every crew settler's chores to the log (unit/CrewGoal)
+            systemProperty 'settlementcore.crewtrace', project.hasProperty('crewtrace') ? 'true' : 'false'
+            // this server ticks as fast as it can, so what runs on a time budget counts work instead, and a test passes or
+            // fails the same on any machine; the benchmarks (-Pperf) keep the real clock
+            systemProperty 'settlementcore.deterministic', project.hasProperty('perf') ? 'false' : 'true'
+            if (project.hasProperty('perf')) {
+                systemProperty 'settlementcore.perf', 'true'
+                systemProperty 'settlementcore.perfflags', project.findProperty('perfflags') ?: ''
+            }
+        }
+    }
+
+    mods {
+        settlementcore {
+            sourceSet sourceSets.main
+        }
     }
 }
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
-    options.release = 21
-    options.compilerArgs += ['-Xmaxerrs', '2000']
+    options.release = 25
+    options.compilerArgs += ['-Xmaxerrs', '3000']
 }
 
 tasks.named('processResources', ProcessResources).configure {
-    def props = [version: project.version]
+    def props = [version: project.version, minecraft_version: project.minecraft_version, neo_version: project.neo_version,
+                 geckolib_version: project.geckolib_version]
     inputs.properties props
     filesMatching('META-INF/neoforge.mods.toml') {
         expand props
@@ -61,12 +97,21 @@ jar {
     }
 }
 
+// The compile classpath as a file, for a plain-javac typecheck between gradle turns (tools/typecheck.py)
+tasks.register('writeCompileClasspath') {
+    description = 'Writes the main compile classpath to build/compile-classpath.txt.'
+    def cp = sourceSets.main.compileClasspath
+    def out = layout.buildDirectory.file('compile-classpath.txt')
+    inputs.files(cp)
+    outputs.file(out)
+    doLast {
+        out.get().asFile.text = cp.files.collect { it.absolutePath }.join(File.pathSeparator)
+    }
+}
+
 // The engine names no race's namespace: its data lives under settlementcore (and the shared minecraft, c and neoforge),
-// and neither its data nor its code names another mod's resource ("underempire:..."). A race adds to the engine's data
-// from its own jar instead (the Skaven's warren_stew in settlementcore:fare_feast). docs/plans/core-step2.md, C8.
-//
-// The Java check names each race mod's namespace: one more race, one more entry in `races` (the data check below fails any
-// namespace that is not shared, and needs no list). docs/plans/greatplan-first-spawning.md, A8.
+// and neither its data nor its code names another mod's resource. A race adds to the engine's data from its own jar
+// instead (the Skaven's warren_stew in settlementcore:fare_feast). One more race, one more entry in `races`.
 tasks.register('checkCoreNamespace') {
     group = 'verification'
     description = "Fails if Settlement Core's data or code names a race mod's namespace."
