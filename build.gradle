@@ -66,6 +66,20 @@ neoForge {
             gameDirectory = project.file('runs/server')
             programArgument '--nogui'
         }
+        // ./gradlew runBridgeClient : the engine and the test race in a hidden dev game with devbridge (block bench/devbridge),
+        // which tools/devbridge.py start --project settlementcore builds and puts in runs/bridge/mods; the debug port is its
+        // hot swap
+        bridgeClient {
+            client()
+            gameDirectory = project.file('runs/bridge')
+            systemProperty 'devbridge', 'true'
+            systemProperty 'devbridge.visible', project.hasProperty('visible') ? 'true' : 'false'
+            systemProperty 'devbridge.world', project.findProperty('bridgeworld') ?: 'bridge'
+            systemProperty 'devbridge.root', project.findProperty('devbridgeroot') ?: ''
+            systemProperty 'devbridge.structures', project.findProperty('devbridgestructures') ?: ''
+            jvmArgument '-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=127.0.0.1:5005'
+            programArguments.addAll('--width', '1280', '--height', '720')
+        }
         gameTestServer {
             type = 'gameTestServer'
             gameDirectory = project.file('runs/gametest')
