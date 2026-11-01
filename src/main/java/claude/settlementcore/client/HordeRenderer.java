@@ -90,8 +90,11 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
     private static final Vector3f N = new Vector3f();
 
     private final HordeGeoModel<T> hordeModel;
-    /** Whether this kind's missing clips were reported (once a kind, not every frame). */
-    private boolean reportedMissingClips;
+    /**
+     * Whether GeckoLib couldn't find a clip this kind asked for: then its units stand in their rest pose and the controllers aren't
+     * run again (each try would throw, every unit, every frame) until resources reload (which makes new renderers).
+     */
+    private boolean clipsMissing;
 
     protected HordeRenderer(EntityRendererProvider.Context ctx, HordeGeoModel<T> model) {
         super(ctx, model);
@@ -143,23 +146,35 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
                 && (HordeLod.BENCH_NO_ANIM_FAR && distSqr > HordeLod.ANIM_FULL || !HordeLod.animateThisFrame(rat, distSqr));
         state.addGeckolibData(POSE, pose);
         state.addGeckolibData(HELD, held);
-        if (!held) {
+        if (!held && !clipsMissing) {
             setMolangQueryValues(rat, none, state, partialTick);
             try {
                 AnimationProcessor.extractControllerStates(rat, state, getGeoModel());
             } catch (NoSuchElementException missing) {
                 // GeckoLib 5.5.2 meets a clip it can't find (or a whole animation file it never loaded) with an empty
                 // timeline and List.getLast, which crashed the client the first time a test race Guard was drawn
-                // (its files were in 4.x's folders). The rat stands in its rest pose instead, and the kind is named once.
-                if (!reportedMissingClips) {
-                    reportedMissingClips = true;
-                    LOG.error("{} asked GeckoLib for a clip that {} doesn't have (or GeckoLib never loaded that file: it reads "
-                                    + "assets/<ns>/geckolib/animations/); drawn in its rest pose",
-                            rat.getType(), getGeoModel().getAnimationResource(rat), missing);
+                // (its files were in 4.x's folders). Only that throw is caught; one from a race's own handler isn't.
+                if (!fromEmptyTimeline(missing)) {
+                    throw missing;
                 }
+                clipsMissing = true;
+                LOG.error("{} asked GeckoLib for a clip that {} doesn't have (or GeckoLib never loaded that file: it reads "
+                                + "assets/<ns>/geckolib/animations/); its units stand in their rest pose",
+                        rat.getType(), getGeoModel().getAnimationResource(rat), missing);
             }
         }
         return state;
+    }
+
+    /** Whether {@code e} is GeckoLib's own throw for a clip it couldn't find (List.getLast in AnimationTimeline.create). */
+    private static boolean fromEmptyTimeline(NoSuchElementException e) {
+        StackTraceElement[] at = e.getStackTrace();
+        for (int i = 0; i < Math.min(3, at.length); i++) {
+            if (at[i].getClassName().equals("com.geckolib.animation.state.AnimationTimeline") && at[i].getMethodName().equals("create")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
