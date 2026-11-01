@@ -32,7 +32,8 @@ A race mod depends on `settlementcore` and fills in what is its own:
 | `test/GameTests` | `GameTests.register(container, modBus)` from its constructor: its `@GameTest`s, as 1.21.1 wrote them |
 
 The **test race** (`src/testrace`, mod id `testrace`, dev-only) is the smallest whole race: a Heart, a Worker and a Guard, emeralds,
-a crowd, and its own GameTests. Copy it to start a new race. `tools/gen_testrace_assets.py` makes its placeholder assets.
+a crowd, and its own GameTests. Copy it to start a new race. Its Worker and Guard are modelled in Blockbench (`block bench/bbsrc/testrace_build.js`); `tools/gen_testrace_assets.py`
+makes its block, item and lang files (`--figures` for box-figure units to start a race from).
 
 ## Rules the build keeps
 

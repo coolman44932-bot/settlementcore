@@ -28,7 +28,8 @@ import java.util.List;
 @GameTestHolder(TestRace.MODID)
 public class TestRaceGameTests {
 
-    private static final BlockPos HEART = new BlockPos(20, 2, 20);
+    /** The Heart on the arena's floor (tools/gen_testrace_arena.py: smooth stone at y 0, open above; the digsite is solid stone). */
+    private static final BlockPos HEART = new BlockPos(12, 1, 12);
 
     private static HeartBlockEntity heart(GameTestHelper h) {
         h.setBlock(HEART, TRRegistry.HEART.get().defaultBlockState());
@@ -44,7 +45,7 @@ public class TestRaceGameTests {
     }
 
     /** A round makes two workers and a guard out of the Heart's food (4, 4 and 6 points), and, with room for 8 up, brings all three up. */
-    @GameTest(template = "digsite", timeoutTicks = 100, batch = "testrace")
+    @GameTest(template = "arena", timeoutTicks = 100, batch = "testrace")
     public static void aHeartRaisesItsPeopleFromFood(GameTestHelper h) {
         HeartBlockEntity heart = heart(h);
         int food = heart.food();
@@ -64,7 +65,7 @@ public class TestRaceGameTests {
     }
 
     /** Sent home, a worker walks to the Heart and sinks into the ground: off the roll and into the reserve, and gone from the world. */
-    @GameTest(template = "digsite", timeoutTicks = 400, batch = "testrace")
+    @GameTest(template = "arena", timeoutTicks = 400, batch = "testrace")
     public static void aWorkerSentHomeSinksBackIntoTheReserve(GameTestHelper h) {
         HeartBlockEntity heart = heart(h);
         heart.roundForTests(h.getLevel());
@@ -81,21 +82,37 @@ public class TestRaceGameTests {
                 .thenSucceed();
     }
 
-    /** A guard falls on a husk that comes near (a foe by the engine's word) and hurts it. Hostiles need the Normal difficulty: the batch sets it. */
-    @GameTest(template = "digsite", timeoutTicks = 400, batch = "testracehostile")
+    /**
+     * A guard falls on a husk that comes near (a foe by the engine's word), hurts it, plays its attack clip, and its swing runs out after.
+     * Hostiles need the Normal difficulty: the batch sets it.
+     */
+    @GameTest(template = "arena", timeoutTicks = 400, batch = "testracehostile")
     public static void aGuardFallsOnAFoe(GameTestHelper h) {
         HeartBlockEntity heart = heart(h);
         heart.roundForTests(h.getLevel());
         Husk[] foe = new Husk[1];
+        Guard[] guard = new Guard[1];
         h.startSequence()
                 .thenWaitUntil(() -> h.assertTrue(near(h, Guard.class).size() == 1, "the round's guard is not up"))
                 .thenExecute(() -> {
+                    guard[0] = near(h, Guard.class).get(0);
                     foe[0] = h.spawn(EntityType.HUSK, HEART.offset(5, 0, 0));
                     foe[0].setPersistenceRequired();
                 })
-                .thenWaitUntil(() -> h.assertTrue(foe[0].isDeadOrDying() || foe[0].getHealth() < foe[0].getMaxHealth(),
-                        "the husk is unhurt; the guard's target is " + near(h, Guard.class).get(0).getTarget()))
-                .thenExecute(() -> foe[0].discard())
+                // the guard's own blow (the husk's health alone once passed at its first tick: something else had hurt it)
+                .thenWaitUntil(() -> {
+                    Guard g = guard[0];
+                    h.assertTrue(g.attacksForTests > 0, "the guard has landed no blow: " + (g.isRemoved() ? "it is gone (" + g.getRemovalReason() + ", burrowing "
+                            + g.isBurrowing() + ", homeward " + g.isHomeward() + ", dead " + g.isDeadOrDying() + ")" : "its target is " + g.getTarget() + ", goals "
+                            + g.runningGoals() + ", at " + g.blockPosition()) + "; the husk at " + foe[0].getHealth() + "/" + foe[0].getMaxHealth()
+                            + ", last hurt by " + foe[0].getLastDamageSource());
+                })
+                .thenExecute(() -> {
+                    h.assertTrue(foe[0].isDeadOrDying() || foe[0].getHealth() < foe[0].getMaxHealth(), "the guard's blow left the husk unhurt");
+                    foe[0].discard();
+                })
+                // its arm's swing runs out (a settler's swing timer once never ticked, so it swung for good: the review of 737e467)
+                .thenWaitUntil(() -> h.assertTrue(!guard[0].swinging, "the guard is still swinging long after its blow"))
                 .thenSucceed();
     }
 

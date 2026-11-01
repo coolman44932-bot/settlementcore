@@ -104,6 +104,17 @@ public abstract class SettlerMob extends PathfinderMob {
         leaveSpot = null;
     }
 
+    /**
+     * The arm's swing runs out. Vanilla ticks a swing only for monsters, players and mannequins (Monster#aiStep), so on a settler,
+     * a PathfinderMob, {@code swinging} stayed true from its first blow on, on the server and every client: a race's look that
+     * reads it (an attack clip) played the blow forever (the review of settlementcore 737e467).
+     */
+    @Override
+    public void aiStep() {
+        updateSwingTime();
+        super.aiStep();
+    }
+
     /** Out on the surface: nothing solid overhead all the way up. Heightmap-based, so it holds before lighting settles. */
     public static boolean underOpenSky(Level level, BlockPos p) {
         return p.getY() >= level.getHeight(Heightmap.Types.MOTION_BLOCKING_NO_LEAVES, p.getX(), p.getZ());

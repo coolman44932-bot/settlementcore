@@ -344,6 +344,20 @@ public abstract class TestUnit extends SettlerMob implements GeoEntity {
         return isBurrowing() && !source.is(net.minecraft.tags.DamageTypeTags.BYPASSES_INVULNERABILITY) || super.isInvulnerableTo(level, source);
     }
 
+    /** Blows that landed and played the attack clip, for the tests. */
+    public int attacksForTests;
+
+    /** A blow that lands plays the attack clip on every client, whole: a swing's 6 ticks would cut it short (the review of 737e467). */
+    @Override
+    public boolean doHurtTarget(ServerLevel level, net.minecraft.world.entity.Entity target) {
+        boolean hit = super.doHurtTarget(level, target);
+        if (hit) {
+            triggerAnim("main", "attack");
+            attacksForTests++;
+        }
+        return hit;
+    }
+
     @Override
     public void die(DamageSource source) {
         HeartBlockEntity h = settlement();
@@ -383,14 +397,11 @@ public abstract class TestUnit extends SettlerMob implements GeoEntity {
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         controllers.add(new AnimationController<TestUnit>("main", 4, test -> {
             TestUnit u = test.animatable();
-            if (u.swinging) {
-                return test.setAndContinue(ATTACK);              // the swing is synced to clients by vanilla's animate packet
-            }
             if (u.isDigging()) {
                 return test.setAndContinue(WORK);
             }
             return test.setAndContinue(test.isMoving() ? WALK : IDLE);
-        }));
+        }).triggerableAnim("attack", ATTACK));                  // a blow: triggered from the server, played whole (0.5 s), then back to the loops
     }
 
     @Override

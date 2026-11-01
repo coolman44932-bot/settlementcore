@@ -19,7 +19,7 @@ import net.neoforged.neoforge.client.event.EntityRenderersEvent;
 
 /**
  * The test race's look: its two units drawn by the engine's crowd renderer (HordeRenderer: far ones throttled, simplified and kept),
- * from the placeholder models tools/gen_testrace_assets.py writes; the engine's caches cleared when resources reload, as every race does.
+ * from the models Blockbench builds (block bench/bbsrc/testrace_build.js); the engine's caches cleared when resources reload, as every race does.
  */
 @EventBusSubscriber(modid = TestRace.MODID, value = Dist.CLIENT)
 public final class TestRaceClient {
