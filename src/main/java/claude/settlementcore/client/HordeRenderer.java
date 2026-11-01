@@ -18,6 +18,7 @@ import com.geckolib.renderer.layer.GeoRenderLayer;
 import com.geckolib.util.RenderUtil;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.logging.LogUtils;
 import net.minecraft.client.gui.Font;
 import net.minecraft.client.model.Model;
 import net.minecraft.client.model.geom.ModelPart;
@@ -48,8 +49,10 @@ import org.jetbrains.annotations.Nullable;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.joml.Vector3fc;
+import org.slf4j.Logger;
 
 import java.util.List;
+import java.util.NoSuchElementException;
 
 /**
  * A horde creature's renderer (client/HordeLod): faces turned away from the camera are left out of every
@@ -80,12 +83,15 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
     /** Bench only: drawn not at all. */
     private static final DataTicket<Boolean> SKIP = DataTicket.create("settlementcore_horde_skip", Boolean.class);
 
+    private static final Logger LOG = LogUtils.getLogger();
     private static final ItemProbe PROBE = new ItemProbe();
     private static final float[] SPRITE = new float[20];
     private static final Vector3f P = new Vector3f();
     private static final Vector3f N = new Vector3f();
 
     private final HordeGeoModel<T> hordeModel;
+    /** Whether this kind's missing clips were reported (once a kind, not every frame). */
+    private boolean reportedMissingClips;
 
     protected HordeRenderer(EntityRendererProvider.Context ctx, HordeGeoModel<T> model) {
         super(ctx, model);
@@ -139,7 +145,19 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
         state.addGeckolibData(HELD, held);
         if (!held) {
             setMolangQueryValues(rat, none, state, partialTick);
-            AnimationProcessor.extractControllerStates(rat, state, getGeoModel());
+            try {
+                AnimationProcessor.extractControllerStates(rat, state, getGeoModel());
+            } catch (NoSuchElementException missing) {
+                // GeckoLib 5.5.2 meets a clip it can't find (or a whole animation file it never loaded) with an empty
+                // timeline and List.getLast, which crashed the client the first time a test race Guard was drawn
+                // (its files were in 4.x's folders). The rat stands in its rest pose instead, and the kind is named once.
+                if (!reportedMissingClips) {
+                    reportedMissingClips = true;
+                    LOG.error("{} asked GeckoLib for a clip that {} doesn't have (or GeckoLib never loaded that file: it reads "
+                                    + "assets/<ns>/geckolib/animations/); drawn in its rest pose",
+                            rat.getType(), getGeoModel().getAnimationResource(rat), missing);
+                }
+            }
         }
         return state;
     }

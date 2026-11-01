@@ -83,7 +83,7 @@ def humanoid(name, scale, skin, cloth, extra):
         "description": {"identifier": f"geometry.testrace.{name}", "texture_width": TEX, "texture_height": TEX,
                         "visible_bounds_width": 3, "visible_bounds_height": 3.5, "visible_bounds_offset": [0, 1.5, 0]},
         "bones": bones}]}
-    write(f"geo/entity/{name}.geo.json", geo)
+    write(f"geckolib/models/entity/{name}.geo.json", geo)  # GeckoLib 5 reads only geckolib/models and geckolib/animations
     paint(name, p)
 
 
@@ -136,7 +136,7 @@ def animations(name):
             "left_arm": {"rotation": {"0.0": [-60, 0, 0], "0.3": [-30, 0, 0], "0.6": [-60, 0, 0]}},
             "body": {"rotation": {"0.0": [10, 0, 0], "0.3": [20, 0, 0], "0.6": [10, 0, 0]}}}),
     }
-    write(f"animations/entity/{name}.animation.json", {"format_version": "1.8.0", "animations": anims})
+    write(f"geckolib/animations/entity/{name}.animation.json", {"format_version": "1.8.0", "animations": anims})
 
 
 def solid_png(rel, colour, border):
