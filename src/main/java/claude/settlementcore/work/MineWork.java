@@ -211,6 +211,12 @@ public class MineWork extends RoomWork {
                 o.add(b.box());                                  // the settlement's other rooms, not its land: a race whose land is a cube round its
             }                                                    // heart (Khazuk!'s hold) had every drift cell "in another room", and no drift ran
         }
+        for (DigWork d : heart.works().digs()) {
+            o.add(d.box());                                      // and the rooms being dug or raised: a drift stops at them too
+        }
+        for (SiteWork s : heart.works().sites()) {
+            o.add(s.box());
+        }
         others = o;
     }
 

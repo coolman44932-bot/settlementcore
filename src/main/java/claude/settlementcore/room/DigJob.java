@@ -172,6 +172,12 @@ public class DigJob {
         return gnawInOrder(level, max, sample, tasks.size());
     }
 
+    /** The next tasks in dig order, until {@code maxChanges} of them have changed a block: what gave way, as it was, for its dust. */
+    public List<Crumb> gnawChangesInOrder(ServerLevel level, int maxChanges) {
+        ensureLoaded(level);
+        return gnawChanges(level, maxChanges, tasks.size());
+    }
+
     /**
      * {@link #gnawInOrder(ServerLevel, int, List)} over the tasks before {@code end} only: a job whose first phase the settlement
      * does itself (a raised building's clearing) and whose later ones its settlers work.

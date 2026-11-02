@@ -148,11 +148,7 @@ public final class DigWork extends RoomWork {
         }
         if (crewHere == 0 && heart.reserveWorkers() <= 0 || selfLeft > 0) {
             selfLeft = Math.max(0, selfLeft - 1);
-            List<BlockPos> sample = new ArrayList<>();
-            job.gnawInOrder(level, SELF_PER_SECOND, sample);    // nobody to dig it, or nobody getting on: the settlement digs on
-            for (BlockPos p : sample) {
-                level.levelEvent(LevelEvent.PARTICLES_DESTROY_BLOCK, p, Block.getId(net.minecraft.world.level.block.Blocks.STONE.defaultBlockState()));
-            }
+            effects(level, job.gnawChangesInOrder(level, SELF_PER_SECOND));   // nobody to dig it, or nobody getting on: the settlement digs on
         }
     }
 
@@ -218,7 +214,7 @@ public final class DigWork extends RoomWork {
                     }
                     if (SettlerMob.standable(level, p)) {
                         if (!box().isInside(p) && !before.isInside(p)) {
-                            break;                               // outside the room and the space it opens off
+                            continue;                            // outside the room and the space it opens off: look lower in the column
                         }
                         double score = Math.sqrt(across) * 2 + Math.abs(dy) * 0.25 + (dy > 0 ? 4 : 0);
                         if (score < bestScore) {
