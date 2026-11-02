@@ -629,4 +629,25 @@ public class SettlementBlockEntityGameTests {
         s.setRemoved();
         h.succeed();
     }
+
+    /**
+     * A building a race removes (Settlement#removeBuilding: the Waaagh!'s Idol Heap waking up as a Rogue Idol) is out of its buildings and its count,
+     * saved without it, and a second removal is no news.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "settlement")
+    public static void aBuildingARaceRemovesIsGone(GameTestHelper h) {
+        TestSettlement s = TestSettlement.of(h, new BlockPos(1, 1, 1));
+        Rooms.Room platform = Rooms.get(SitingGameTests.PLATFORM);
+        h.assertTrue(platform != null, "no test platform room");
+        BlockPos door = h.absolutePos(new BlockPos(3, 1, 3));
+        Building b = new Building(platform.id(), new BoundingBox(door.getX(), door.getY() - 1, door.getZ() - 4, door.getX() + 8, door.getY() + 3, door.getZ() + 4),
+                door, net.minecraft.core.Direction.EAST);
+        s.addBuilding(b, true);
+        h.assertTrue(s.has(platform.function()) && s.buildings().size() == 1, "the building wasn't added");
+        h.assertTrue(s.removeBuilding(h.getLevel(), b), "the building wasn't removed");
+        h.assertTrue(!s.has(platform.function()) && s.buildings().isEmpty(), "the removed building is still counted");
+        h.assertTrue(!s.removeBuilding(h.getLevel(), b), "a building removed twice was removed again");
+        s.setRemoved();
+        h.succeed();
+    }
 }

@@ -86,6 +86,14 @@ public interface Settlement extends RoomShoring.Warren {
 
     void addBuilding(Building b, boolean walled);
 
+    /**
+     * A building is gone, for a race's own reason (the Waaagh!'s Idol Heap wakes up and walks off as a Rogue Idol): out of its buildings, and its
+     * room's work and crew sent home. True if it was one of them. The blocks are the race's to deal with.
+     */
+    default boolean removeBuilding(ServerLevel level, Building b) {
+        return false;
+    }
+
     boolean has(Rooms.Function f);
 
     int count(Rooms.Function f);

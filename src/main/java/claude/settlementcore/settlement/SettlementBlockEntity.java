@@ -451,6 +451,17 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
     }
 
     @Override
+    public boolean removeBuilding(ServerLevel level, Building b) {
+        if (!book.remove(b)) {
+            return false;
+        }
+        if (b.door() != null) {
+            works().forgetRoom(level, b.door());
+        }
+        return true;
+    }
+
+    @Override
     public boolean has(Rooms.Function f) {
         return book.has(f);
     }

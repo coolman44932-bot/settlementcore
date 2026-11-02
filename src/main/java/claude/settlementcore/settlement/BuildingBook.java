@@ -90,6 +90,19 @@ public final class BuildingBook {
         changed.run();
     }
 
+    /** A room is gone (a race's own reason: a heap of rubble that woke and walked off): out of the list and the book's sets. True if it was there. */
+    public boolean remove(Building b) {
+        if (!buildings.remove(b)) {
+            return false;
+        }
+        long k = key(b);
+        walled.remove(k);
+        stacked.remove(k);
+        relit.remove(k);
+        changed.run();
+        return true;
+    }
+
     public boolean has(Rooms.Function f) {
         return count(f) > 0;
     }

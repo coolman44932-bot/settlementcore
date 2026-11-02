@@ -614,6 +614,19 @@ public final class Works {
         here.clear();
     }
 
+    /** The room at door {@code key} is gone (Settlement#removeBuilding): its work dropped, its crew sent back into the reserve. */
+    public void forgetRoom(ServerLevel level, BlockPos key) {
+        if (rooms.get(key) instanceof SiteWork) {
+            return;                                              // a site is called off, never forgotten
+        }
+        dismiss(level, key);
+        rooms.remove(key);
+        opened.remove(key);
+        here.remove(key);
+        saved.remove(Long.toString(key.asLong()));
+        heart.setChanged();
+    }
+
     private void dismiss(ServerLevel level, BlockPos room) {
         for (Iterator<Map.Entry<UUID, BlockPos>> it = crew.entrySet().iterator(); it.hasNext(); ) {
             var e = it.next();
