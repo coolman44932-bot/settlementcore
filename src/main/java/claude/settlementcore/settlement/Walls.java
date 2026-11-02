@@ -34,8 +34,8 @@ import java.util.List;
 public final class Walls {
 
     public static final int RADIUS = 64;
-    /** At most this many columns walked: past it, the ground is too big to be a walled settlement. */
-    public static final int MAX_COLUMNS = 16_641;
+    /** Fewer columns than this inside: a closed hut or hall round the heart, not walls round a settlement. */
+    public static final int MIN_COLUMNS = 64;
     public static final int DROP = 3;
     public static final int SCAN_SECONDS = 30, DIRTY_SECONDS = 5;
     /** How far above or below the heart a thing inside the walls' columns still counts as inside. */
@@ -55,6 +55,10 @@ public final class Walls {
     private final List<Built> built = new ArrayList<>();
     /** Cells of them a player took out on purpose: left out (a way through the player made), never patched. */
     private final LongOpenHashSet forgot = new LongOpenHashSet();
+    /** Every cell of the walls in {@link #built}, worked out when asked and kept until another is recorded. */
+    @Nullable private LongOpenHashSet builtCells;
+    /** The gates it shut (they were open): only these are opened again at the all-clear, never a door or pen gate that was shut. */
+    private final LongOpenHashSet shutByUs = new LongOpenHashSet();
 
     public boolean walled() {
         return walled;
@@ -99,6 +103,11 @@ public final class Walls {
     public Change scan(ServerLevel level, BlockPos heart, int radius) {
         boolean was = walled && everScanned;
         Scan s = walk(level, heart, radius);
+        if (s.unloaded() && everScanned) {
+            scannedAt = level.getGameTime();                     // an edge it can't see: no news either way, it stays as it was
+            dirtyAt = Long.MAX_VALUE;
+            return Change.NONE;
+        }
         walled = s.walled;
         inside = s.walled ? s.columns : new LongOpenHashSet();
         gates = s.walled ? s.gates : new LongOpenHashSet();
@@ -145,26 +154,46 @@ public final class Walls {
         return false;
     }
 
-    /** Every gate of the ring shut ({@code shut}) or opened: a fence gate's or a door's OPEN. Returns how many changed. */
+    /**
+     * {@code shut}: every open gate of the ring shut (a fence gate, or a door a hand opens), and kept as shut by it. Else the ones it shut are
+     * opened again, and only those: a door or a pen gate that was shut stays shut. Returns how many changed.
+     */
     public int gates(ServerLevel level, boolean shut) {
         int n = 0;
-        for (long g : gates) {
-            BlockPos p = BlockPos.of(g);
-            if (!level.isLoaded(p)) {
-                continue;
-            }
-            BlockState s = level.getBlockState(p);
-            if ((s.getBlock() instanceof FenceGateBlock || s.getBlock() instanceof DoorBlock) && s.hasProperty(BlockStateProperties.OPEN)
-                    && s.getValue(BlockStateProperties.OPEN) == shut) {
-                if (s.getBlock() instanceof DoorBlock d) {
-                    d.setOpen(null, level, s, p, !shut);         // both halves
-                } else {
-                    level.setBlock(p, s.setValue(BlockStateProperties.OPEN, !shut), Block.UPDATE_CLIENTS);
+        if (shut) {
+            for (long g : gates) {
+                if (flip(level, BlockPos.of(g), false)) {
+                    shutByUs.add(g);
+                    n++;
                 }
+            }
+            return n;
+        }
+        for (long g : shutByUs) {
+            if (flip(level, BlockPos.of(g), true)) {
                 n++;
             }
         }
+        shutByUs.clear();
         return n;
+    }
+
+    /** The gate at {@code p} opened ({@code open}) or shut, if it is a gate a hand works and isn't so already. */
+    private static boolean flip(ServerLevel level, BlockPos p, boolean open) {
+        if (!level.isLoaded(p)) {
+            return false;
+        }
+        BlockState s = level.getBlockState(p);
+        boolean byHand = s.getBlock() instanceof FenceGateBlock || s.getBlock() instanceof DoorBlock d && d.type().canOpenByHand();
+        if (!byHand || !s.hasProperty(BlockStateProperties.OPEN) || s.getValue(BlockStateProperties.OPEN) == open) {
+            return false;
+        }
+        if (s.getBlock() instanceof DoorBlock d) {
+            d.setOpen(null, level, s, p, open);                  // both halves
+        } else {
+            level.setBlock(p, s.setValue(BlockStateProperties.OPEN, open), Block.UPDATE_CLIENTS);
+        }
+        return true;
     }
 
     // --- the walls its settlers raised (E3) -------------------------------------------------------------------------------
@@ -179,23 +208,41 @@ public final class Walls {
     /** A wall its settlers finished: kept, so what is knocked out of it is patched. */
     public void record(WallJob job) {
         WallJob.Line l = job.line();
+        for (Built b : built) {
+            if (b.style().equals(job.style().id()) && java.util.Arrays.equals(b.feet(), l.feet())) {
+                return;                                          // the same wall again: kept once
+            }
+        }
         built.add(new Built(job.style().id(), l.feet(), l.heights(), l.across(), l.gates()));
+        builtCells = null;
     }
 
     /** Whether it has anything of its walls to save: a wall raised, or a cell of one a player took out. */
     public boolean recorded() {
-        return !built.isEmpty() || !forgot.isEmpty();
+        return !built.isEmpty() || !forgot.isEmpty() || !shutByUs.isEmpty();
     }
 
     public List<Built> built() {
         return built;
     }
 
-    /** A player broke the block at {@code p}: if it was a wall's, it stays out (their way through), never patched. */
-    public void forget(BlockPos p) {
-        if (!built.isEmpty()) {
-            forgot.add(p.asLong());
+    /** A player broke the block at {@code p}: if it was a cell of one of its walls, it stays out (their way through), never patched. True if so. */
+    public boolean forget(BlockPos p) {
+        if (built.isEmpty()) {
+            return false;
         }
+        if (builtCells == null) {
+            builtCells = new LongOpenHashSet();
+            for (Built b : built) {
+                WallStyle style = WallStyle.get(b.style());
+                if (style != null) {
+                    for (WallJob.Laid l : WallJob.courses(style, b.feet(), b.heights(), b.across(), b.gates())) {
+                        builtCells.add(l.task().pos().asLong());
+                    }
+                }
+            }
+        }
+        return builtCells.contains(p.asLong()) && forgot.add(p.asLong());
     }
 
     /** What a patch of one of its walls would lay: the wall's style and line, and its cells knocked out. */
@@ -244,6 +291,9 @@ public final class Walls {
         }
         t.put("built", l);
         t.putLongArray("forgot", forgot.toLongArray());
+        if (!shutByUs.isEmpty()) {
+            t.putLongArray("shut", shutByUs.toLongArray());
+        }
         return t;
     }
 
@@ -258,14 +308,19 @@ public final class Walls {
                 built.add(new Built(c.getStringOr("style", ""), feet, heights, across, BitSet.valueOf(c.getLongArray("gates").orElse(new long[0]))));
             }
         }
+        builtCells = null;
         forgot.clear();
         for (long k : t.getLongArray("forgot").orElse(new long[0])) {
             forgot.add(k);
         }
+        shutByUs.clear();
+        for (long k : t.getLongArray("shut").orElse(new long[0])) {
+            shutByUs.add(k);
+        }
     }
 
     /** What a walk found. */
-    public record Scan(boolean walled, LongOpenHashSet columns, @Nullable BlockPos leak, LongOpenHashSet gates) {
+    public record Scan(boolean walled, LongOpenHashSet columns, @Nullable BlockPos leak, LongOpenHashSet gates, boolean unloaded) {
     }
 
     private static BoundingBox box(LongOpenHashSet columns, int y) {
@@ -289,10 +344,11 @@ public final class Walls {
     public static Scan walk(ServerLevel level, BlockPos heart, int radius) {
         BlockPos start = startNear(level, heart);
         if (start == null) {
-            return new Scan(false, new LongOpenHashSet(), heart, new LongOpenHashSet());
+            return new Scan(false, new LongOpenHashSet(), heart, new LongOpenHashSet(), false);
         }
         LongOpenHashSet seen = new LongOpenHashSet();
         LongOpenHashSet gates = new LongOpenHashSet();
+        int sky = 0;
         LongArrayFIFOQueue queue = new LongArrayFIFOQueue();
         seen.add(column(start.getX(), start.getZ()));
         queue.enqueue(start.asLong());
@@ -306,8 +362,11 @@ public final class Walls {
                 if (seen.contains(col)) {
                     continue;
                 }
-                if (Math.abs(nx - hx) > radius || Math.abs(nz - hz) > radius || !level.isLoaded(m.set(nx, at.getY(), nz))) {
-                    return new Scan(false, seen, new BlockPos(nx, at.getY(), nz), gates);
+                if (Math.abs(nx - hx) > radius || Math.abs(nz - hz) > radius) {
+                    return new Scan(false, seen, new BlockPos(nx, at.getY(), nz), gates, false);
+                }
+                if (!level.isLoaded(m.set(nx, at.getY(), nz))) {
+                    return new Scan(false, seen, new BlockPos(nx, at.getY(), nz), gates, true);
                 }
                 int ny = step(level, at.getX(), at.getY(), at.getZ(), nx, nz, m);
                 if (ny == Integer.MIN_VALUE) {
@@ -320,13 +379,16 @@ public final class Walls {
                     continue;
                 }
                 seen.add(col);
-                if (seen.size() > MAX_COLUMNS) {
-                    return new Scan(false, seen, new BlockPos(nx, ny, nz), gates);
+                if (level.canSeeSky(m.set(nx, ny + 1, nz))) {
+                    sky++;
                 }
                 queue.enqueue(BlockPos.asLong(nx, ny, nz));
             }
         }
-        return new Scan(true, seen, null, gates);
+        if (seen.size() < MIN_COLUMNS || sky * 2 < seen.size()) {
+            return new Scan(false, seen, null, gates, false);   // a hut, a hall, a cave round the heart: no walls round a settlement
+        }
+        return new Scan(true, seen, null, gates, false);
     }
 
     /** The cell a mob standing at (x, y, z) reaches in the column (nx, nz): up 1, level, or down to {@value #DROP}; or MIN_VALUE if it can't. */

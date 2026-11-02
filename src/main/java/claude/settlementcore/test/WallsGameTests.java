@@ -75,6 +75,9 @@ public class WallsGameTests {
             BlockPos c = plot(s);
             ring(s, c, R, 1, Blocks.STONE.defaultBlockState());
             h.assertTrue(!Walls.walk(s.level, c, WALK).walled(), "a 1-high ring walled it in: a mob steps over one block");
+            ring(s, c, R, 1, Blocks.AIR.defaultBlockState());
+            ring(s, c, 3, 2, Blocks.STONE.defaultBlockState());   // 5 by 5 inside: a hut round the heart, not walls (the review of b8c9e8b)
+            h.assertTrue(!Walls.walk(s.level, c, WALK).walled(), "a ring 5 across inside walled it in: under " + Walls.MIN_COLUMNS + " columns is a hut");
             s.clear();
             h.succeed();
         }));
@@ -341,8 +344,10 @@ public class WallsGameTests {
                 walledRing(h, s, t, c, r);
                 BlockPos gate = c.offset(0, 0, r);
                 h.assertTrue(t.walls().gates().contains(gate.asLong()), "the scan didn't find the ring's gate at " + gate.toShortString() + ": " + t.walls().gates().size());
-                t.shutGates(s.level, false);
-                h.assertTrue(s.level.getBlockState(gate).getValue(FenceGateBlock.OPEN), "the gate didn't open");
+                s.level.setBlock(gate, s.level.getBlockState(gate).setValue(FenceGateBlock.OPEN, true), Block.UPDATE_CLIENTS);   // open, as a palisade's are built
+                BlockPos pen = c.offset(3, 0, 0);                // a pen's gate inside, shut: the all-clear never opens it (the review of b8c9e8b)
+                s.level.setBlock(pen, Blocks.OAK_FENCE_GATE.defaultBlockState(), Block.UPDATE_CLIENTS);
+                t.walls().scan(s.level, c, WALK);
                 BlockPos far = c.offset(r + 12, 0, 0);
                 h.assertTrue(!t.atWalls(far) && t.atWalls(c.offset(r + 2, 0, 0)) && !t.atWalls(c.offset(2, 0, 0)),
                         "at the walls: 12 out " + t.atWalls(far) + ", 2 out " + t.atWalls(c.offset(r + 2, 0, 0)) + ", inside " + t.atWalls(c.offset(2, 0, 0)));
@@ -360,6 +365,9 @@ public class WallsGameTests {
                     t.muster().second(s.level, t);
                 }
                 h.assertTrue(!t.muster().alarmed() && s.level.getBlockState(gate).getValue(FenceGateBlock.OPEN), "the all-clear didn't open the gate");
+                h.assertTrue(!s.level.getBlockState(pen).getValue(FenceGateBlock.OPEN), "the all-clear opened the pen's gate, which was shut");
+                h.assertTrue(t.heard.stream().noneMatch(l -> l.contains("krumped") || l.contains("stand down") || l.contains("All clear")),
+                        "foes at the walls only, and the all-clear was told: " + t.heard);
             } finally {
                 foes.forEach(net.minecraft.world.entity.Entity::discard);
                 t.setRemoved();
@@ -417,6 +425,35 @@ public class WallsGameTests {
                 h.assertTrue(w.built().size() == 1 && w.built().get(0).feet().length == 8 * r && w.missing(s.level) == null,
                         "the record loads back with " + w.built().size() + " walls, missing " + w.missing(s.level));
             } finally {
+                t.setRemoved();
+            }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * Not walled, a foe a Watch-Post saw far out raises the alarm proper as ever, never "at the walls" (the review of b8c9e8b: it was told as foes
+     * at the walls, with no bell, of a settlement with no walls).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 60, batch = "walls")
+    public static void aFoeAWatchPostSawIsTheAlarmProperOfASettlementWithNoWalls(GameTestHelper h) {
+        SitingGameTests.Site s = new SitingGameTests.Site(h);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            BlockPos c = plot(s);
+            var t = new SettlementBlockEntityGameTests.TestSettlement(c, Blocks.CHEST.defaultBlockState());
+            t.setLevel(s.level);
+            t.claim(h.makeMockServerPlayerInLevel(), "The Open Test");
+            var foe = MusterGameTests.foeAt(s.level, c.offset(18, 0, 0), true);
+            try {
+                t.walls().scan(s.level, c, WALK);
+                h.assertTrue(!t.walled(), "an open plot is walled");
+                t.muster().sound(List.of(foe));
+                t.muster().second(s.level, t);
+                h.assertTrue(t.muster().alarmed(), "the foe the post saw raised no alarm");
+                h.assertTrue(t.heard.stream().noneMatch(l -> l.contains("at the walls")), "a settlement with no walls was told of foes at its walls: " + t.heard);
+            } finally {
+                foe.discard();
                 t.setRemoved();
             }
             s.clear();

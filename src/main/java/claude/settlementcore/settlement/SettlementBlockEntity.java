@@ -162,7 +162,6 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         return WorksExtension.NONE;
     }
 
-    /** Whether the rooms are walled up (RoomShoring) every few seconds, those dug before it: a surface race wants none, as its rooms are added walled. */
     /** Whether its walls count (Walls): on unless a race says no (an underground warren is walled by the rock it's dug in). */
     protected boolean takesWalls() {
         return true;
@@ -216,7 +215,9 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
 
     @Override
     public void wallCellBroken(BlockPos p) {
-        walls.forget(p);
+        if (walls.forget(p)) {
+            setChanged();
+        }
     }
 
     /**
@@ -244,6 +245,7 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         return true;
     }
 
+    /** Whether the rooms are walled up (RoomShoring) every few seconds, those dug before it: a surface race wants none, as its rooms are added walled. */
     protected boolean wallsRooms() {
         return false;
     }

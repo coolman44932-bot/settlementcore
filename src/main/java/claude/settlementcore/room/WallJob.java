@@ -243,6 +243,12 @@ public class WallJob extends RaiseJob {
                 || s.getBlock() instanceof SnowLayerBlock;
     }
 
+    /** What a tree may touch and still be felled (Siting's rule): the land, its cover, water, ice and snow, and trees. */
+    private static boolean wild(BlockState s) {
+        return DigJob.natural(s) || Siting.cover(s) || DigJob.plant(s) || s.is(BlockTags.ICE) || s.is(net.minecraft.world.level.block.Blocks.SNOW_BLOCK)
+                || s.getBlock() instanceof SnowLayerBlock;
+    }
+
     private static boolean wildLeaf(BlockState s) {
         return s.getBlock() instanceof LeavesBlock && s.hasProperty(LeavesBlock.PERSISTENT) && !s.getValue(LeavesBlock.PERSISTENT);
     }
@@ -284,6 +290,9 @@ public class WallJob extends RaiseJob {
                         BlockState s = level.getBlockState(m);
                         boolean leaf = wildLeaf(s);
                         if (!s.is(BlockTags.LOGS) && !leaf) {
+                            if (dx * dx + dy * dy + dz * dz == 1 && !wild(s)) {
+                                return null;                     // a log touching a player's block (planks, glass, a door): a cabin's, it stays
+                            }
                             continue;
                         }
                         leafy |= leaf;

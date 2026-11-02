@@ -90,6 +90,7 @@ public final class Muster {
     public int lastSeen, lastBuffed;
     private int slain, lost, risen;
     private long toldAt = Long.MIN_VALUE / 2;
+    private long besiegedAt = Long.MIN_VALUE / 2;
 
     public static int perFoe() {
         return CoreConfig.musterPerFoe.getAsInt();
@@ -153,19 +154,28 @@ public final class Muster {
         in.removeIf(m -> shutIn(level, m, known));
         List<Mob> at = atTheWalls(level, h);                     // walled in: foes at the walls, outside (docs/plans/walls.md, E3)
         at.removeIf(m -> in.contains(m) || shutIn(level, m, known));
-        boolean inside = !in.isEmpty();
         in.addAll(at);
-        lastSeen = in.size();
+        boolean walled = h.walled();
         Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
         for (Iterator<UUID> it = foes.iterator(); it.hasNext(); ) {   // the ones a Watch-Post saw, still about the warren
             if (!(level.getEntity(it.next()) instanceof LivingEntity e) || !e.isAlive()) {
                 it.remove();
             } else if (e instanceof Mob m && !in.contains(m) && m.distanceToSqr(heart) < 96 * 96) {
-                if (shutIn(level, m, known)) {
+                if (walled && !h.insideWalls(m.blockPosition())) {
+                    it.remove();                                // walled in: a foe gone from the walls is outside, and no foe of this alarm
+                } else if (shutIn(level, m, known)) {
                     it.remove();                                // shut in since it was seen: no foe, nor one slain when it dies (Jade's count, the tally)
                 } else {
                     in.add(m);
                 }
+            }
+        }
+        lastSeen = in.size();
+        boolean inside = false;                                  // a foe that is not only at the walls: in, or one a Watch-Post saw (unwalled)
+        for (Mob m : in) {
+            if (!at.contains(m)) {
+                inside = true;
+                break;
             }
         }
         if (!in.isEmpty()) {
@@ -441,10 +451,10 @@ public final class Muster {
         lost = 0;
         risen = 0;
         long now = level.getGameTime();
-        if (now - toldAt < TELL_EVERY) {
-            return;
+        if (now - besiegedAt < TELL_EVERY) {
+            return;                                              // its own clock: a foe that then gets in is told at once (raise)
         }
-        toldAt = now;
+        besiegedAt = now;
         h.tellOwner(h.besiegedLine(claude.settlementcore.Words.capital(count(at)), at.size() == 1), ChatFormatting.GOLD);
     }
 
@@ -503,6 +513,7 @@ public final class Muster {
 
     private void standDown(ServerLevel level, Settlement h) {
         h.shutGates(level, false);
+        boolean siege = !broke && slain == 0 && lost == 0;      // foes at the walls only, and gone: the gates open, nothing to tell
         broke = false;
         int home = 0;
         for (UUID id : defenders) {
@@ -517,7 +528,9 @@ public final class Muster {
                 clear(r);
             }
         }
-        h.tellOwner(clearText(h, slain, lost, home), ChatFormatting.GREEN);
+        if (!siege) {
+            h.tellOwner(clearText(h, slain, lost, home), ChatFormatting.GREEN);
+        }
         defenders.clear();
         buffed.clear();
         foes.clear();
