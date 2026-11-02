@@ -48,6 +48,8 @@ public final class Walls {
     private long scannedAt = Long.MIN_VALUE;
     private long dirtyAt = Long.MAX_VALUE;
     private boolean everScanned;
+    /** The first scan met an edge it couldn't see: the next one that sees it all only finds out too, and tells nothing. */
+    private boolean settling;
     /** The gates in the ring (fence gates and doors the walk met as wall), found by the last scan. */
     private LongOpenHashSet gates = new LongOpenHashSet();
     @Nullable private BoundingBox bounds;
@@ -103,9 +105,13 @@ public final class Walls {
     public Change scan(ServerLevel level, BlockPos heart, int radius) {
         boolean was = walled && everScanned;
         Scan s = walk(level, heart, radius);
-        if (s.unloaded() && everScanned) {
+        if (s.unloaded()) {
             scannedAt = level.getGameTime();                     // an edge it can't see: no news either way, it stays as it was
             dirtyAt = Long.MAX_VALUE;
+            if (!everScanned) {
+                everScanned = true;
+                settling = true;
+            }
             return Change.NONE;
         }
         walled = s.walled;
@@ -116,8 +122,9 @@ public final class Walls {
         heartY = heart.getY();
         scannedAt = level.getGameTime();
         dirtyAt = Long.MAX_VALUE;
-        boolean first = !everScanned;
+        boolean first = !everScanned || settling;
         everScanned = true;
+        settling = false;
         if (first) {
             return Change.NONE;                                  // a loaded settlement finding its wall is no news
         }
@@ -176,6 +183,11 @@ public final class Walls {
         }
         shutByUs.clear();
         return n;
+    }
+
+    /** Whether gates it shut are still shut (a restart mid-alarm: the muster is not saved, so nothing would open them). */
+    public boolean anyShut() {
+        return !shutByUs.isEmpty();
     }
 
     /** The gate at {@code p} opened ({@code open}) or shut, if it is a gate a hand works and isn't so already. */

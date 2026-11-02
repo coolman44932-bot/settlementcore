@@ -226,6 +226,18 @@ public class WallsGameTests {
                         "the columns " + a.toShortString() + " and " + b.toShortString() + " aren't side by side");
             }
             h.assertTrue(feet.length == 17 + 9, "the line is " + feet.length + " columns, not " + (17 + 9));
+            h.assertTrue(java.util.Arrays.binarySearch(line.trees(), trunk.asLong()) >= 0, "the tree in the way isn't to be felled");
+            // a cabin's log at the forest's edge (planks beside it, a wild leaf on it), on another line: never felled (the review of b8c9e8b)
+            int cz2 = cz + 8;
+            BlockPos cabin = new BlockPos(cx - 5, ground(s, cx, cx - 5) + 1, cz2);
+            s.level.setBlock(cabin, Blocks.OAK_LOG.defaultBlockState(), Block.UPDATE_CLIENTS);
+            s.level.setBlock(cabin.north(), Blocks.OAK_PLANKS.defaultBlockState(), Block.UPDATE_CLIENTS);
+            s.level.setBlock(cabin.above(), Blocks.OAK_LEAVES.defaultBlockState().setValue(LeavesBlock.PERSISTENT, false), Block.UPDATE_CLIENTS);
+            WallJob.Line other = WallJob.line(s.level, heart, List.of(new BlockPos(cx - 8, 0, cz2), new BlockPos(cx - 2, 0, cz2)), false, List.of(), STONE);
+            h.assertTrue(other.why() == null && java.util.Arrays.binarySearch(other.trees(), cabin.asLong()) < 0, "the cabin's log is to be felled: " + other.why());
+            s.level.setBlock(cabin, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
+            s.level.setBlock(cabin.north(), Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
+            s.level.setBlock(cabin.above(), Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
             WallJob job = layByHand(h, s, new WallJob(STONE, line, 0));
             h.assertTrue(job.spared() == 0, "the wall left " + job.spared() + " cells standing as they were");
             for (int i = 0; i < job.columns(); i++) {
@@ -366,8 +378,28 @@ public class WallsGameTests {
                 }
                 h.assertTrue(!t.muster().alarmed() && s.level.getBlockState(gate).getValue(FenceGateBlock.OPEN), "the all-clear didn't open the gate");
                 h.assertTrue(!s.level.getBlockState(pen).getValue(FenceGateBlock.OPEN), "the all-clear opened the pen's gate, which was shut");
-                h.assertTrue(t.heard.stream().noneMatch(l -> l.contains("krumped") || l.contains("stand down") || l.contains("All clear")),
-                        "foes at the walls only, and the all-clear was told: " + t.heard);
+                h.assertTrue(t.heard.stream().noneMatch(l -> l.contains("is clear")), "foes at the walls only, and the all-clear was told: " + t.heard);
+                // at the walls again, and then one gets in within the 30 s: the alarm proper is told at once (its own clock)
+                var again = MusterGameTests.foeAt(s.level, c.offset(0, 0, r + 2), true);
+                foes.add(again);
+                t.muster().second(s.level, t);
+                var in = MusterGameTests.foeAt(s.level, c.offset(2, 0, 2), true);
+                foes.add(in);
+                t.muster().second(s.level, t);
+                h.assertTrue(t.heard.stream().anyMatch(l -> l.contains("is attacked")), "the foe that got in wasn't told: " + t.heard);
+                again.discard();
+                in.discard();
+                for (int k = 0; k < Muster.ALL_CLEAR + 1; k++) {
+                    t.muster().second(s.level, t);
+                }
+                h.assertTrue(t.heard.stream().anyMatch(l -> l.contains("is clear")), "a fight inside, and no all-clear: " + t.heard);
+                // gates it shut, saved mid-alarm, are opened once there's no alarm (the muster isn't saved)
+                t.shutGates(s.level, true);
+                Walls back = new Walls();
+                back.load(SitingGameTests.roundTrip(t.walls().save()));
+                h.assertTrue(back.anyShut() && !s.level.getBlockState(gate).getValue(FenceGateBlock.OPEN), "the shut gates weren't saved as shut");
+                t.second(s.level);
+                h.assertTrue(s.level.getBlockState(gate).getValue(FenceGateBlock.OPEN) && !t.walls().anyShut(), "with no alarm the gate it shut stays shut");
             } finally {
                 foes.forEach(net.minecraft.world.entity.Entity::discard);
                 t.setRemoved();
@@ -420,6 +452,7 @@ public class WallsGameTests {
                 t.wallCellBroken(p);                             // a player's pick (SettlementSpawns#broken)
                 s.level.setBlock(p, Blocks.AIR.defaultBlockState(), Block.UPDATE_CLIENTS);
                 h.assertTrue(!t.mendWalls(s.level), "the block a player took out was patched");
+                h.assertTrue(!t.walls().forget(c.offset(2, 0, 2)), "a block a player broke inside the walls, no wall's, was kept as a wall's gap");
                 Walls w = new Walls();
                 w.load(SitingGameTests.roundTrip(t.walls().save()));
                 h.assertTrue(w.built().size() == 1 && w.built().get(0).feet().length == 8 * r && w.missing(s.level) == null,

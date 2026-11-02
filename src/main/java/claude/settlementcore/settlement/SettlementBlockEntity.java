@@ -202,8 +202,8 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
 
     @Override
     public void shutGates(ServerLevel level, boolean shut) {
-        if (takesWalls()) {
-            walls.gates(level, shut);
+        if (takesWalls() && walls.gates(level, shut) > 0) {
+            setChanged();                                        // which it shut is saved
         }
     }
 
@@ -307,6 +307,9 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         }
         if (takesWalls() && sec % Walls.SCAN_SECONDS == 7) {
             mendWalls(level);
+        }
+        if (takesWalls() && !muster.alarmed() && walls.anyShut()) {
+            shutGates(level, false);                             // shut when it was saved mid-alarm: no alarm now, so open
         }
         ration.second(level, this, eatsPerSecond());
         if (relightsRooms() && sec % 5 == 3) {
