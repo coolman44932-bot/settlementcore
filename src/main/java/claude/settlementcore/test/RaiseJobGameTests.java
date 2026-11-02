@@ -550,6 +550,23 @@ public class RaiseJobGameTests {
         return Rooms.get(id);
     }
 
+    /** A wall taller than any floor a builder can walk to (the Hold Gate in miniature): the id of its hand-built template. */
+    public static final String TALL_WALL = "raise_test_tallwall";
+
+    /**
+     * The Hold Gate's reach, 9 by 15 by 9: the apron, a stair up (facing the wall) to a ledge 3 deep and 2 high (its top, +3, the highest
+     * floor a builder can walk to), and beyond it a wall 3 thick and 14 high.
+     */
+    public static synchronized Rooms.Room tallWall() {
+        return handBuilt(TALL_WALL, "Test Tall Wall", 15, c -> {
+            c.box(0, 0, 0, 8, 0, 8, BRICK);                      // the apron
+            c.box(2, 1, 0, 2, 1, 8, Blocks.STONE_BRICK_STAIRS.defaultBlockState()
+                    .setValue(net.minecraft.world.level.block.StairBlock.FACING, Direction.EAST));   // the step up
+            c.box(3, 1, 0, 5, 2, 8, BRICK);                      // the ledge: a floor at +3
+            c.box(6, 1, 0, 8, 14, 8, BRICK);                     // the wall: courses 1 to 14
+        });
+    }
+
     private static BlockState hangingLantern() {
         return Blocks.LANTERN.defaultBlockState().setValue(LanternBlock.HANGING, true);
     }
@@ -740,6 +757,69 @@ public class RaiseJobGameTests {
                 h.assertTrue(now == e.state().rotate(s.pl.rotation()), "the " + room.id() + "'s cell " + e.local() + " at " + w.toShortString()
                         + " is " + now + ", not " + e.state());
             }
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
+     * A wall higher than the highest floor its builders can walk to (the Hold Gate's 38-tall towers over a ledge at +3, raised by heaves at
+     * 0.4 cells a second, some 3 hours, 2026-11-02) is laid from the foot of the work instead. Laid course by course as the builders' claims
+     * go, a builder at the door: every batch within {@link RaiseJob#STAND_UP} of the ledge has a stand it can walk to (up the stair: the walk
+     * treads stairs and slabs, RaiseJob#treadable, or the ledge was never found and its courses were stood out too), and every batch over it,
+     * which no stand reaches, has a foot to be laid from ({@link RaiseJob#footFor}: a cell it can walk to, not under the work), so none is
+     * stood out and heaved.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 600, batch = "raise")
+    public static void aWallHigherThanItsBuildersCanStandIsLaidFromItsFoot(GameTestHelper h) {
+        Rooms.Room room = tallWall();
+        Site s = new Site(h, SitingGameTests.UP, room);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            Plan p = s.expectPlan(s.plan(true), "the tall wall");
+            RaiseJob job = new RaiseJob(room.id(), s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 8L);
+            BlockPos near = s.pl.door();                         // a builder in the doorway, as one sent round to the landing is
+            List<String> unwalked = new ArrayList<>(), footless = new ArrayList<>();
+            int lifted = 0;
+            for (int rounds = 0; !job.isDone(); rounds++) {
+                h.assertTrue(rounds < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size() + " done");
+                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                h.assertTrue(anchor != null, "nothing could be handed out: " + job.openReport(level, 8));
+                if (job.phaseNow() == RaiseJob.COURSE) {
+                    int course = anchor.getY() - s.floor;
+                    List<BlockPos> cells = new ArrayList<>();
+                    for (DigJob.Task t : job.batch(builder)) {
+                        cells.add(t.pos());
+                    }
+                    RaiseJob.Stand st = job.stand(level, anchor, cells, near);
+                    boolean walks = st.at() != null && st.walkable();
+                    if (course <= 3 + RaiseJob.STAND_UP && !walks) {
+                        unwalked.add("course " + course + " at " + anchor.toShortString() + ": " + st);
+                    }
+                    if (!walks) {
+                        BlockPos foot = job.footFor(level, anchor, cells, near);
+                        if (foot == null) {
+                            footless.add("course " + course + " at " + anchor.toShortString());
+                        } else {
+                            lifted++;
+                        }
+                    }
+                }
+                job.gnawSome(level, builder, 1f);
+                job.complete(level, builder);
+            }
+            h.assertTrue(unwalked.isEmpty(), unwalked.size() + " batches the ledge reaches have no stand a builder can walk to (the stair not trodden?): "
+                    + String.join(" | ", unwalked.subList(0, Math.min(4, unwalked.size()))));
+            h.assertTrue(footless.isEmpty(), footless.size() + " batches over the ledge's reach have no foot to be laid from, so they'd be stood out and heaved: "
+                    + String.join(" | ", footless.subList(0, Math.min(4, footless.size()))));
+            h.assertTrue(lifted >= 8, "only " + lifted + " batches were laid from the foot: the courses over +6 should all be");
             s.clear();
             h.succeed();
         }));

@@ -6,6 +6,7 @@ import it.unimi.dsi.fastutil.bytes.ByteArrayList;
 import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.ints.Int2LongOpenHashMap;
 import it.unimi.dsi.fastutil.ints.IntArrayList;
+import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
@@ -1156,6 +1157,47 @@ public class RaiseJob extends DigJob {
     }
 
     /**
+     * Where a builder stands to lay a batch no cell it can walk to reaches (a wall higher than its highest floor and {@value #STAND_UP} more: the
+     * Hold Gate's towers, 38 tall over a ledge at 3): the cell it can walk to ({@link #walkable}) nearest the anchor across, not in a column the
+     * batch works, one it stays standing in, not a pit. Null when the walk can't be told (the builder far off) or reaches nothing: then the old
+     * stand-out and heave stand.
+     */
+    @Nullable
+    public BlockPos footFor(ServerLevel level, BlockPos anchor, List<BlockPos> batch, BlockPos near) {
+        Long2IntOpenHashMap walk = walkable(level, near, anchor);
+        if (walk == null || walk.isEmpty()) {
+            return null;
+        }
+        LongOpenHashSet mine = new LongOpenHashSet(batch.size());
+        for (BlockPos b : batch) {
+            mine.add(column(b.getX(), b.getZ()));
+        }
+        BlockPos best = null;
+        double bestScore = Double.MAX_VALUE;
+        BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
+        for (Long2IntMap.Entry e : walk.long2IntEntrySet()) {
+            p.set(BlockPos.getX(e.getLongKey()), BlockPos.getY(e.getLongKey()), BlockPos.getZ(e.getLongKey()));
+            if (mine.contains(column(p.getX(), p.getZ())) || !SettlerMob.standable(level, p) || !stays(p) || pit(level, p)) {
+                continue;
+            }
+            double dx = p.getX() - anchor.getX();
+            double dz = p.getZ() - anchor.getZ();
+            double score = dx * dx + dz * dz + e.getIntValue() * 0.01;
+            if (score < bestScore) {
+                bestScore = score;
+                best = p.immutable();
+            }
+        }
+        return best;
+    }
+
+    /** The share of the building's own cells laid (its masonry, not the air its clearing counts too): what the ledger shows. */
+    public float builtShare() {
+        int c = buildingCells();
+        return c == 0 ? progress() : (float) laidCount() / c;
+    }
+
+    /**
      * The best cell to stand in ({@link #standFor}); with {@code walk} (a cell and how many steps to it), only a cell in it, scored by its
      * steps, and the cells under a cell not in it in its column are looked at too (the old rule is the highest cell in each column, scored by
      * its distance from {@code near}).
@@ -1275,7 +1317,7 @@ public class RaiseJob extends DigJob {
                     if (n.getY() < y0 || n.getY() > y1 || !level.isLoaded(n)) {
                         break;
                     }
-                    if (!SettlerMob.standable(level, n)) {
+                    if (!treadable(level, n)) {
                         continue;
                     }
                     if (dy < 0 && !fallFree(level, nx, y, nz, y + dy)) {
@@ -1303,7 +1345,7 @@ public class RaiseJob extends DigJob {
      */
     @Nullable
     private static BlockPos walkStart(ServerLevel level, BlockPos from) {
-        if (SettlerMob.standable(level, from)) {
+        if (treadable(level, from)) {
             return from;
         }
         BlockPos.MutableBlockPos c = new BlockPos.MutableBlockPos();
@@ -1312,7 +1354,7 @@ public class RaiseJob extends DigJob {
             if (!level.isLoaded(c)) {
                 break;
             }
-            if (SettlerMob.standable(level, c)) {
+            if (treadable(level, c)) {
                 return c.immutable();
             }
             if (!free(level, c)) {
@@ -1329,7 +1371,7 @@ public class RaiseJob extends DigJob {
                 }
                 boolean way = dy == 0 || (dy > 0 ? free(level, from.above()) && free(level, from.above(2))   // a step up: its head free
                         : fallFree(level, nx, from.getY(), nz, c.getY()));                                     // a drop: the way down free
-                if (SettlerMob.standable(level, c) && way) {
+                if (treadable(level, c) && way) {
                     return c.immutable();                        // a drop beside it only as the flood takes one: through free cells (the review of 420b3e0)
                 }
             }
@@ -1350,6 +1392,21 @@ public class RaiseJob extends DigJob {
 
     private static boolean free(ServerLevel level, BlockPos p) {
         return level.getBlockState(p).getCollisionShape(level, p).isEmpty();
+    }
+
+    /**
+     * A cell a builder can walk through: one it can stand in ({@link SettlerMob#standable}), or over a stair, a slab or anything else whose
+     * collision top is no higher than its own cell (vanilla's ground paths walk them; standable wants a sturdy top face, so a ledge reached by
+     * steps was never found by the flood). Stands themselves are still only standable cells.
+     */
+    static boolean treadable(ServerLevel level, BlockPos p) {
+        if (SettlerMob.standable(level, p)) {
+            return true;
+        }
+        BlockPos b = p.below();
+        var shape = level.getBlockState(b).getCollisionShape(level, b);
+        return !shape.isEmpty() && shape.max(Direction.Axis.Y) <= 1.0 && free(level, p) && free(level, p.above())
+                && level.getFluidState(p).isEmpty() && level.getFluidState(p.above()).isEmpty();
     }
 
     /** A pit: every neighbour of {@code feet} stands 2 or more over it (the cell over its feet is solid all round). */

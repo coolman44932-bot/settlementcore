@@ -68,6 +68,17 @@ public final class Chore {
         return this;
     }
 
+    /**
+     * The work is laid from where the builder stands, however high the cell: a wall higher than any floor the builder can walk to
+     * (SiteWork#lift). CrewGoal then waives its 3-block reach up and down.
+     */
+    public boolean lifting;
+
+    public Chore lifted() {
+        this.lifting = true;
+        return this;
+    }
+
     public Chore standing(@Nullable BlockPos cell) {
         this.standAt = cell;
         return this;

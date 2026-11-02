@@ -122,6 +122,8 @@ public final class SiteWork extends RoomWork {
     private final Map<UUID, Long> sentAt = new HashMap<>();
     /** The falls {@link SureFooting} took the damage of since the site was begun (or loaded: not saved), and the longest. */
     private int shoves;
+    /** Cells handed out to be laid from the foot of the work ({@link #lift}). */
+    private int lifts;
     private float hardestShove;
 
     public SiteWork(Settlement settlement, RaiseJob job) {
@@ -279,6 +281,10 @@ public final class SiteWork extends RoomWork {
             }
         }
         BlockPos stand = where.at();
+        BlockPos foot = where.walkable() ? null : lift(level, anchor, cells, rat);
+        if (foot != null) {
+            stand = foot;
+        }
         int work = Math.max(4, Math.round(TICKS_PER_BLOCK * Math.max(1, batch.size()) / rat.tempo()));
         double reach = 2.2;
         if (stand != null) {
@@ -288,11 +294,33 @@ public final class SiteWork extends RoomWork {
         }
         SiteClaim key = new SiteClaim(id, ++serial);
         serials.put(id, key.serial());
-        return new Chore(job.doing(id), anchor, reach, work, key, (l, r) -> {
+        Chore c = new Chore(job.doing(id), anchor, reach, work, key, (l, r) -> {
             effects(l, job.gnawSome(l, r.getUUID(), 1f));
             job.complete(l, r.getUUID());                        // a cell not ready yet is left open, and handed out again
             return nextChore(l, r);                              // the next batch, near where it stands
-        }).standing(stand).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction)));
+        });
+        c.standing(stand).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction)));
+        return foot != null ? c.lifted() : c;
+    }
+
+    /**
+     * Where a batch no stand the builder can walk to reaches is laid from (it has been sent round to the landing already, and the walk was
+     * told, so nobody will ever walk to one): the foot of the work ({@link RaiseJob#footFor}), at the usual pace, the reach up waived. A wall
+     * higher than any floor round it (the Hold Gate's 38-tall towers over a ledge at 3) was stood out 3 x 400 ticks a cell and heaved, 0.4 cells
+     * a second. Null when there is no foot: the old stand-out and heave stand.
+     */
+    @Nullable
+    private BlockPos lift(ServerLevel level, BlockPos anchor, List<BlockPos> cells, SettlerMob rat) {
+        BlockPos foot = job.footFor(level, anchor, cells, rat.blockPosition());
+        if (foot != null) {
+            lifts += cells.size();
+        }
+        return foot;
+    }
+
+    /** Cells handed out to be laid from the foot of the work ({@link #lift}) since the site was loaded: for the tests. */
+    public int lifts() {
+        return lifts;
     }
 
     /**
@@ -354,6 +382,10 @@ public final class SiteWork extends RoomWork {
             }
         }
         BlockPos stand = where.at();
+        BlockPos foot = where.walkable() ? null : lift(level, anchor, cells, rat);
+        if (foot != null) {
+            stand = foot;
+        }
         int work = Math.max(3, Math.round(TEAR_TICKS_PER_BLOCK * Math.max(1, cells.size()) / rat.tempo()));
         double reach = 2.2;
         if (stand != null) {
@@ -363,11 +395,13 @@ public final class SiteWork extends RoomWork {
         }
         SiteClaim key = new SiteClaim(id, ++serial);
         serials.put(id, key.serial());
-        return new Chore("pulling the building down", anchor, reach, work, key, (l, r) -> {
+        Chore c = new Chore("pulling the building down", anchor, reach, work, key, (l, r) -> {
             broken(l, job.tearSome(l, r.getUUID(), 1f));
             broken(l, job.tearComplete(l, r.getUUID()));
             return nextChore(l, r);
-        }).standing(stand).swinging((l, r, fraction) -> broken(l, job.tearSome(l, r.getUUID(), fraction)));
+        });
+        c.standing(stand).swinging((l, r, fraction) -> broken(l, job.tearSome(l, r.getUUID(), fraction)));
+        return foot != null ? c.lifted() : c;
     }
 
     /**
@@ -525,7 +559,7 @@ public final class SiteWork extends RoomWork {
     @Override
     public Gauge gauge(ServerLevel level) {
         job.ensureLoaded(level);
-        return new Gauge(job.tearing() ? job.tearProgress() : job.progress(), job.state());
+        return new Gauge(job.tearing() ? job.tearProgress() : job.builtShare(), job.state());
     }
 
     @Override
@@ -543,7 +577,7 @@ public final class SiteWork extends RoomWork {
             out.add(Component.literal(room().displayName() + " (coming down): " + job.tornCount() + " of " + job.tearTotal() + " cells down").withStyle(ChatFormatting.DARK_GREEN));
             return;
         }
-        out.add(Component.literal(room().displayName() + " (being raised): " + job.state() + ", " + Math.round(job.progress() * 100) + "% done"
+        out.add(Component.literal(room().displayName() + " (being raised): " + job.state() + ", " + Math.round(job.builtShare() * 100) + "% built"
                 + (job.heaved() > 0 ? ", " + job.heaved() + " heaved into place" : "")
                 + (job.spared() > 0 ? ", " + job.spared() + " of your blocks left standing" : "")).withStyle(ChatFormatting.DARK_GREEN));
     }

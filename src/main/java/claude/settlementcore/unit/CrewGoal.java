@@ -162,7 +162,7 @@ public class CrewGoal extends Goal {
         double dx = rat.getX() - (at.getX() + 0.5);
         double dz = rat.getZ() - (at.getZ() + 0.5);
         int dy = at.getY() - rat.getBlockY();
-        boolean inReach = dx * dx + dz * dz <= chore.reach * chore.reach && dy <= 3 && dy >= -3;
+        boolean inReach = dx * dx + dz * dz <= chore.reach * chore.reach && (chore.lifting || dy <= 3 && dy >= -3);
         if (!inReach) {
             rat.setDigging(false);
             if (rat.getNavigation().isDone() && rat.tickCount >= nextPath) {
