@@ -90,6 +90,8 @@ public final class Works {
     private final Map<BlockPos, RoomWork> rooms = new LinkedHashMap<>();
     /** Buildings being raised on the surface, by door (docs/plans/surface-builder.md): kept in {@link #rooms} too, while they stand. */
     private final Map<BlockPos, SiteWork> sites = new LinkedHashMap<>();
+    /** Rooms being dug out ({@link #dig}), by door: their diggers' room until each is dug and handed over. */
+    private final Map<BlockPos, DigWork> digs = new LinkedHashMap<>();
     private final Set<BlockPos> opened = new HashSet<>();
     private final Map<UUID, BlockPos> crew = new LinkedHashMap<>();
     /**
@@ -234,6 +236,10 @@ public final class Works {
             rooms.putIfAbsent(s.key(), s);
             live.add(s.key());
         }
+        for (DigWork d : digs.values()) {                        // a room being dug: its diggers' room until it is handed over
+            rooms.putIfAbsent(d.key(), d);
+            live.add(d.key());
+        }
         for (Building b : heart.buildings()) {
             if (b.door() == null) {
                 continue;
@@ -364,6 +370,7 @@ public final class Works {
             }
         }
         finishSites(level);
+        finishDigs(level);
         if (sec % HAUL_EVERY == 0) {
             haul(level);
         }
@@ -775,12 +782,107 @@ public final class Works {
         return fromReserve.contains(id);
     }
 
-    /** A builder of a site is gone: its batch goes back. */
+    /** A builder of a site, or a digger of a dig, is gone: its batch goes back. */
     private void letGo(BlockPos room, UUID id) {
         SiteWork s = sites.get(room);
         if (s != null) {
             s.let(id);
         }
+        DigWork d = digs.get(room);
+        if (d != null) {
+            d.let(id);
+        }
+    }
+
+    /** The rooms being dug out. */
+    public List<DigWork> digs() {
+        return new ArrayList<>(digs.values());
+    }
+
+    /**
+     * Begins digging the room at {@code pl} (its door the cell aimed at, a wall of the space it opens off; it runs away from there): its
+     * door must be in the settlement, and the cell before it open, a hall or passage of the settlement's or the open air, so its diggers
+     * come in from space they can stand in. Then its price is paid and its diggers come up ({@link DigWork}). Returns why it can't be, in
+     * words for the player, or null when it is begun; every refusal comes before anything is spent.
+     *
+     * @param free paid for by no one: a creative dig, and the tests. Otherwise the room's cost, in the settlement's currency
+     */
+    @Nullable
+    public String dig(ServerLevel level, PlanPlacement pl, boolean free) {
+        Rooms.Room room = pl.room();
+        String the = Settlement.the(room.displayName());
+        if (Rooms.isRaised(room.id())) {
+            return cap(the) + " is raised, not dug";
+        }
+        BlockPos door = pl.door();
+        String at = door.getX() + " " + door.getY() + " " + door.getZ();
+        if (digs.containsKey(door) || sites.containsKey(door)) {
+            return "Something is being dug or raised at " + at + " already";
+        }
+        if (!heart.inSettlement(door)) {
+            return cap(the) + "'s door at " + at + " is outside the settlement: dig it near its " + heart.centreName();
+        }
+        BlockPos before = door.relative(pl.facing().getOpposite());
+        if (!level.getBlockState(before).getCollisionShape(level, before).isEmpty()
+                || !level.getBlockState(before.above()).getCollisionShape(level, before.above()).isEmpty()) {
+            return "Aim the plan at a wall you stand before: " + the + " is dug from there, its door where you aim";
+        }
+        for (DigWork d : digs.values()) {
+            if (d.box().intersects(pl.box())) {
+                return cap(the) + " would run into " + Settlement.the(d.room().displayName()) + ", still being dug";
+            }
+        }
+        int cost = free ? 0 : room.cost();
+        if (cost > 0 && !heart.spendCurrency(cost, "Digging " + the)) {
+            return cap(the) + " costs " + heart.currencyAmount(cost) + ", and it has " + heart.currency();
+        }
+        claude.settlementcore.room.DigJob job = new claude.settlementcore.room.DigJob(room.id(), door, pl.facing());
+        DigWork d = new DigWork(heart, job);
+        job.ensureLoaded(level);
+        digs.put(door, d);
+        rooms.put(door, d);
+        heart.setChanged();
+        return null;
+    }
+
+    /** Digs whose every cell is done, handed over ({@link #handOverDig}). */
+    private void finishDigs(ServerLevel level) {
+        if (digs.isEmpty()) {
+            return;
+        }
+        for (Iterator<DigWork> it = digs.values().iterator(); it.hasNext(); ) {
+            DigWork d = it.next();
+            if (d.dug() && level.isLoaded(d.box().getCenter())) {
+                it.remove();
+                handOverDig(level, d);
+            }
+        }
+    }
+
+    /**
+     * A dug room becomes one of the settlement's, as a raised one does ({@link #handOver}): its fences and bars joined up, added (walled
+     * where its dig walled up the holes beside it as it went), the dig dropped and the room's own work made at its door, its diggers the
+     * new room's crew when it takes workers from the reserve, else sent home.
+     */
+    private void handOverDig(ServerLevel level, DigWork d) {
+        BlockPos key = d.key();
+        d.job().finishAll(level);
+        d.job().joinUp(level);
+        heart.addBuilding(d.building, d.job().walled());
+        rooms.remove(key);
+        opened.remove(key);
+        saved.remove(Long.toString(key.asLong()));
+        RoomWork next = make(heart, d.building);
+        if (next != null) {
+            rooms.put(key, next);
+        }
+        if (next == null || !next.crewFromHorde() || next.crewType() != d.crewType()) {
+            for (SettlerMob r : crewOf(level, key)) {
+                sendHome(level, d.building, r);
+            }
+        }
+        tell(cap(Settlement.the(d.room().displayName())) + " is dug out.", net.minecraft.ChatFormatting.GREEN, true);
+        heart.setChanged();
     }
 
     /** {@link #raise(ServerLevel, PlanPlacement, boolean, boolean)}, the land round it reshaped into ramps. */
@@ -1528,8 +1630,8 @@ public final class Works {
         extension.save(t, registries);
         CompoundTag st = saved.copy();
         for (RoomWork w : rooms.values()) {
-            if (w instanceof SiteWork) {
-                continue;                                        // saved as its job, under "sites"
+            if (w instanceof SiteWork || w instanceof DigWork) {
+                continue;                                        // saved as its job, under "sites" or "digs"
             }
             st.put(Long.toString(w.key().asLong()), w.save());
         }
@@ -1546,6 +1648,13 @@ public final class Works {
                 sl.add(s.job().save());
             }
             t.put("sites", sl);
+        }
+        if (!digs.isEmpty()) {
+            ListTag dl = new ListTag();
+            for (DigWork d : digs.values()) {
+                dl.add(d.job().save());
+            }
+            t.put("digs", dl);
         }
         ListTag cl = new ListTag();
         for (var e : crew.entrySet()) {
@@ -1571,6 +1680,13 @@ public final class Works {
         saved = t.getCompoundOrEmpty("rooms");
         rooms.clear();
         sites.clear();
+        digs.clear();
+        for (Tag x : t.getListOrEmpty("digs")) {
+            claude.settlementcore.room.DigJob job = claude.settlementcore.room.DigJob.load((CompoundTag) x);
+            if (job != null && Rooms.get(job.roomId) != null && !digs.containsKey(job.door)) {
+                digs.put(job.door, new DigWork(heart, job));    // its diggers come up again once it is loaded (sync)
+            }
+        }
         refundDue = Math.max(0, t.getIntOr("refundDue", 0));
         owed.load(t.getListOrEmpty("told"));
         for (Tag x : t.getListOrEmpty("sites")) {

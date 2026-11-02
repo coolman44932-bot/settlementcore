@@ -578,6 +578,17 @@ public class DigJob {
     }
 
     /** Whether {@code rat} holds a batch of this dig. */
+    /** How many tasks the job has (built when it is loaded; 0 before). */
+    public int taskCount() {
+        return tasks == null ? 0 : tasks.size();
+    }
+
+    /** How many cells {@code rat}'s batch holds (0 if none). */
+    public int heldCount(UUID rat) {
+        int[] c = claimOf(rat);
+        return c == null ? 0 : c.length;
+    }
+
     public boolean holds(UUID rat) {
         return claims.containsKey(rat);
     }
