@@ -73,6 +73,10 @@ public final class Works {
     /** Seeds kept back in the Harvest Bin to sow empty plots. */
     static final int SEED_KEEP = 16;
     static final int HAUL_EVERY = 5;
+    /** How far out of a room's box its idle hands are called to it ({@link #enlist}): inside the 24 blocks a crew may stray before it's taken as lost. */
+    public static final int ENLIST_RANGE = 20;
+    /** The most of a room's crew that come up out of the reserve in one second (they rise one beside another). */
+    public static final int RISE_PER_SECOND = 3;
     /** A crew lent from outside the reserve (Under-Empire's Warlock Engineer, its Packmaster): another comes this long after one is killed. */
     public static final long LOAN_AGAIN = 20 * 60 * 3;
     /**
@@ -343,7 +347,7 @@ public final class Works {
             }
             int want = w.crewWanted();
             if (mine.size() < want) {
-                spawnCrew(level, w);
+                staff(level, w, want - mine.size());
             } else if (mine.stream().filter(r -> !r.isHomeward() && r.leaveSpot() == null).count() > want + 1) {
                 SettlerMob r = surplus(mine);
                 if (r != null) {
@@ -497,25 +501,91 @@ public final class Works {
         return null;
     }
 
-    private void spawnCrew(ServerLevel level, RoomWork w) {
+    /**
+     * A room short of {@code need} crew: its settlement's idle hands nearby walk over to it first ({@link #enlist}), then the rest come up out of the
+     * reserve, up to {@value #RISE_PER_SECOND} a second. Before 0.5.2 only the reserve gave a crew, one a second: a camp whose Grots were all up and
+     * idle left a new site waiting for the next spawning round, and a crew of eight took eight seconds to gather (the user, 2026-11-01: "how come
+     * it takes grots some time to start trying to build").
+     */
+    private void staff(ServerLevel level, RoomWork w, int need) {
+        if (w.crewFromHorde()) {
+            need -= enlist(level, w, need);
+        }
+        for (int i = 0; i < Math.min(need, RISE_PER_SECOND); i++) {
+            if (!spawnCrew(level, w)) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * Up to {@code need} of the settlement's people up and about that have nothing to do (at work with no room, no foe, not on their way home) and
+     * are of the room's crew type, within {@value #ENLIST_RANGE} blocks of it, nearest first: off the roll and into the crew. They walk to it from
+     * where they stand, and end as any crew out of the reserve does (back into it). Returns how many came.
+     */
+    int enlist(ServerLevel level, RoomWork w, int need) {
+        if (need <= 0) {
+            return 0;
+        }
+        BoundingBox near = w.box().inflatedBy(ENLIST_RANGE);
+        BlockPos mid = w.box().getCenter();
+        List<SettlerMob> idle = new ArrayList<>();
+        for (SettlerMob r : heart.loadedPeople()) {
+            if (r.getType() == w.crewType() && idle(r) && near.isInside(r.blockPosition())) {
+                idle.add(r);
+            }
+        }
+        idle.sort(java.util.Comparator.comparingDouble(r -> r.blockPosition().distSqr(mid)));
+        boolean clanrat = w.crewType() == heart.soldierType();
+        int n = 0;
+        for (SettlerMob r : idle) {
+            if (n >= need) {
+                break;
+            }
+            if (!heart.takeFromRoll(r.getUUID())) {
+                continue;
+            }
+            r.makeCrew(w.key());
+            w.crewSpawned(r);
+            crew.put(r.getUUID(), w.key());
+            fromReserve.add(r.getUUID());                        // it ends as a crew out of the reserve does: back into it
+            if (clanrat) {
+                clanratCrew.add(r.getUUID());
+            }
+            n++;
+        }
+        if (n > 0) {
+            heart.setChanged();
+        }
+        return n;
+    }
+
+    /** One of the settlement's people with nothing to do: at work and in no room's crew, with no foe, not burrowing or on its way home. */
+    static boolean idle(SettlerMob r) {
+        return r.isAlive() && !r.isCrew() && r.getMode() == SettlerMob.Mode.WORK && r.getTarget() == null && !r.isBurrowing() && !r.isHomeward()
+                && r.leaveSpot() == null;
+    }
+
+    /** One of a room's crew up out of the reserve (or lent from outside it) at the room's way in: false if none could come. */
+    private boolean spawnCrew(ServerLevel level, RoomWork w) {
         boolean clanrat = w.crewType() == heart.soldierType();
         if (w.crewFromHorde()) {
             if ((clanrat ? heart.reserveSoldiers() : heart.reserveWorkers()) <= 0) {
-                return;
+                return false;
             }
         } else if (level.getGameTime() < lostAt.getOrDefault(w.key(), Long.MIN_VALUE / 2) + LOAN_AGAIN) {
-            return;
+            return false;
         }
         BlockPos at = w.comeUpAt(level);                        // Works.standable for every room but a site (its landing)
         if (at == null) {
-            return;
+            return false;
         }
         SettlerMob rat = w.crewType().create(level, net.minecraft.world.entity.EntitySpawnReason.MOB_SUMMONED);
         if (rat == null) {
-            return;
+            return false;
         }
         if (w.crewFromHorde() && !heart.takeFromReserve(clanrat)) {
-            return;
+            return false;
         }
         rat.snapTo(at.getX() + 0.5, at.getY(), at.getZ() + 0.5, level.getRandom().nextFloat() * 360f, 0);
         rat.bindTo(heart);
@@ -532,6 +602,10 @@ public final class Works {
         }
         rat.emergeAt(at.getX() + 0.5, at.getY(), at.getZ() + 0.5);
         heart.setChanged();
+        if (!w.crewFromHorde()) {
+            return false;                                        // a lent crew comes one at a time
+        }
+        return true;
     }
 
     /** A cell a crew rat can come up in, inside the room, near its middle if it can. */

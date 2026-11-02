@@ -465,6 +465,14 @@ public interface Settlement extends RoomShoring.Warren {
     /** One out of the reserve (a soldier, or a worker), if there is one. */
     boolean takeFromReserve(boolean soldier);
 
+    /**
+     * {@code id}, one of its people up and about, off its roll to be a room's crew (Works#enlist: idle hands go to the work before the reserve is
+     * dug into). False if it isn't on the roll; a settlement that keeps no roll of its own never gives one up.
+     */
+    default boolean takeFromRoll(UUID id) {
+        return false;
+    }
+
     /** One up out of the reserve at {@code at}, as a mob; {@code teem}: one of the teeming, never saved. */
     @Nullable
     SettlerMob riseFromReserve(ServerLevel level, BlockPos at, boolean soldier, boolean teem);

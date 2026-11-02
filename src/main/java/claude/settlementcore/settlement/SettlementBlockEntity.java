@@ -670,6 +670,15 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         }
     }
 
+    @Override
+    public boolean takeFromRoll(UUID id) {
+        if (!roll.has(id)) {
+            return false;
+        }
+        removePerson(id);
+        return true;
+    }
+
     /** {@code id} is off the roll (dead, or gone back down): what it had claimed goes back ({@link #released}). */
     public void removePerson(UUID id) {
         if (roll.remove(id, this::released)) {
