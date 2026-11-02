@@ -582,14 +582,14 @@ public final class Works {
             if (at == null) {
                 continue;
             }
-            if (w.box().inflatedBy(2).isInside(r.blockPosition()) || w.reachInside(r.blockPosition())) {
-                enlisted.remove(r.getUUID());
+            if (r.isHomeward() || r.leaveSpot() != null || w.box().inflatedBy(2).isInside(r.blockPosition()) || w.reachInside(r.blockPosition())) {
+                enlisted.remove(r.getUUID());                    // there, or sent off again already
             } else if (level.getGameTime() - at >= ENLIST_PATIENCE && !r.isBurrowing()) {
                 BlockPos way = w.comeUpAt(level);
-                if (way != null) {
+                if (way != null) {                               // no way in yet: asked again next second
                     r.burrowTo(way.getX() + 0.5, way.getY(), way.getZ() + 0.5);
+                    enlisted.remove(r.getUUID());
                 }
-                enlisted.remove(r.getUUID());
             }
         }
     }
