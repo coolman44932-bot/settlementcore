@@ -1118,6 +1118,9 @@ public final class Siting {
 
         // --- the plan ------------------------------------------------------------------------------------------------
 
+        /** The widest margin this site's ramp may take (Reshape#MARGIN_MAX, or less for a building that would pass AREA_MAX with it). */
+        int marginCap = Reshape.MARGIN_MAX;
+
         Result plan(boolean reshape) {
             if (template.isEmpty()) {
                 throw refuse(cap(whose) + " template is missing", pl.door());
@@ -1125,7 +1128,14 @@ public final class Siting {
             if (box.minY() != floor) {
                 throw refuse(cap(the) + " has rooms under its ground layer: a raised building can't have a cellar yet", pl.door());
             }
-            Reshape.Frame widest = Reshape.frame(pad, landing, side, Reshape.MARGIN_MAX);
+            // the widest margin this site may take: Reshape's, or less for a building big enough that its full margin would pass the
+            // area (a hold's gate, 53 across, gets 3); refused only where even the narrowest won't fit
+            marginCap = Reshape.MARGIN_MAX;
+            Reshape.Frame widest = Reshape.frame(pad, landing, side, marginCap);
+            while ((widest.w() > AREA_MAX || widest.h() > AREA_MAX) && marginCap > Reshape.MARGIN_MIN) {
+                marginCap--;
+                widest = Reshape.frame(pad, landing, side, marginCap);
+            }
             if (widest.w() > AREA_MAX || widest.h() > AREA_MAX) {
                 throw refuse(cap(whose) + " site is too big to level: at most "
                         + AREA_MAX + " by " + AREA_MAX + " columns with its ramp", pl.door());
@@ -1152,20 +1162,20 @@ public final class Siting {
                 }
                 margin = 0;
             } else {
-                margin = Reshape.firstMargin(edgeGap());
+                margin = Reshape.firstMargin(edgeGap(), marginCap);
                 Reshape.Result r;
                 for (int pass = 1; ; ) {
                     while (true) {
                         f = courted(Reshape.frame(pad, landing, side, margin));
                         g = heights(f, extra);
-                        r = Reshape.plan(f.w(), f.h(), g, f.kinds(), null, floor, margin);
+                        r = Reshape.plan(f.w(), f.h(), g, f.kinds(), null, floor, margin, marginCap);
                         if (!r.tooSteep()) {
                             break;
                         }
-                        if (margin >= Reshape.MARGIN_MAX) {
+                        if (margin >= marginCap) {
                             throw steep(f, g, r);
                         }
-                        margin = Reshape.widen(margin);
+                        margin = Reshape.widen(margin, marginCap);
                     }
                     Map<Long, Why> failing = spans(f, g, r.height());
                     Map<Long, Why> levelled = besideBuildings(f, g, r.height());
@@ -1685,7 +1695,7 @@ public final class Siting {
             int x = f.x0() + sx;
             int z = f.z0() + sz;
             String land = rise >= 0 ? "rises " + rise + " above " : "falls " + (-rise) + " below ";
-            return refuse("The land " + land + whose + " floor at " + x + " " + z + ": too steep to ramp within " + Reshape.MARGIN_MAX
+            return refuse("The land " + land + whose + " floor at " + x + " " + z + ": too steep to ramp within " + marginCap
                     + " blocks", new BlockPos(x, r.height()[sz * f.w() + sx], z));
         }
 
@@ -1758,7 +1768,7 @@ public final class Siting {
                     int rise = land - floor;
                     String how = rise >= 0 ? "rises " + rise + " above " : "falls " + (-rise) + " below ";
                     throw refuse("The land " + how + whose + " floor at " + x + " " + z + ": too steep to ramp out of within "
-                            + Reshape.MARGIN_MAX + " blocks", new BlockPos(x, a[best], z));
+                            + marginCap + " blocks", new BlockPos(x, a[best], z));
                 }
             }
             BlockPos out = new BlockPos(pl.door().getX() + 2 * outward(pl)[0], floor + 1, pl.door().getZ() + 2 * outward(pl)[1]);

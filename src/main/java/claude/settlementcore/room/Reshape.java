@@ -140,12 +140,22 @@ public final class Reshape {
 
     /** The first margin to try, from the largest gap between the pad's height and the land's at the area's edge: gap + 2. */
     public static int firstMargin(int gap) {
-        return Math.max(MARGIN_MIN, Math.min(MARGIN_MAX, Math.max(0, gap) + 2));
+        return firstMargin(gap, MARGIN_MAX);
+    }
+
+    /** {@link #firstMargin(int)} for a site whose widest margin is {@code max} (a big building's: Siting's AREA_MAX holds it in). */
+    public static int firstMargin(int gap, int max) {
+        return Math.max(MARGIN_MIN, Math.min(max, Math.max(0, gap) + 2));
     }
 
     /** The next margin to try after a too-steep one; the same again at {@link #MARGIN_MAX}, where the caller gives up. */
     public static int widen(int margin) {
-        return Math.min(MARGIN_MAX, margin + MARGIN_STEP);
+        return widen(margin, MARGIN_MAX);
+    }
+
+    /** {@link #widen(int)} up to a site's own widest margin {@code max}. */
+    public static int widen(int margin, int max) {
+        return Math.min(max, margin + MARGIN_STEP);
     }
 
     /** A pad with no landing, its margin the same on every side. */
@@ -220,6 +230,11 @@ public final class Reshape {
      * @param margin the margin the frame was built with, reported back in the result
      */
     public static Result plan(int w, int h, int[] ground, Kind[] kinds, int[] floors, int floorY, int margin) {
+        return plan(w, h, ground, kinds, floors, floorY, margin, MARGIN_MAX);
+    }
+
+    /** {@link #plan(int, int, int[], Kind[], int[], int, int)} for a site whose widest margin is {@code marginMax}: at it, the bank. */
+    public static Result plan(int w, int h, int[] ground, Kind[] kinds, int[] floors, int floorY, int margin, int marginMax) {
         int[] lows = lows(w, h, ground, kinds, floors);
         double[] field = solved(w, h, ground, kinds, floorY);
         boolean[] held = held(kinds);
@@ -242,7 +257,7 @@ public final class Reshape {
             Result second = settle(w, h, ground, kinds, floorY, margin, lows, field, held, aside, false);
             best = second.steepest() < first.steepest() ? second : first;
         }
-        if (!best.tooSteep() || margin < MARGIN_MAX) {
+        if (!best.tooSteep() || margin < marginMax) {
             return best;                                      // too steep: the caller widens
         }
         // The widest margin, and still too steep: the land itself is steeper than a walker climbs (a hillside rising 2 a
