@@ -684,7 +684,7 @@ public final class Works {
         if (sites.containsKey(door)) {
             return "Something is being raised at " + at + " already";
         }
-        if (!heart.inSettlement(door) && !besideSite(door)) {
+        if (!heart.inSettlement(door) && !heart.insideWalls(door) && !besideSite(door)) {
             return cap(the) + "'s door at " + at + " is outside the settlement: raise it near its " + heart.centreName() + ", or beside what it has built";
         }
         Siting.Result sited = Siting.plan(level, pl, withSites(), reshape);
@@ -697,6 +697,62 @@ public final class Works {
             return cap(the) + " costs " + heart.currencyAmount(cost) + ", and it has " + heart.currency();
         }
         RaiseJob job = new RaiseJob(room.id(), door, pl.facing(), plan, cost);
+        job.ensureLoaded(level);
+        SiteWork site = new SiteWork(heart, job);
+        sites.put(door, site);
+        rooms.put(door, site);
+        heart.setChanged();
+        return null;
+    }
+
+    /**
+     * Begins raising a wall of {@code style} (docs/plans/walls.md, E2) through {@code posts} (a {@code ring} closes back to the first), the posts in
+     * {@code gatePosts} each the middle of a gate: the line is laid out on the ground as it is ({@link claude.settlementcore.room.WallJob#line}), then its
+     * price is paid (the style's cost a column), then its builders come up, as for any building. Returns why it can't be, in words for the player,
+     * or null when it is begun. Every refusal comes before anything is spent.
+     */
+    @Nullable
+    public String raiseWall(ServerLevel level, List<BlockPos> posts, claude.settlementcore.room.WallStyle style, boolean ring,
+                            java.util.Collection<Integer> gatePosts, boolean free) {
+        if (Rooms.get(style.roomId()) == null) {
+            return "No wall of the style " + style.id() + " is known";
+        }
+        claude.settlementcore.room.WallJob.Line line = claude.settlementcore.room.WallJob.line(level, heart.getBlockPos(), posts, ring, gatePosts, style);
+        if (line.why() != null) {
+            return line.why();
+        }
+        String the = Settlement.the(style.displayName());
+        BlockPos door = BlockPos.of(line.feet()[0]);
+        if (sites.containsKey(door)) {
+            return "Something is being raised at " + door.getX() + " " + door.getY() + " " + door.getZ() + " already";
+        }
+        int cost = free ? 0 : (int) Math.min(Integer.MAX_VALUE, (long) style.cost() * line.feet().length);
+        if (cost > 0 && !heart.spendCurrency(cost, "Raising " + the)) {
+            return cap(the) + " costs " + heart.currencyAmount(cost) + " (" + line.feet().length + " columns), and it has " + heart.currency();
+        }
+        claude.settlementcore.room.WallJob job = new claude.settlementcore.room.WallJob(style, line, cost);
+        job.ensureLoaded(level);
+        SiteWork site = new SiteWork(heart, job);
+        sites.put(door, site);
+        rooms.put(door, site);
+        heart.setChanged();
+        return null;
+    }
+
+    /**
+     * Begins patching the wall of {@code style} along {@code line} (the settlement's record of it, Walls#missing): only its {@code cells}, laid again by
+     * its builders, free. Returns why it can't be, or null when it is begun.
+     */
+    @Nullable
+    public String patchWall(ServerLevel level, claude.settlementcore.room.WallStyle style, claude.settlementcore.room.WallJob.Line line, long[] cells) {
+        if (cells.length == 0 || Rooms.get(style.roomId()) == null) {
+            return "Nothing to patch";
+        }
+        claude.settlementcore.room.WallJob job = claude.settlementcore.room.WallJob.patch(style, line, cells);
+        BlockPos door = job.door;
+        if (sites.containsKey(door)) {
+            return "Something is being raised at " + door.getX() + " " + door.getY() + " " + door.getZ() + " already";
+        }
         job.ensureLoaded(level);
         SiteWork site = new SiteWork(heart, job);
         sites.put(door, site);
@@ -896,11 +952,15 @@ public final class Works {
     private void handOver(ServerLevel level, SiteWork s) {
         BlockPos key = s.key();
         s.job().finishAll(level);                                // nothing left to put in; and its joinUp
-        heart.addBuilding(s.building, true);
+        claude.settlementcore.room.WallJob wall = s.job() instanceof claude.settlementcore.room.WallJob w ? w : null;
+        boolean patch = wall != null && wall.patch();            // a wall's patch is no building of its own: its builders go home
+        if (!patch) {
+            heart.addBuilding(s.building, true);
+        }
         rooms.remove(key);
         opened.remove(key);
         saved.remove(Long.toString(key.asLong()));
-        RoomWork next = make(heart, s.building);
+        RoomWork next = patch ? null : make(heart, s.building);
         if (next != null) {
             rooms.put(key, next);
         }
@@ -909,7 +969,13 @@ public final class Works {
                 sendHome(level, s.building, r);
             }
         }
-        tell(cap(Settlement.the(s.room().displayName())) + " is raised.", net.minecraft.ChatFormatting.GREEN, true);
+        if (wall != null) {
+            heart.wallChanged(level.getGameTime());              // the walls are scanned again: the ring it closed is found (docs/plans/walls.md)
+            if (!patch) {
+                heart.wallRaised(wall);
+            }
+        }
+        tell(cap(Settlement.the(s.room().displayName())) + (patch ? " is patched." : " is raised."), net.minecraft.ChatFormatting.GREEN, true);
         heart.setChanged();
     }
 
@@ -1383,7 +1449,8 @@ public final class Works {
         refundDue = Math.max(0, t.getIntOr("refundDue", 0));
         owed.load(t.getListOrEmpty("told"));
         for (Tag x : t.getListOrEmpty("sites")) {
-            RaiseJob job = RaiseJob.load((CompoundTag) x);
+            CompoundTag st = (CompoundTag) x;
+            RaiseJob job = claude.settlementcore.room.WallJob.isWall(st) ? claude.settlementcore.room.WallJob.loadWall(st) : RaiseJob.load(st);
             if (job != null && !sites.containsKey(job.door)) {
                 sites.put(job.door, new SiteWork(heart, job));  // its builders come up again once it is loaded (sync)
             } else {

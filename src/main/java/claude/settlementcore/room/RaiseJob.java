@@ -249,7 +249,8 @@ public class RaiseJob extends DigJob {
         return out;
     }
 
-    private void index(List<Task> tasks, byte[] ph, int[] lf, PlanPlacement pl) {
+    /** The tasks' phases ({@code ph}) and lifts or courses ({@code lf}) indexed: what a kind of raise that makes its own task list (WallJob) calls. */
+    protected final void index(List<Task> tasks, byte[] ph, int[] lf, PlanPlacement pl) {
         phase = ph;
         lift = lf;
         front = 0;
@@ -380,6 +381,12 @@ public class RaiseJob extends DigJob {
     }
 
     // --- where it stands ---------------------------------------------------------------------------------------------
+
+    /** Where its builders come up (SiteWork#comeUpAt looks for a spot to stand round it): the plan's landing; null for none (a spot in the box). */
+    @Nullable
+    public BlockPos comeUpNear(ServerLevel level) {
+        return plan != null ? plan.comeUpAt() : null;
+    }
 
     /** The site's plan (null only before a loaded site's tasks are built). */
     @Nullable
@@ -908,8 +915,12 @@ public class RaiseJob extends DigJob {
         if (cur.isAir()) {
             return true;
         }
-        boolean may = plan != null ? plan.mayReplace(p, cur) : Siting.mayReplace(cur);
-        return may && level.getBlockEntity(p) == null;
+        return mayTake(p, cur) && level.getBlockEntity(p) == null;
+    }
+
+    /** Whether {@code cur} at {@code p} may be taken out for the site's block (no block entity, asked apart): the ground and its cover, and the plan's own trees. */
+    protected boolean mayTake(BlockPos p, BlockState cur) {
+        return plan != null ? plan.mayReplace(p, cur) : Siting.mayReplace(cur);
     }
 
     /**

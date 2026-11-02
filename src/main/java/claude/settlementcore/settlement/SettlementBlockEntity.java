@@ -163,6 +163,87 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
     }
 
     /** Whether the rooms are walled up (RoomShoring) every few seconds, those dug before it: a surface race wants none, as its rooms are added walled. */
+    /** Whether its walls count (Walls): on unless a race says no (an underground warren is walled by the rock it's dug in). */
+    protected boolean takesWalls() {
+        return true;
+    }
+
+    private final Walls walls = new Walls();
+
+    /** Its walls: whether it is walled in, and what's inside. */
+    public Walls walls() {
+        return walls;
+    }
+
+    @Override
+    public boolean walled() {
+        return takesWalls() && walls.walled();
+    }
+
+    @Override
+    public boolean insideWalls(BlockPos p) {
+        return takesWalls() && walls.inside(p);
+    }
+
+    @Override
+    public void wallChanged(long gameTime) {
+        walls.dirty(gameTime);
+    }
+
+    @Override
+    public boolean atWalls(BlockPos p) {
+        return takesWalls() && walls.atWalls(p);
+    }
+
+    @Override
+    @org.jetbrains.annotations.Nullable
+    public net.minecraft.world.level.levelgen.structure.BoundingBox wallBounds() {
+        return takesWalls() ? walls.bounds() : null;
+    }
+
+    @Override
+    public void shutGates(ServerLevel level, boolean shut) {
+        if (takesWalls()) {
+            walls.gates(level, shut);
+        }
+    }
+
+    @Override
+    public void wallRaised(claude.settlementcore.room.WallJob job) {
+        walls.record(job);
+        setChanged();
+    }
+
+    @Override
+    public void wallCellBroken(BlockPos p) {
+        walls.forget(p);
+    }
+
+    /**
+     * A wall its settlers raised that a foe knocked blocks out of is patched by its builders, free (docs/plans/walls.md, E3): one patch at a time, never while
+     * the alarm is up. Returns whether one was begun. Every {@value Walls#SCAN_SECONDS} s from {@link #second}; public for the tests.
+     */
+    public boolean mendWalls(ServerLevel level) {
+        if (!takesWalls() || muster.alarmed() || walls.built().isEmpty()) {
+            return false;
+        }
+        for (var s : works().sites()) {
+            if (s.job() instanceof claude.settlementcore.room.WallJob w && w.patch()) {
+                return false;                                    // one patch at a time
+            }
+        }
+        Walls.Patch p = walls.missing(level);
+        if (p == null) {
+            return false;
+        }
+        String no = works().patchWall(level, p.style(), p.line(), p.cells());
+        if (no != null) {
+            return false;
+        }
+        tellOwner(wallPatchLine(Settlement.the(p.style().displayName()), p.cells().length), ChatFormatting.YELLOW);
+        return true;
+    }
+
     protected boolean wallsRooms() {
         return false;
     }
@@ -211,6 +292,20 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
      */
     public void second(ServerLevel level) {
         long sec = ticks / 20;
+        if (takesWalls() && walls.due(level.getGameTime())) {
+            switch (walls.scan(level, getBlockPos())) {
+                case CLOSED -> tellOwner(wallClosedLine(), ChatFormatting.GREEN);
+                case BROKEN -> {
+                    BlockPos at = walls.leak();
+                    tellOwner(wallBrokenLine(at == null ? "an unloaded edge" : at.getX() + " " + at.getZ()), ChatFormatting.RED);
+                }
+                default -> {
+                }
+            }
+        }
+        if (takesWalls() && sec % Walls.SCAN_SECONDS == 7) {
+            mendWalls(level);
+        }
         ration.second(level, this, eatsPerSecond());
         if (relightsRooms() && sec % 5 == 3) {
             int placed = book.relightRooms(level);
@@ -656,6 +751,9 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         reserve.save(tag);
         book.save(tag);
         tag.put("works", works().save(registries));
+        if (walls.recorded()) {
+            tag.put("walls", walls.save());                     // only once it has raised a wall: an old save is as it was
+        }
         tag.putLongArray("ledger_stores", ledgerStores.toLongArray());
         ListTag spoilList = new ListTag();
         for (ItemStack st : spoils) {
@@ -681,6 +779,7 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         reserve.load(tag);
         book.load(tag);
         works().load(tag.getCompoundOrEmpty("works"), registries);
+        walls.load(tag.getCompoundOrEmpty("walls"));
         ledgerStores = new LongOpenHashSet(tag.getLongArray("ledger_stores").orElse(new long[0]));
         spoils.clear();
         for (Tag t : tag.getListOrEmpty("spoils")) {

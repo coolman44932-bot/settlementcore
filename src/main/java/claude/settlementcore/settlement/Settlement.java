@@ -161,6 +161,66 @@ public interface Settlement extends RoomShoring.Warren {
         }
     }
 
+    /** Whether it is walled in (Walls, docs/plans/walls.md): then only what is inside its walls is in it, for the muster. */
+    default boolean walled() {
+        return false;
+    }
+
+    /** Whether {@code p} is inside its walls (false while it isn't walled). */
+    default boolean insideWalls(BlockPos p) {
+        return false;
+    }
+
+    /** A block near it was placed or broken at {@code gameTime}: its walls are scanned again soon. */
+    default void wallChanged(long gameTime) {
+    }
+
+    /** Whether {@code p} is just outside its walls ({@code Walls#atWalls}): a foe there is at the walls, and the gates shut. */
+    default boolean atWalls(BlockPos p) {
+        return false;
+    }
+
+    /** The ground inside its walls, as a box; null while it isn't walled. */
+    @org.jetbrains.annotations.Nullable
+    default net.minecraft.world.level.levelgen.structure.BoundingBox wallBounds() {
+        return null;
+    }
+
+    /** Its walls' gates shut ({@code shut}: foes at the walls or inside them) or opened (the all-clear). */
+    default void shutGates(ServerLevel level, boolean shut) {
+    }
+
+    /** A wall its settlers raised is finished: kept, so what a foe knocks out of it is patched. */
+    default void wallRaised(claude.settlementcore.room.WallJob job) {
+    }
+
+    /** A player broke the block at {@code p}: a wall's cell they took out stays out (their way through). */
+    default void wallCellBroken(BlockPos p) {
+    }
+
+    /**
+     * What it tells its owner when foes come to its walls (outside them, near: the gates shut and its defenders man the wall); {@code foes} as the
+     * alarm names them ("A Zombie", "3 Zombies"), {@code one} for one. A race says it in its own voice.
+     */
+    default String besiegedLine(String foes, boolean one) {
+        return foes + (one ? " is" : " are") + " at the walls of the " + placeName() + ": the gates are shut, and its defenders man the wall.";
+    }
+
+    /** What it tells its owner when its builders go to patch a wall a foe knocked {@code cells} out of. */
+    default String wallPatchLine(String wall, int cells) {
+        return claude.settlementcore.Words.capital(wall) + " has " + cells + (cells == 1 ? " block" : " blocks") + " knocked out of it: the builders go to patch it.";
+    }
+
+    /** What it tells its owner when its walls close round it. */
+    default String wallClosedLine() {
+        return "The " + placeName() + " is walled in: now only what gets inside the walls raises the alarm.";
+    }
+
+    /** What it tells its owner when its walls are broken: {@code where} is the way out the scan found. */
+    default String wallBrokenLine(String where) {
+        return "The " + placeName() + "'s wall is broken at " + where + ": it isn't walled in any more.";
+    }
+
     /**
      * The alarm's whole line in the race's own voice, or null for the engine's sentence made of {@link #musterWords}: {@code foes} are what
      * came, capitalised for the start of a sentence ("A Zombie", "3 Zombies and a Pillager"), {@code where} the room the nearest is in (none:

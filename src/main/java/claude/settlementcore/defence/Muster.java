@@ -83,6 +83,8 @@ public final class Muster {
     private final Set<UUID> foes = new HashSet<>();
     private final Set<UUID> buffed = new HashSet<>();
     private boolean alarmed;
+    /** Whether a foe of this alarm got inside (the alarm proper was told, not only the foes at the walls). */
+    private boolean broke;
     private int quiet;
     /** Tests: the foes it saw and the rats it buffed, last second. */
     public int lastSeen, lastBuffed;
@@ -149,6 +151,10 @@ public final class Muster {
         Map<Integer, Footing.Known> known = new HashMap<>();   // what the floods found about the foes, a body height to a Known
         List<Mob> in = intruders(level, h);
         in.removeIf(m -> shutIn(level, m, known));
+        List<Mob> at = atTheWalls(level, h);                     // walled in: foes at the walls, outside (docs/plans/walls.md, E3)
+        at.removeIf(m -> in.contains(m) || shutIn(level, m, known));
+        boolean inside = !in.isEmpty();
+        in.addAll(at);
         lastSeen = in.size();
         Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
         for (Iterator<UUID> it = foes.iterator(); it.hasNext(); ) {   // the ones a Watch-Post saw, still about the warren
@@ -164,6 +170,15 @@ public final class Muster {
         }
         if (!in.isEmpty()) {
             if (!alarmed) {
+                h.shutGates(level, true);
+                if (inside) {
+                    raise(level, h, in);
+                } else {
+                    besieged(level, h, in);
+                }
+                broke = inside;
+            } else if (inside && !broke) {
+                broke = true;                                    // at the walls, and now in: the alarm proper
                 raise(level, h, in);
             }
             alarmed = true;
@@ -224,6 +239,23 @@ public final class Muster {
         return m instanceof Enemy || m instanceof Raider;
     }
 
+    /**
+     * The foes at its walls: a walled settlement's ({@link Settlement#wallBounds}), outside the walls and no more than Walls#AT_THE_WALLS from them
+     * ({@link Settlement#atWalls}). Its gates shut, and its defenders come up inside the wall nearest them ({@link #cell}: on the ground the muster
+     * holds, which is inside the walls), and man it. None for a settlement that isn't walled.
+     */
+    static List<Mob> atTheWalls(ServerLevel level, Settlement h) {
+        BoundingBox b = h.wallBounds();
+        if (b == null || !h.walled()) {
+            return new ArrayList<>();
+        }
+        AABB area = AABB.of(b).inflate(claude.settlementcore.settlement.Walls.AT_THE_WALLS + 1);
+        if (!level.hasChunksAt((int) area.minX, (int) area.minZ, (int) area.maxX, (int) area.maxZ)) {
+            return new ArrayList<>();
+        }
+        return new ArrayList<>(level.getEntitiesOfClass(Mob.class, area, m -> foe(m) && h.atWalls(m.blockPosition())));
+    }
+
     /** The foes in the warren now: in (or just round) its rooms and tunnels, or near the Heart. */
     static List<Mob> intruders(ServerLevel level, Settlement h) {
         Set<Mob> out = new LinkedHashSet<>();
@@ -245,7 +277,7 @@ public final class Muster {
      * across, and no higher or lower than {@link Settlement#HEART_REACH} (a race that holds a wide plain does not hold a wider sky and bedrock). The
      * Warren Heart's reach is its own {@code inSettlement}'s cube about the heart, so this adds nothing to it.
      */
-    static BoundingBox ring(Settlement h) {
+    public static BoundingBox ring(Settlement h) {
         BlockPos c = h.getBlockPos();
         int across = Math.max(0, h.reach());
         int high = Math.min(across, Settlement.HEART_REACH);
@@ -256,7 +288,10 @@ public final class Muster {
      * Whether the muster defends {@code p}: it is in the settlement, or within the settlement's {@link Settlement#reach} of its heart ({@code ring}, from
      * {@link #ring}). The one rule for what counts as a foe, where a defender comes up and who takes heart from the fight.
      */
-    static boolean holds(Settlement h, BoundingBox ring, BlockPos p) {
+    public static boolean holds(Settlement h, BoundingBox ring, BlockPos p) {
+        if (h.walled()) {
+            return h.insideWalls(p);                             // walled in: outside the walls is outside (docs/plans/walls.md)
+        }
         return h.inSettlement(p) || ring.isInside(p);
     }
 
@@ -400,6 +435,19 @@ public final class Muster {
 
     // ------------------------------------------------------------------ the alarm and the all-clear
 
+    /** Foes at the walls, none inside: the gates are shut (by {@link #second}), its owner told; no bell: nothing is in yet. */
+    private void besieged(ServerLevel level, Settlement h, List<Mob> at) {
+        slain = 0;
+        lost = 0;
+        risen = 0;
+        long now = level.getGameTime();
+        if (now - toldAt < TELL_EVERY) {
+            return;
+        }
+        toldAt = now;
+        h.tellOwner(h.besiegedLine(claude.settlementcore.Words.capital(count(at)), at.size() == 1), ChatFormatting.GOLD);
+    }
+
     private void raise(ServerLevel level, Settlement h, List<Mob> in) {
         slain = 0;
         lost = 0;
@@ -454,6 +502,8 @@ public final class Muster {
     }
 
     private void standDown(ServerLevel level, Settlement h) {
+        h.shutGates(level, false);
+        broke = false;
         int home = 0;
         for (UUID id : defenders) {
             if (level.getEntity(id) instanceof SettlerMob r && r.isAlive()) {

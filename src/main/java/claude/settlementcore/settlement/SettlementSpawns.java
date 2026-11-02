@@ -56,11 +56,53 @@ public final class SettlementSpawns {
             return false;
         }
         for (Settlement h : s) {
-            if (!h.isRemoved() && h.owner() != null && h.inSettlement(p)) {
+            if (!h.isRemoved() && h.owner() != null && (h.inSettlement(p) || h.insideWalls(p))) {
                 return true;
             }
         }
         return false;
+    }
+
+    /** A block placed or broken near a settlement: its walls are scanned again soon (Walls). */
+    private static void nearWalls(net.minecraft.world.level.LevelAccessor l, BlockPos p) {
+        nearWalls(l, p, false);
+    }
+
+    /** {@code byPlayer}: a player broke it, and a wall's cell they took out stays out (Walls#forget). */
+    private static void nearWalls(net.minecraft.world.level.LevelAccessor l, BlockPos p, boolean byPlayer) {
+        if (!(l instanceof ServerLevel level)) {
+            return;
+        }
+        Set<Settlement> s = HEARTS.get(level.dimension());
+        if (s == null) {
+            return;
+        }
+        for (Settlement h : s) {
+            BlockPos c = h.getBlockPos();
+            if (!h.isRemoved() && Math.abs(p.getX() - c.getX()) <= Walls.RADIUS + 2 && Math.abs(p.getZ() - c.getZ()) <= Walls.RADIUS + 2) {
+                h.wallChanged(level.getGameTime());
+                if (byPlayer) {
+                    h.wallCellBroken(p);
+                }
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public static void broken(net.neoforged.neoforge.event.level.block.BreakBlockEvent e) {
+        nearWalls(e.getLevel(), e.getPos(), e.getPlayer() != null);
+    }
+
+    @SubscribeEvent
+    public static void placed(net.neoforged.neoforge.event.level.BlockEvent.EntityPlaceEvent e) {
+        nearWalls(e.getLevel(), e.getPos());
+    }
+
+    @SubscribeEvent
+    public static void exploded(net.neoforged.neoforge.event.level.ExplosionEvent.Detonate e) {
+        if (!e.getAffectedBlocks().isEmpty()) {
+            nearWalls(e.getLevel(), e.getAffectedBlocks().get(0));
+        }
     }
 
     @SubscribeEvent

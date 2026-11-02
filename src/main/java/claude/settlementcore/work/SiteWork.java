@@ -173,14 +173,13 @@ public final class SiteWork extends RoomWork {
         return Math.max(1, Math.min(CREW_MAX, (open + CELLS_PER_BUILDER - 1) / CELLS_PER_BUILDER));
     }
 
-    /** A builder comes up on the landing before the door (or the nearest cell to stand in there), else in the box. */
+    /** A builder comes up on the landing before the door (a wall's: inside it, by the next column to lay), or the nearest cell to stand in there, else in the box. */
     @Override
     @Nullable
     public BlockPos comeUpAt(ServerLevel level) {
         job.ensureLoaded(level);
-        Siting.Plan plan = job.plan();
-        if (plan != null) {
-            BlockPos at = plan.comeUpAt();
+        BlockPos at = job.comeUpNear(level);
+        if (at != null) {
             for (int r = 0; r <= 3; r++) {
                 for (int dx = -r; dx <= r; dx++) {
                     for (int dz = -r; dz <= r; dz++) {
