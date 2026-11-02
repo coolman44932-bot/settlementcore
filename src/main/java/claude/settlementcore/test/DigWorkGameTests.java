@@ -68,6 +68,12 @@ public class DigWorkGameTests {
         String outside = works.dig(level, pl, true);
         h.assertTrue(outside != null && outside.contains("outside the settlement"), "a door outside the settlement was not refused: " + outside);
         t.holds = true;
+        BlockPos air = h.absolutePos(new BlockPos(30, 15, 30));
+        level.setBlockAndUpdate(air, Blocks.AIR.defaultBlockState());
+        level.setBlockAndUpdate(air.west(), Blocks.AIR.defaultBlockState());
+        level.setBlockAndUpdate(air.west().above(), Blocks.AIR.defaultBlockState());
+        String open = works.dig(level, PlanPlacement.compute(room, air, Direction.EAST), true);
+        h.assertTrue(open != null && open.contains("Aim the plan at a wall"), "a door in the open air was not refused: " + open);
         String shut = works.dig(level, pl, true);
         h.assertTrue(shut != null && shut.contains("Aim the plan"), "a door with rock before it was not refused: " + shut);
         BlockPos before = door.west();

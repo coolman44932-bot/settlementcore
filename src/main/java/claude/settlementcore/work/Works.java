@@ -816,13 +816,16 @@ public final class Works {
         }
         BlockPos door = pl.door();
         String at = door.getX() + " " + door.getY() + " " + door.getZ();
-        if (digs.containsKey(door) || sites.containsKey(door)) {
-            return "Something is being dug or raised at " + at + " already";
+        if (digs.containsKey(door) || sites.containsKey(door) || rooms.containsKey(door)) {
+            return "Something is being dug or raised at " + at + " already, or a room has its door there";
         }
         if (!heart.inSettlement(door)) {
             return cap(the) + "'s door at " + at + " is outside the settlement: dig it near its " + heart.centreName();
         }
         BlockPos before = door.relative(pl.facing().getOpposite());
+        if (level.getBlockState(door).getCollisionShape(level, door).isEmpty()) {
+            return "Aim the plan at a wall: " + the + " is dug into the rock, its door cut where you aim";
+        }
         if (!level.getBlockState(before).getCollisionShape(level, before).isEmpty()
                 || !level.getBlockState(before.above()).getCollisionShape(level, before.above()).isEmpty()) {
             return "Aim the plan at a wall you stand before: " + the + " is dug from there, its door where you aim";
@@ -830,6 +833,11 @@ public final class Works {
         for (DigWork d : digs.values()) {
             if (d.box().intersects(pl.box())) {
                 return cap(the) + " would run into " + Settlement.the(d.room().displayName()) + ", still being dug";
+            }
+        }
+        for (SiteWork s : sites.values()) {
+            if (s.box().intersects(pl.box())) {
+                return cap(the) + " would run into " + Settlement.the(s.room().displayName()) + ", still being raised";
             }
         }
         int cost = free ? 0 : room.cost();
@@ -1115,6 +1123,17 @@ public final class Works {
             @Override
             public it.unimi.dsi.fastutil.longs.LongSet roomCells(ServerLevel level, BoundingBox area, BoundingBox except) {
                 it.unimi.dsi.fastutil.longs.LongOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(heart.roomCells(level, area, except));
+                for (DigWork d : digs.values()) {                // a room being dug: its cells are its, as a finished room's are
+                    if (d.box().equals(except) || !d.box().intersects(area)) {
+                        continue;
+                    }
+                    for (claude.settlementcore.room.RoomTemplates.Entry e : claude.settlementcore.room.RoomTemplates.get(level, d.room().id())) {
+                        BlockPos w = d.job().placement().world(e.local());
+                        if (area.isInside(w)) {
+                            out.add(w.asLong());
+                        }
+                    }
+                }
                 for (SiteWork s : sites.values()) {
                     RaiseJob job = s.job();
                     job.ensureLoaded(level);

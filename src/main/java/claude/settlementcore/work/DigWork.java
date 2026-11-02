@@ -56,6 +56,10 @@ public final class DigWork extends RoomWork {
     private int serial;
     private int seen = -1;
     private int still;
+    /** Seconds the settlement goes on digging itself once the crew got stuck (a latch: its own cells would reset the count). */
+    private int selfLeft;
+    /** Diggers whose batch they couldn't get to: the settlement digs the batch for them at the next second. */
+    private final java.util.Set<UUID> stuck = new java.util.HashSet<>();
 
     public DigWork(Settlement settlement, DigJob job) {
         super(settlement, new Building(job.roomId, job.placement().box(), job.door, job.facing), job.placement());
@@ -128,14 +132,26 @@ public final class DigWork extends RoomWork {
         if (job.isDone()) {
             return;
         }
+        for (UUID id : stuck) {
+            if (job.holds(id)) {
+                effects(level, job.gnawSome(level, id, 1f));     // a batch its digger couldn't reach: dug for it, as a raise heaves
+                job.complete(level, id);
+            }
+        }
+        stuck.clear();
         int done = job.finishedCount();
         still = done == seen ? still + 1 : 0;
         seen = done;
-        if (crewHere == 0 && heart.reserveWorkers() <= 0 || crewHere > 0 && still >= STALL_SECONDS) {
+        if (crewHere > 0 && still >= STALL_SECONDS) {
+            selfLeft = STALL_SECONDS * 3;                        // the crew got nowhere: the settlement digs on for 30 s, then looks again
+            still = 0;
+        }
+        if (crewHere == 0 && heart.reserveWorkers() <= 0 || selfLeft > 0) {
+            selfLeft = Math.max(0, selfLeft - 1);
             List<BlockPos> sample = new ArrayList<>();
             job.gnawInOrder(level, SELF_PER_SECOND, sample);    // nobody to dig it, or nobody getting on: the settlement digs on
             for (BlockPos p : sample) {
-                level.levelEvent(LevelEvent.PARTICLES_DESTROY_BLOCK, p, Block.getId(level.getBlockState(p)));
+                level.levelEvent(LevelEvent.PARTICLES_DESTROY_BLOCK, p, Block.getId(net.minecraft.world.level.block.Blocks.STONE.defaultBlockState()));
             }
         }
     }
@@ -176,7 +192,8 @@ public final class DigWork extends RoomWork {
 
     /**
      * Where a digger stands to dig the cell {@code at}: the cell one can stand in nearest under it, in its column or within
-     * {@value #STAND_ACROSS} across, down to {@value #STAND_DOWN} below. A dig goes top-down within each distance from the door, so a
+     * {@value #STAND_ACROSS} across, down to {@value #STAND_DOWN} below, in the room being dug or the space before its door (never
+     * on the rock over it, nor another room's floor through the wall); a stand over the work counts against it. A dig goes top-down within each distance from the door, so a
      * tall hall's upper cells are dug before the floor under them: the digger stands on the floor already dug nearer the door and reaches
      * up (the chore is lifted: CrewGoal's 3-up reach waived), as the raise side lays a tall wall from its foot. Null when there is none.
      */
@@ -184,6 +201,9 @@ public final class DigWork extends RoomWork {
     private BlockPos standFor(ServerLevel level, BlockPos at) {
         BlockPos best = null;
         double bestScore = Double.MAX_VALUE;
+        BlockPos out = job.door.relative(job.facing.getOpposite());
+        net.minecraft.world.level.levelgen.structure.BoundingBox before = new net.minecraft.world.level.levelgen.structure.BoundingBox(
+                out.getX() - 3, out.getY() - 2, out.getZ() - 3, out.getX() + 3, out.getY() + 2, out.getZ() + 3);
         BlockPos.MutableBlockPos p = new BlockPos.MutableBlockPos();
         for (int dx = -STAND_ACROSS; dx <= STAND_ACROSS; dx++) {
             for (int dz = -STAND_ACROSS; dz <= STAND_ACROSS; dz++) {
@@ -197,7 +217,10 @@ public final class DigWork extends RoomWork {
                         break;
                     }
                     if (SettlerMob.standable(level, p)) {
-                        double score = Math.sqrt(across) * 2 + Math.abs(dy) * 0.25;
+                        if (!box().isInside(p) && !before.isInside(p)) {
+                            break;                               // outside the room and the space it opens off
+                        }
+                        double score = Math.sqrt(across) * 2 + Math.abs(dy) * 0.25 + (dy > 0 ? 4 : 0);
                         if (score < bestScore) {
                             bestScore = score;
                             best = p.immutable();
@@ -248,14 +271,18 @@ public final class DigWork extends RoomWork {
         }
     }
 
+    /** Its digger couldn't get to it: the settlement digs the batch itself at the next second (not handed out again to the same stand). */
     @Override
     public void shelve(@Nullable Object key, long now) {
-        release(key);                                            // the batch goes back; the stall rule digs on if nobody can reach it
+        if (key instanceof DigClaim c && current(c)) {
+            stuck.add(c.rat());
+        }
     }
 
     /** A digger is gone: whatever batch it held goes back. */
     public void let(UUID id) {
         serials.remove(id);
+        stuck.remove(id);
         job.release(id);
     }
 

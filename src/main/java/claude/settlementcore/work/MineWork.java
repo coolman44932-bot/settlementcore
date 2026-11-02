@@ -206,10 +206,10 @@ public class MineWork extends RoomWork {
         carts = Bins.named(level, box(), ORE_CART);
         stone = Bins.named(level, box(), STONE_BIN);
         List<BoundingBox> o = new ArrayList<>();
-        for (BoundingBox b : heart.settlementBoxes()) {
-            if (!b.equals(box())) {
-                o.add(b);
-            }
+        for (claude.settlementcore.settlement.Building b : heart.buildings()) {
+            if (!b.box().equals(box())) {
+                o.add(b.box());                                  // the settlement's other rooms, not its land: a race whose land is a cube round its
+            }                                                    // heart (Khazuk!'s hold) had every drift cell "in another room", and no drift ran
         }
         others = o;
     }

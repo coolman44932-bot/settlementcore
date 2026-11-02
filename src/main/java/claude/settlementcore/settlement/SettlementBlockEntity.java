@@ -502,10 +502,14 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
 
     // ------------------------------------------------------------------ the shoring (RoomShoring.Warren)
 
-    /** Every cell of its rooms in {@code area} but those of the one at {@code except}, and its heart. A race with digs adds theirs. */
+    /** Every cell of its rooms in {@code area} but those of the one at {@code except}, those being dug (Works#digs), and its heart. */
     @Override
     public LongSet roomCells(ServerLevel level, BoundingBox area, BoundingBox except) {
-        LongSet out = book.roomCells(level, area, except, List.of());
+        List<claude.settlementcore.room.PlanPlacement> digs = new java.util.ArrayList<>();
+        for (claude.settlementcore.work.DigWork d : works().digs()) {
+            digs.add(d.job().placement());
+        }
+        LongSet out = book.roomCells(level, area, except, digs);
         out.add(worldPosition.asLong());
         return out;
     }
