@@ -335,6 +335,14 @@ public abstract class SettlerMob extends PathfinderMob {
     /** On its way back into the reserve. */
     public abstract boolean isHomeward();
 
+    /**
+     * Busy with something of its race's own, outside any room's crew (the Waaagh!'s Fightin' Pit bout): Works#enlist leaves it be. None by
+     * default.
+     */
+    public boolean isBusy() {
+        return false;
+    }
+
     /** Going through the ground (it can't be hurt meanwhile). */
     public abstract boolean isBurrowing();
 

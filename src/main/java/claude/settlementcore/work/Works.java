@@ -505,7 +505,8 @@ public final class Works {
      * A room short of {@code need} crew: its settlement's idle hands nearby walk over to it first ({@link #enlist}), then the rest come up out of the
      * reserve, up to {@value #RISE_PER_SECOND} a second. Before 0.5.2 only the reserve gave a crew, one a second: a camp whose Grots were all up and
      * idle left a new site waiting for the next spawning round, and a crew of eight took eight seconds to gather (the user, 2026-11-01: "how come
-     * it takes grots some time to start trying to build").
+     * it takes grots some time to start trying to build"). An enlisted settler is crew as any other: lost or killed at work, it is refunded into the
+     * reserve (a buff the reserve's crew always had).
      */
     private void staff(ServerLevel level, RoomWork w, int need) {
         if (w.crewFromHorde()) {
@@ -529,6 +530,8 @@ public final class Works {
         }
         BoundingBox near = w.box().inflatedBy(ENLIST_RANGE);
         BlockPos mid = w.box().getCenter();
+        BlockPos way = w.comeUpAt(level);                       // where a crew comes up: a site's landing, a room's floor
+        BlockPos to = way != null ? way : mid;
         List<SettlerMob> idle = new ArrayList<>();
         for (SettlerMob r : heart.loadedPeople()) {
             if (r.getType() == w.crewType() && idle(r) && near.isInside(r.blockPosition())) {
@@ -542,7 +545,7 @@ public final class Works {
             if (n >= need) {
                 break;
             }
-            if (!heart.takeFromRoll(r.getUUID())) {
+            if (!canWalkTo(r, to) || !heart.takeFromRoll(r.getUUID())) {
                 continue;
             }
             r.makeCrew(w.key());
@@ -560,10 +563,30 @@ public final class Works {
         return n;
     }
 
-    /** One of the settlement's people with nothing to do: at work and in no room's crew, with no foe, not burrowing or on its way home. */
+    /**
+     * Whether {@code r} can walk to {@code to}: a path that gets there, or (further off than a mob paths at once: its follow range) one that brings it
+     * well over halfway there, as a long walk goes, leg by leg. One stuck behind a wall would stand as crew and keep a riser out of its place (the
+     * review of 4275dca).
+     */
+    static boolean canWalkTo(SettlerMob r, BlockPos to) {
+        var path = r.getNavigation().createPath(to, 1);
+        if (path == null) {
+            return false;
+        }
+        if (path.canReach()) {
+            return true;
+        }
+        var end = path.getEndNode();
+        return end != null && end.asBlockPos().distSqr(to) * 4 < r.blockPosition().distSqr(to);
+    }
+
+    /**
+     * One of the settlement's people with nothing to do: at work and in no room's crew, with no foe, not burrowing or on its way home, and not busy
+     * with its race's own business ({@link SettlerMob#isBusy}).
+     */
     static boolean idle(SettlerMob r) {
         return r.isAlive() && !r.isCrew() && r.getMode() == SettlerMob.Mode.WORK && r.getTarget() == null && !r.isBurrowing() && !r.isHomeward()
-                && r.leaveSpot() == null;
+                && r.leaveSpot() == null && !r.isBusy();
     }
 
     /** One of a room's crew up out of the reserve (or lent from outside it) at the room's way in: false if none could come. */
