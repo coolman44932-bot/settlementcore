@@ -46,7 +46,8 @@ import java.util.Map;
  *
  * <p>The <b>pad</b> is held at the floor (the template's ground layer): the box with its plinth under it, a berm 1 wide round
  * it, and the door's landing, 3 columns wide and 2 out. Round the pad the margin is ramped into the land (Reshape's solve),
- * widened until it fits or {@link Reshape#MARGIN_MAX}, and anything of the player's, another building, a tree or a pond is
+ * widened until it fits or the site's own widest margin ({@link Reshape#MARGIN_MAX}, or less for a building so big its frame at that
+ * would pass {@link #AREA_MAX}), and anything of the player's, another building, a tree or a pond is
  * kept at its own height with the ramp flowing round it. Only natural ground and its cover are ever cut or filled.
  *
  * <p>Every refusal comes before anything is changed and names its spot in the world. A plan is read once, at placement, and
@@ -131,7 +132,7 @@ public final class Siting {
      *                 and the border where the ramp meets the land level)
      * @param bank     where the land is too steep to meet level (a {@code seamed} plan), the highest bank the ramp meets it
      *                 with: the steepest step from the ramp to the border; 0 when it meets the land level all round
-     * @param seamed   the ramp meets the land with a bank somewhere (Reshape's third pass, at the widest margin): cut into the
+     * @param seamed   the ramp meets the land with a bank somewhere (Reshape's third pass, at the site's widest margin): cut into the
      *                 hill or built out over the slope, with a walk from the landing out to the land all the same
      */
     public record Numbers(int margin, int cutColumns, int fillColumns, int cutBlocks, int fillBlocks, int kept, int steepest, int bank,

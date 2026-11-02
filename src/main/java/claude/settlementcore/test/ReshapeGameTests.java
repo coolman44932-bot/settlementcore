@@ -481,6 +481,26 @@ public class ReshapeGameTests {
     }
 
     /**
+     * A site's own widest margin (a big building's, under AREA_MAX: 0.5.3): the first margin and the widening stop at it, and at it the
+     * cliff is banked, where the same margin short of Reshape's own widest is only reported too steep (so the caller would widen, past
+     * what the site may take).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "reshape")
+    public static void aSitesOwnWidestMarginBanksAtIt(GameTestHelper h) {
+        h.assertTrue(Reshape.firstMargin(99, 4) == 4 && Reshape.widen(4, 4) == 4 && Reshape.firstMargin(0, 4) == Reshape.MARGIN_MIN,
+                "with a cap of 4: first margin " + Reshape.firstMargin(99, 4) + ", widened " + Reshape.widen(4, 4) + ", for no gap " + Reshape.firstMargin(0, 4));
+        Scene s = cliff(10);
+        Result uncapped = s.plan(null, 10);
+        Result capped = Reshape.plan(s.w(), s.h(), s.ground(), s.kinds(), null, s.floorY(), 10, 10);
+        h.assertTrue(uncapped.tooSteep() && !uncapped.seamed(), "short of the widest the cliff should only be too steep");
+        h.assertTrue(capped.seamed() && !capped.tooSteep() && capped.margin() == 10, "at the site's own widest (10) the cliff was not banked (banked "
+                + capped.seamed() + ", steepest " + capped.steepest() + ")" + dump(s, capped.height()));
+        expect(h, s, capped.height(), rampStepProblem(s, capped.height()));
+        expect(h, s, capped.height(), heldProblem(s, capped.height()));
+        h.succeed();
+    }
+
+    /**
      * The land falling away 3 a column east of a pad on flat ground: at the widest margin it is built out over, an embankment
      * coming down 1 a column from the pad (filled, never dug), and the flat land beside it is left alone. (A ramp that only
      * cut dug a trench down through the flat land toward the drop; one held to the whole border heaped the ramp over the

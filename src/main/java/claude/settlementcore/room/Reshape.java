@@ -27,7 +27,7 @@ public final class Reshape {
     public static final int MAX_STEP = 1;
     /** A margin is at least this wide... */
     public static final int MARGIN_MIN = 3;
-    /** ...and at most this: past it a site is refused as too steep to ramp. */
+    /** ...and at most this (a site too big for it at AREA_MAX takes less: Siting's marginCap): past it a site is banked or refused. */
     public static final int MARGIN_MAX = 12;
     /** How much each widening adds. */
     public static final int MARGIN_STEP = 2;
@@ -220,7 +220,7 @@ public final class Reshape {
      * Solves one margin. Held columns keep their heights; every FREE column comes out within {@link #MAX_STEP} of each FREE,
      * PAD and BORDER 4-neighbour wherever the held columns allow it (a KEPT or FLUID one it goes round), and never under its
      * floor. Where they don't (the land rises too fast for this margin, or a pond's banks hold the ramp up) the steps left
-     * are reported; at {@link #MARGIN_MAX} the land too steep to meet level is met with a bank ({@link Result#seamed}).
+     * are reported; at {@link #MARGIN_MAX} (or the site's own widest) the land too steep to meet level is met with a bank ({@link Result#seamed}).
      *
      * @param ground the columns' current surface heights; for a FLUID column the surface of the fluid
      * @param kinds  what each column is
