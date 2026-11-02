@@ -335,6 +335,7 @@ public final class Works {
             }
         }
         here.clear();
+        enlisted.keySet().retainAll(crew.keySet());              // gone from the crew (sent home, lost, its room gone): no longer on its way
         for (RoomWork w : rooms.values()) {
             BlockPos c = w.box().getCenter();
             boolean live = level.isLoaded(c) && level.isPositionEntityTicking(c);
@@ -353,6 +354,9 @@ public final class Works {
                 if (r != null) {
                     sendHome(level, w.building, r);              // no work for it: back down to the horde (off a building first)
                 }
+            }
+            if (!enlisted.isEmpty()) {
+                hurryEnlisted(level, w, mine);
             }
             here.put(w.key(), mine.size());
             for (int i = 0; i <= extra; i++) {
@@ -530,8 +534,6 @@ public final class Works {
         }
         BoundingBox near = w.box().inflatedBy(ENLIST_RANGE);
         BlockPos mid = w.box().getCenter();
-        BlockPos way = w.comeUpAt(level);                       // where a crew comes up: a site's landing, a room's floor
-        BlockPos to = way != null ? way : mid;
         List<SettlerMob> idle = new ArrayList<>();
         for (SettlerMob r : heart.loadedPeople()) {
             if (r.getType() == w.crewType() && idle(r) && near.isInside(r.blockPosition())) {
@@ -545,13 +547,14 @@ public final class Works {
             if (n >= need) {
                 break;
             }
-            if (!canWalkTo(r, to) || !heart.takeFromRoll(r.getUUID())) {
+            if (!heart.takeFromRoll(r.getUUID())) {
                 continue;
             }
             r.makeCrew(w.key());
             w.crewSpawned(r);
             crew.put(r.getUUID(), w.key());
             fromReserve.add(r.getUUID());                        // it ends as a crew out of the reserve does: back into it
+            enlisted.put(r.getUUID(), level.getGameTime());
             if (clanrat) {
                 clanratCrew.add(r.getUUID());
             }
@@ -564,20 +567,31 @@ public final class Works {
     }
 
     /**
-     * Whether {@code r} can walk to {@code to}: a path that gets there, or (further off than a mob paths at once: its follow range) one that brings it
-     * well over halfway there, as a long walk goes, leg by leg. One stuck behind a wall would stand as crew and keep a riser out of its place (the
-     * review of 4275dca).
+     * Enlisted crew still on their way, by when they were enlisted: one that hasn't reached its room in {@value #ENLIST_PATIENCE} ticks (behind a
+     * wall, across a ditch, lost on a long walk) burrows to the room's way in, as crew come up there out of the reserve (the review of 4275dca:
+     * a path can't tell, vanilla's always ends somewhere, beside the wall). Not saved: crew never are.
      */
-    static boolean canWalkTo(SettlerMob r, BlockPos to) {
-        var path = r.getNavigation().createPath(to, 1);
-        if (path == null) {
-            return false;
+    private final Map<UUID, Long> enlisted = new HashMap<>();
+    /** Ticks an enlisted settler has to walk to its room before it burrows there. */
+    public static final int ENLIST_PATIENCE = 300;
+
+    /** Each second: an enlisted settler at its room is there; one still off it after {@value #ENLIST_PATIENCE} ticks burrows to the way in. */
+    private void hurryEnlisted(ServerLevel level, RoomWork w, List<SettlerMob> mine) {
+        for (SettlerMob r : mine) {
+            Long at = enlisted.get(r.getUUID());
+            if (at == null) {
+                continue;
+            }
+            if (w.box().inflatedBy(2).isInside(r.blockPosition()) || w.reachInside(r.blockPosition())) {
+                enlisted.remove(r.getUUID());
+            } else if (level.getGameTime() - at >= ENLIST_PATIENCE && !r.isBurrowing()) {
+                BlockPos way = w.comeUpAt(level);
+                if (way != null) {
+                    r.burrowTo(way.getX() + 0.5, way.getY(), way.getZ() + 0.5);
+                }
+                enlisted.remove(r.getUUID());
+            }
         }
-        if (path.canReach()) {
-            return true;
-        }
-        var end = path.getEndNode();
-        return end != null && end.asBlockPos().distSqr(to) * 4 < r.blockPosition().distSqr(to);
     }
 
     /**
