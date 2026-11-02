@@ -623,6 +623,7 @@ public final class Works {
         rooms.remove(key);
         opened.remove(key);
         here.remove(key);
+        lostAt.remove(key);                                      // a new room at the door waits out no loan of this one's
         saved.remove(Long.toString(key.asLong()));
         heart.setChanged();
     }

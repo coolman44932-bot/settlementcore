@@ -644,7 +644,12 @@ public class SettlementBlockEntityGameTests {
                 door, net.minecraft.core.Direction.EAST);
         s.addBuilding(b, true);
         h.assertTrue(s.has(platform.function()) && s.buildings().size() == 1, "the building wasn't added");
-        h.assertTrue(s.removeBuilding(h.getLevel(), b), "the building wasn't removed");
+        s.works().second(h.getLevel(), 1);                      // its room's work made and opened, as a finished building's is
+        Building copy = new Building(b.room(), new BoundingBox(b.box().minX(), b.box().minY(), b.box().minZ(), b.box().maxX(), b.box().maxY(),
+                b.box().maxZ()), b.door(), b.facing());          // the same building as a save would bring it back: equal, not the same object
+        h.assertTrue(s.removeBuilding(h.getLevel(), copy), "the building wasn't removed");
+        CompoundTag works = s.works().save(h.getLevel().registryAccess());
+        h.assertTrue(!works.getCompoundOrEmpty("rooms").contains(Long.toString(door.asLong())), "the removed building's room still saves: " + works);
         h.assertTrue(!s.has(platform.function()) && s.buildings().isEmpty(), "the removed building is still counted");
         h.assertTrue(!s.removeBuilding(h.getLevel(), b), "a building removed twice was removed again");
         s.setRemoved();
