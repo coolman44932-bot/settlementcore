@@ -83,6 +83,8 @@ public class RaiseJob extends DigJob {
     public static final double PER_LIFT = 6;
     /** How far a builder stands from the first cell of its batch, at most, across; and up or down. */
     public static final int STAND_ACROSS = 4, STAND_UP = 3;
+    /** How far across from the work a builder may lay it from its foot ({@link #footFor}). */
+    public static final int FOOT_ACROSS = STAND_ACROSS + 4;
     /** The footing ({@link #footing}) is the site's area this much wider all round, and this much higher than its highest cell. */
     public static final int FOOTING_MARGIN = 2, FOOTING_ABOVE = 4;
     /**
@@ -1182,6 +1184,9 @@ public class RaiseJob extends DigJob {
             }
             double dx = p.getX() - anchor.getX();
             double dz = p.getZ() - anchor.getZ();
+            if (dx * dx + dz * dz > FOOT_ACROSS * FOOT_ACROSS) {
+                continue;                                        // the work is laid from its foot, not from across the site
+            }
             double score = dx * dx + dz * dz + e.getIntValue() * 0.01;
             if (score < bestScore) {
                 bestScore = score;
@@ -1395,17 +1400,18 @@ public class RaiseJob extends DigJob {
     }
 
     /**
-     * A cell a builder can walk through: one it can stand in ({@link SettlerMob#standable}), or over a stair, a slab or anything else whose
-     * collision top is no higher than its own cell (vanilla's ground paths walk them; standable wants a sturdy top face, so a ledge reached by
-     * steps was never found by the flood). Stands themselves are still only standable cells.
+     * A cell a builder can walk through: one it can stand in ({@link SettlerMob#standable}), or the cell over a stair (standable wants a
+     * sturdy top face, which a stair hasn't, so a ledge reached by steps was never found by the flood; vanilla's ground paths climb them).
+     * Only stairs: their high side is a full block, so the flood's steps are the real ones. A bottom slab, a carpet, a lantern is half a
+     * block or less, and counting the cell over it as a floor would give a step up of 1.5 the builder can't take (the review of 6907d91).
+     * Stands themselves are still only standable cells.
      */
     static boolean treadable(ServerLevel level, BlockPos p) {
         if (SettlerMob.standable(level, p)) {
             return true;
         }
         BlockPos b = p.below();
-        var shape = level.getBlockState(b).getCollisionShape(level, b);
-        return !shape.isEmpty() && shape.max(Direction.Axis.Y) <= 1.0 && free(level, p) && free(level, p.above())
+        return level.getBlockState(b).getBlock() instanceof net.minecraft.world.level.block.StairBlock && free(level, p) && free(level, p.above())
                 && level.getFluidState(p).isEmpty() && level.getFluidState(p.above()).isEmpty();
     }
 

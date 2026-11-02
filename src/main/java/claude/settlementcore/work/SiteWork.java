@@ -274,17 +274,14 @@ public final class SiteWork extends RoomWork {
             cells.add(t.pos());
         }
         RaiseJob.Stand where = job.stand(level, anchor, cells, rat.blockPosition());
-        if (!where.walkable()) {
-            Chore leg = backToTheDoor(level, rat);
+        BlockPos foot = where.walkable() ? null : lift(level, anchor, cells, rat);
+        if (!where.walkable() && foot == null) {
+            Chore leg = backToTheDoor(level, rat);               // no foot from here: round to the landing first (a foot found needs no leg)
             if (leg != null) {
                 return leg;
             }
         }
-        BlockPos stand = where.at();
-        BlockPos foot = where.walkable() ? null : lift(level, anchor, cells, rat);
-        if (foot != null) {
-            stand = foot;
-        }
+        BlockPos stand = foot != null ? foot : where.at();
         int work = Math.max(4, Math.round(TICKS_PER_BLOCK * Math.max(1, batch.size()) / rat.tempo()));
         double reach = 2.2;
         if (stand != null) {
@@ -304,10 +301,10 @@ public final class SiteWork extends RoomWork {
     }
 
     /**
-     * Where a batch no stand the builder can walk to reaches is laid from (it has been sent round to the landing already, and the walk was
-     * told, so nobody will ever walk to one): the foot of the work ({@link RaiseJob#footFor}), at the usual pace, the reach up waived. A wall
-     * higher than any floor round it (the Hold Gate's 38-tall towers over a ledge at 3) was stood out 3 x 400 ticks a cell and heaved, 0.4 cells
-     * a second. Null when there is no foot: the old stand-out and heave stand.
+     * Where a batch no stand the builder can walk to reaches is laid from (the walk was told): the foot of the work ({@link RaiseJob#footFor},
+     * within {@value RaiseJob#FOOT_ACROSS} across), at the usual pace, the reach up waived; no leg round to the landing first (the review of
+     * 6907d91: a wasted walk every LEG_WINDOW). A wall higher than any floor round it (the Hold Gate's 38-tall towers over a ledge at 3) was
+     * stood out 3 x 400 ticks a cell and heaved, 0.4 cells a second. Null when there is no foot: the leg, then the old stand-out and heave.
      */
     @Nullable
     private BlockPos lift(ServerLevel level, BlockPos anchor, List<BlockPos> cells, SettlerMob rat) {
@@ -375,17 +372,14 @@ public final class SiteWork extends RoomWork {
         }
         List<BlockPos> cells = job.tearBatch(id);
         RaiseJob.Stand where = job.stand(level, anchor, cells, rat.blockPosition());
-        if (!where.walkable()) {
-            Chore leg = backToTheDoor(level, rat);
+        BlockPos foot = where.walkable() ? null : lift(level, anchor, cells, rat);
+        if (!where.walkable() && foot == null) {
+            Chore leg = backToTheDoor(level, rat);               // no foot from here: round to the landing first (a foot found needs no leg)
             if (leg != null) {
                 return leg;
             }
         }
-        BlockPos stand = where.at();
-        BlockPos foot = where.walkable() ? null : lift(level, anchor, cells, rat);
-        if (foot != null) {
-            stand = foot;
-        }
+        BlockPos stand = foot != null ? foot : where.at();
         int work = Math.max(3, Math.round(TEAR_TICKS_PER_BLOCK * Math.max(1, cells.size()) / rat.tempo()));
         double reach = 2.2;
         if (stand != null) {
