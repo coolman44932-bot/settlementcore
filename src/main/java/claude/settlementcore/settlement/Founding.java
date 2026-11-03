@@ -67,9 +67,14 @@ public final class Founding extends SavedData {
         PlanPlacement placement() {
             return PlanPlacement.compute(Rooms.get(room), door, facing);
         }
+
+        /** Whether its room is still known (a mod update may have taken it away: then the hall is let be, never read). */
+        boolean known() {
+            return Rooms.get(room) != null;
+        }
     }
 
-    static final Codec<Founding> CODEC = Hall.CODEC.listOf().xmap(Founding::new, f -> f.halls);
+    public static final Codec<Founding> CODEC = Hall.CODEC.listOf().xmap(Founding::new, f -> f.halls);
     static final SavedDataType<Founding> TYPE = new SavedDataType<>(Identifier.fromNamespaceAndPath(Core.MODID, "founding"), Founding::new, CODEC);
 
     private final List<Hall> halls;
@@ -127,6 +132,9 @@ public final class Founding extends SavedData {
     /** {@link #begin}, round the heart that stands at {@code heart} (left as it is), the hall that settlement's when it stands. */
     @Nullable
     public String beginRound(ServerLevel level, Rooms.Room room, BlockPos heart, Direction facing, UUID owner) {
+        if (!isFoundingHall(room)) {
+            return Settlement.the(room.displayName()) + " is no founding hall";
+        }
         return begin(level, roundHeart(room, heart, facing), owner, heart);
     }
 
@@ -136,11 +144,11 @@ public final class Founding extends SavedData {
             return Settlement.the(pl.room().displayName()) + " is no founding hall";
         }
         for (Hall h : halls) {
-            if (h.placement().box().intersects(pl.box())) {
+            if (h.known() && h.placement().box().intersects(pl.box())) {
                 return "Another hall is founded there already";
             }
         }
-        Siting.Result sited = Siting.plan(level, pl, RoomShoring.Warren.alone(), true,
+        Siting.Result sited = Siting.plan(level, pl, warrenOf(level, heart), true,
                 heart == null ? it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET : it.unimi.dsi.fastutil.longs.LongSets.singleton(heart.asLong()));
         if (sited instanceof Siting.Refusal no) {
             return no.why();
@@ -153,10 +161,54 @@ public final class Founding extends SavedData {
         return null;
     }
 
+    /**
+     * The settlement a hall is raised round, as the siting's warren (its rooms, dug and raised, and its sites kept out of the pad, as a raise
+     * of its own keeps them: the review of 84c791d), less its heart's own cell (the hall's spot, spared); alone for a new founding.
+     */
+    private static RoomShoring.Warren warrenOf(ServerLevel level, @Nullable BlockPos heart) {
+        if (heart == null || !(level.getBlockEntity(heart) instanceof Settlement s)) {
+            return RoomShoring.Warren.alone();
+        }
+        return new RoomShoring.Warren() {
+            @Override
+            public it.unimi.dsi.fastutil.longs.LongSet roomCells(ServerLevel l, net.minecraft.world.level.levelgen.structure.BoundingBox area,
+                                                                  net.minecraft.world.level.levelgen.structure.BoundingBox except) {
+                it.unimi.dsi.fastutil.longs.LongOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(s.roomCells(l, area, except));
+                out.remove(heart.asLong());
+                for (claude.settlementcore.work.SiteWork site : s.works().sites()) {
+                    if (site.box().intersects(area)) {
+                        for (BlockPos c : BlockPos.betweenClosed(site.box().minX(), site.box().minY(), site.box().minZ(),
+                                site.box().maxX(), site.box().maxY(), site.box().maxZ())) {
+                            if (area.isInside(c)) {
+                                out.add(c.asLong());
+                            }
+                        }
+                    }
+                }
+                return out;
+            }
+
+            @Override
+            public boolean shored(long pos) {
+                return s.shored(pos);
+            }
+
+            @Override
+            public void shore(long pos) {
+                s.shore(pos);
+            }
+
+            @Override
+            public void unshore(long pos) {
+                s.unshore(pos);
+            }
+        };
+    }
+
     /** Whether a heart set down at {@code pos} by {@code owner} stands on the heart spot of a hall of theirs that has risen and waits for one. */
     public boolean spot(BlockPos pos, UUID owner) {
         for (Hall h : halls) {
-            if (h.job().isEmpty() && h.heart().isEmpty() && h.owner().equals(owner) && heartSpot(h.placement()).equals(pos)) {
+            if (h.known() && h.job().isEmpty() && h.heart().isEmpty() && h.owner().equals(owner) && heartSpot(h.placement()).equals(pos)) {
                 return true;
             }
         }
@@ -168,7 +220,7 @@ public final class Founding extends SavedData {
     public Building claim(BlockPos pos, UUID owner) {
         for (Iterator<Hall> it = halls.iterator(); it.hasNext(); ) {
             Hall h = it.next();
-            if (h.job().isEmpty() && h.heart().isEmpty() && h.owner().equals(owner) && heartSpot(h.placement()).equals(pos)) {
+            if (h.known() && h.job().isEmpty() && h.heart().isEmpty() && h.owner().equals(owner) && heartSpot(h.placement()).equals(pos)) {
                 it.remove();
                 setDirty();
                 PlanPlacement pl = h.placement();
@@ -176,6 +228,16 @@ public final class Founding extends SavedData {
             }
         }
         return null;
+    }
+
+    /** Forgets the hall at {@code door}, rising or risen (what of it stands, stands). True if there was one. */
+    public boolean forget(BlockPos door) {
+        jobs.remove(door);
+        boolean gone = halls.removeIf(h -> h.door().equals(door));
+        if (gone) {
+            setDirty();
+        }
+        return gone;
     }
 
     /** The halls rising or risen and waiting (the tests, the bridge). */
@@ -197,12 +259,13 @@ public final class Founding extends SavedData {
     public void second(ServerLevel level, int budget) {
         for (int i = 0; i < halls.size(); i++) {
             Hall h = halls.get(i);
-            if (h.job().isEmpty() || !level.isLoaded(h.door())) {
+            if (!h.known() || h.job().isEmpty() || !level.isLoaded(h.door())) {
                 continue;
             }
             RaiseJob job = jobs.computeIfAbsent(h.door(), d -> RaiseJob.load(h.job().get()));
             if (job == null) {
-                halls.set(i, new Hall(h.room(), h.door(), h.facing(), h.owner(), Optional.empty(), h.heart()));
+                halls.remove(i--);                               // a job that can't be read: nothing was raised of it to stand on
+                setDirty();
                 continue;
             }
             job.ensureLoaded(level);
@@ -220,10 +283,9 @@ public final class Founding extends SavedData {
             if (job.isDone()) {
                 job.finishAll(level);
                 jobs.remove(h.door());
-                risen(level, h);
-                if (h.heart().isPresent()) {
+                if (risen(level, h)) {
                     halls.remove(i--);                           // raised round a heart: that settlement has it now
-                } else {
+                } else {                                         // waiting for its heart (its round heart broken meanwhile: a new one may take it)
                     halls.set(i, new Hall(h.room(), h.door(), h.facing(), h.owner(), Optional.empty(), Optional.empty()));
                 }
             } else {
@@ -233,14 +295,17 @@ public final class Founding extends SavedData {
         }
     }
 
-    /** A hall has risen: round a heart, that settlement takes it; else its god is told to set the heart on its spot. */
-    private static void risen(ServerLevel level, Hall h) {
+    /**
+     * A hall has risen: round a heart that still stands, that settlement takes it (true); else its god is told to set the heart on its spot
+     * (false: it waits for one).
+     */
+    private static boolean risen(ServerLevel level, Hall h) {
         PlanPlacement pl = h.placement();
         String the = Settlement.the(pl.room().displayName());
         if (h.heart().isPresent() && level.getBlockEntity(h.heart().get()) instanceof Settlement s) {
             s.addBuilding(new Building(h.room(), pl.box(), h.door(), h.facing()), true);
             s.tellOwner(cap(the) + " stands round your " + s.centreName() + ".", ChatFormatting.GOLD);
-            return;
+            return true;
         }
         ServerPlayer p = level.getServer().getPlayerList().getPlayer(h.owner());
         if (p != null) {
@@ -248,6 +313,7 @@ public final class Founding extends SavedData {
             p.sendSystemMessage(Component.literal(cap(the) + " stands. Set your heart on its spot, at " + at.getX() + " " + at.getY()
                     + " " + at.getZ() + ".").withStyle(ChatFormatting.GOLD));
         }
+        return false;
     }
 
     private static String cap(String s) {

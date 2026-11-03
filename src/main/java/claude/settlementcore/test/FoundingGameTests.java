@@ -67,15 +67,22 @@ public class FoundingGameTests {
         h.runAfterDelay(20, () -> s.guard(() -> {
             Founding f = Founding.of(s.level);
             int before = f.count();
+            Founding live = f;
             UUID god = new UUID(0xf00dL, 1L), other = new UUID(0xf00dL, 2L);
             String no = f.begin(s.level, s.pl, god);
             h.assertTrue(no == null, "the founding hall was refused: " + no);
             h.assertTrue(f.begin(s.level, s.pl, god) != null, "a second hall at the same place wasn't refused");
             BlockPos spot = Founding.heartSpot(s.pl);
             h.assertTrue(!f.spot(spot, god), "the heart's spot was open before the hall had risen");
-            for (int sec = 0; sec < 100 && f.rising(s.pl.door()); sec++) {
-                f.second(s.level, Founding.PER_SECOND);
+            f.second(s.level, 40);                               // a little of it up, then saved and read back, as a restart would
+            var saved = Founding.CODEC.encodeStart(net.minecraft.nbt.NbtOps.INSTANCE, f).getOrThrow();
+            Founding back = Founding.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, saved).getOrThrow();
+            h.assertTrue(back.count() == f.count() && back.rising(s.pl.door()), "the rising hall didn't survive a save and a load");
+            for (int sec = 0; sec < 100 && back.rising(s.pl.door()); sec++) {
+                back.second(s.level, Founding.PER_SECOND);       // the read-back copy raises the rest
             }
+            h.assertTrue(!back.rising(s.pl.door()), "the read-back hall never finished rising");
+            f = back;
             h.assertTrue(!f.rising(s.pl.door()), "the hall never finished rising");
             h.assertTrue(s.level.getBlockState(s.pl.world(new BlockPos(4, 1, 4))).is(Blocks.CHISELED_STONE_BRICKS), "the hall's dais isn't in");
             h.assertTrue(s.level.getBlockState(s.pl.world(new BlockPos(8, 2, 2))).is(Blocks.STONE_BRICKS), "the hall's back wall isn't in");
@@ -85,6 +92,7 @@ public class FoundingGameTests {
             Building b = f.claim(spot, god);
             h.assertTrue(b != null && b.room().equals(HALL) && b.box().equals(s.pl.box()), "the god's heart didn't take the hall: " + b);
             h.assertTrue(f.count() == before && f.claim(spot, god) == null, "the hall was taken twice, or not forgotten");
+            h.assertTrue(live.forget(s.pl.door()), "the level's own record of the hall (raised by the read-back copy) wasn't there to forget");
             s.clear();
             h.succeed();
         }));
