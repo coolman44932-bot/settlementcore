@@ -148,8 +148,16 @@ public final class Siting {
      * @param reshape false for the plinth, berm and landing only (the land round them is left as it is)
      */
     public static Result plan(Level level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape) {
+        return plan(level, pl, warren, reshape, it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET);
+    }
+
+    /**
+     * {@link #plan}, the cells in {@code spare} left exactly as they are: never a thing on the site that refuses it (a founding hall raised
+     * round a settlement's heart, settlement/Founding#beginRound: the heart stands on its spot through the raising).
+     */
+    public static Result plan(Level level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape, LongSet spare) {
         try {
-            return new Planner(level, pl, warren).plan(reshape);
+            return new Planner(level, pl, warren, spare).plan(reshape);   // spare before anything is scanned: the constructor scans columns
         } catch (Refused r) {
             return r.refusal;
         }
@@ -912,7 +920,15 @@ public final class Siting {
         final BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
         LongSet buildings = new LongOpenHashSet();
 
+        /** Cells left as they are, never a thing on the site ({@link Siting#plan(Level, PlanPlacement, RoomShoring.Warren, boolean, LongSet)}). */
+        final LongSet spare;
+
         Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren) {
+            this(level, pl, warren, it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET);
+        }
+
+        Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren, LongSet spare) {
+            this.spare = spare;
             this.level = level;
             this.pl = pl;
             this.warren = warren;
@@ -1037,7 +1053,7 @@ public final class Siting {
             }
             for (int yy = top; yy > foot; yy--) {
                 BlockState s = at(x, yy, z);
-                if (s.isAir() || cover(s) || yy <= (c.fluid() ? c.fluidTop : c.coverTop)) {
+                if (s.isAir() || cover(s) || yy <= (c.fluid() ? c.fluidTop : c.coverTop) || spare.contains(BlockPos.asLong(x, yy, z))) {
                     continue;
                 }
                 c.thingY.add(yy);

@@ -977,6 +977,19 @@ public class RaiseJob extends DigJob {
         this.sink = sink;
     }
 
+    /**
+     * The next {@code max} cells in the job's order put in place by the settlement's god, nothing held back for its readiness (as
+     * {@link #finishAll} does, but paced): a founding hall rising (settlement/Founding). Returns how many were done.
+     */
+    public int raiseInOrder(ServerLevel level, int max, List<BlockPos> sample) {
+        forcing = true;
+        try {
+            return gnawInOrder(level, max, sample);
+        } finally {
+            forcing = false;
+        }
+    }
+
     /** Everything in place at once (a creative raise, and the finish), whatever the ground; only a player's block is spared. */
     @Override
     public void finishAll(ServerLevel level) {
