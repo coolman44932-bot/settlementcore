@@ -116,6 +116,13 @@ tasks.withType(JavaCompile).configureEach {
     options.compilerArgs += ['-Xmaxerrs', '3000']
 }
 
+// The same commit builds the same jar on any machine: no file times in it, its files in a fixed order. The laptop builds the jars a
+// ship copies (block bench/under-empire/tools/ship.py --record-built), and a PC build of that commit can be checked against them.
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
 ['processResources', 'processTestraceResources'].each { name ->
     tasks.named(name, ProcessResources).configure {
         def props = [version: project.version, minecraft_version: project.minecraft_version, neo_version: project.neo_version,
