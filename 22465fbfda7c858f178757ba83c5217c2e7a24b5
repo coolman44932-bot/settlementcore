@@ -1,0 +1,1 @@
+REVIEW PASS 1ff441d: settlementcore, reproducible archive settings only (Gradle 9.2.1 already defaults to them: the laptop's khazuk build of 188ecc3 is byte for byte the PC's d36bd65f)
