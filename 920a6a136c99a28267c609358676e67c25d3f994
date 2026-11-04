@@ -1,0 +1,1 @@
+fix-reviewer: REVIEW PASS WITH NOTES a821c93: correct and minimal; the test covers only the book half, not Works.forgetRoom (crew, refund, opened/saved, save round trip, equality of a reloaded Building); lostAt is not cleared; caches keyed on buildings().size() can go stale
