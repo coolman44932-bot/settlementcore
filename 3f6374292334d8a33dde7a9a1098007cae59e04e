@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-02: the lift (a wall higher than its builders can stand is laid from its foot). Notes fixed in the next commit: treadable took slabs/carpets/lanterns as a full step (now stairs only), a wasted leg every LEG_WINDOW, the lift's reach uncapped (now 8). Open: no crewed test of the lift chain (proved live: the Hold Gate raised in the dev game); % built sits at 0 through the earthworks.
+REVIEW PASS WITH NOTES 6907d91
