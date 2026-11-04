@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-02: drifts stop at digs and sites, real self-dig dust, standFor continues. Notes: no test of the three; an open hall self-digs in one burst; others up to 200 ticks stale.
+REVIEW PASS WITH NOTES 1805e83
