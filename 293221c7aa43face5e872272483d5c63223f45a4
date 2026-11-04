@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-02: the 26.1 dig side. Notes fixed in the next commit (stall latch, stuck batch dug, stand in the room, solid door, door-key collision, digs in roomCells/withSites, MineWork's others). Open: a dig can't be called off; an unreadable dig on load isn't refunded.
+REVIEW PASS WITH NOTES 216cf26
