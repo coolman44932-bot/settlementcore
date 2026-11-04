@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-02: the fixes to 84c791d's review. Notes: warrenOf keeps a site's whole box (stricter than a raise); the new behaviours tested by reading and Khazuk!'s round test.
+REVIEW PASS WITH NOTES d5c44e8
