@@ -1,0 +1,1 @@
+fix-reviewer: REVIEW PASS WITH NOTES cccf7202 (RoomTemplates raw 1.21.1 nbt -> fixed in 0abbf25; save nesting without migration: no 26.1 worlds exist; Den clock apply-and-restore -> fixed in 0abbf25; @BeforeBatch after structures: harmless for difficulty hooks; watchdog force gaps -> fixed in 0abbf25; testrace jar beside the engine jar in build/libs)
