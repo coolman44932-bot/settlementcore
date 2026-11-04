@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-01: engine 0.5.3, a big building's site takes the widest ramp margin that fits (Siting.Planner#marginCap, Reshape overloads). Reviewed 270e90c, then 8675568 (the site's own widest margin banks at it; doc fixes). Open note: the client's plan preview re-plans a big building every tick (Khazuk's preview now caches; the Waaagh!'s still plans each tick).
+REVIEW PASS WITH NOTES 270e90c,8675568
