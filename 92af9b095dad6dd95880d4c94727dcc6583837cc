@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-02: the review of 6907d91's fixes (stairs-only tread, lift before the leg, FOOT_ACROSS 8). Open: no crewed test of the lift chain; the tall-wall test's doc still says slabs; slab floors aren't walkable to the flood (as before 6907d91).
+REVIEW PASS WITH NOTES 20e2a9d
