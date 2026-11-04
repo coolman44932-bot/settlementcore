@@ -1,0 +1,1 @@
+fix-reviewer: REVIEW PASS WITH NOTES bb2f2227 (freeze fixed; the attack controller snaps right_arm/body to rest at the clip's ends instead of blending: cosmetic, accepted for the test race; a client look still needed)
