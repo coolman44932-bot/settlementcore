@@ -1,0 +1,2 @@
+fix-reviewer (Sonnet 5.5 agent), 2026-11-01: engine 0.5.2, idle hands go to the work first (Works#enlist, #hurryEnlisted). Reviewed 4275dca, f8da24e, aaeaa7c, 9f024ee in turn; each pass PASS WITH NOTES, the path check replaced by a 15 s burrow-over. Open notes: room-order fairness of risers, enlist ignores an alarm, no test-race test (the Waaagh! carries the proof), an enlisted settler killed at work is refunded (deliberate buff).
+REVIEW PASS WITH NOTES 4275dca,f8da24e,aaeaa7c,9f024ee
