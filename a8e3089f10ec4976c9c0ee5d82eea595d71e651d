@@ -1,0 +1,1 @@
+fix-reviewer: REVIEW PASS WITH NOTES e35ba9e0: the 44bed37 notes fixed with tests; a gate in an unloaded chunk at the all-clear is dropped from shutByUs without reopening, and the settling flag has no direct test
