@@ -328,6 +328,16 @@ public final class Muster {
             alive++;
             r.hearten(20f);
         }
+        if (alive < want && h.reserve() <= 0) {
+            // the reserve is empty (a big dig took it, since 0.5.6): the diggers nearest the foe drop their work and turn out
+            for (SettlerMob r : h.works().draft(level, Math.min(STEP, want - alive), head.blockPosition())) {
+                defenders.add(r.getUUID());
+                risen++;
+                alive++;
+                r.hearten(20f);
+                r.setTarget(head);
+            }
+        }
     }
 
     /**

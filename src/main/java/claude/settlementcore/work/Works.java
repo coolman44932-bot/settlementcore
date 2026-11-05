@@ -703,6 +703,40 @@ public final class Works {
         return true;
     }
 
+    /**
+     * Up to {@code n} of the digs' crew who came out of the reserve, the nearest {@code near} first, let go of their digs to answer the
+     * muster. A dig may take the whole reserve since 0.5.6, which is the reserve the muster raises its defenders from (the review of 2b9750d),
+     * so the diggers turn out instead, picks and all. They are no crew any more; stood down, they go home into the reserve as any defender
+     * does (the race's absorb, Muster#defends), and the dig takes crew again.
+     */
+    public List<SettlerMob> draft(ServerLevel level, int n, BlockPos near) {
+        List<SettlerMob> can = new ArrayList<>();
+        for (var e : crew.entrySet()) {
+            if (digs.containsKey(e.getValue()) && fromReserve.contains(e.getKey()) && level.getEntity(e.getKey()) instanceof SettlerMob r
+                    && r.isAlive() && !r.isHomeward()) {
+                can.add(r);
+            }
+        }
+        can.sort(java.util.Comparator.comparingDouble(r -> r.blockPosition().distSqr(near)));
+        List<SettlerMob> out = new ArrayList<>();
+        for (SettlerMob r : can) {
+            if (out.size() >= n) {
+                break;
+            }
+            BlockPos k = crew.remove(r.getUUID());
+            if (k != null) {
+                letGo(k, r.getUUID());
+            }
+            fromReserve.remove(r.getUUID());
+            clanratCrew.remove(r.getUUID());
+            out.add(r);
+        }
+        if (!out.isEmpty()) {
+            heart.setChanged();
+        }
+        return out;
+    }
+
     public boolean isCrew(UUID id) {
         return crew.containsKey(id);
     }
