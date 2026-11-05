@@ -126,6 +126,17 @@ public final class Muster {
         return n;
     }
 
+    /** Its defenders up now and those stood down still walking home (#homeward), alive: the settlement's people out of the reserve for now. */
+    public int out(ServerLevel level) {
+        int n = defenders(level);
+        for (UUID id : homeward) {
+            if (level.getEntity(id) instanceof SettlerMob r && r.isAlive()) {
+                n++;
+            }
+        }
+        return n;
+    }
+
     /** The foes the alarm is out for (Jade's count): never one shut in ({@link #shutIn}), though a Watch-Post saw it, once a second has judged it. */
     public int foes() {
         return foes.size();
@@ -587,10 +598,15 @@ public final class Muster {
         }
     }
 
-    /** How many of its defenders up now {@code which} holds for (a race counting those it didn't raise itself: Works#draft's diggers). */
+    /** How many of its defenders up now or walking home {@code which} holds for (a race counting those it didn't raise itself: Works#draft's diggers). */
     public int countDefenders(java.util.function.Predicate<UUID> which) {
         int n = 0;
         for (UUID id : defenders) {
+            if (which.test(id)) {
+                n++;
+            }
+        }
+        for (UUID id : homeward) {                               // walking home after the all-clear: still out of the reserve
             if (which.test(id)) {
                 n++;
             }

@@ -658,7 +658,7 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
      * with others of its own (the Heart's rats teeming about its god) adds them.
      */
     protected int teeming() {
-        return level instanceof ServerLevel sl ? muster.defenders(sl) : 0;
+        return level instanceof ServerLevel sl ? muster.out(sl) : 0;   // walking home after the all-clear too (the review of 8c10211)
     }
 
     /** Its people up, its rooms' crews, its reserve and those teeming ({@link #teeming}). */
