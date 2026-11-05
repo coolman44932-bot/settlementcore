@@ -1,0 +1,1 @@
+REVIEW PASS c05b7cea3ad2a7d8cf0b71e03ab672da9f2c4cf1: the stop-time hand-back runs before the levels save, with no duplication on reload; the ownerless/off muster stands down and prunes safely. Notes for later: tellUntold skipped in the off branch (muster turned off in config), handBackAll's stacked javadoc. (fix-reviewer, 2026-11-04)
