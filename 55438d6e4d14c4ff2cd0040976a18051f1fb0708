@@ -1,0 +1,1 @@
+REVIEW PASS 55438d6e4d14c4ff2cd0040976a18051f1fb0708: c557d78 and 55438d6 together fix the GeckoLib fallback: any NoSuchFieldError triggers it, the other linkage errors need a message naming com.geckolib, the javadoc is back above fillRenderState, and mods.toml is [${geckolib_version},6). (fix-reviewer, 2026-11-04)
