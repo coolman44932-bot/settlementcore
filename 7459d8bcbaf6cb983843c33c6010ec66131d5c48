@@ -1,0 +1,1 @@
+REVIEW PASS 7459d8bcbaf6cb983843c33c6010ec66131d5c48: the tail self-dig is idempotent against crew claims, and the path-left credit still keeps a long single detour while dropping the fresh-path lap. Minor: the describe floor can read one low in float (never 100 early); stall counters unsaved as before. (fix-reviewer, 2026-11-04)
