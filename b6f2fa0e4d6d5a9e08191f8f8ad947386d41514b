@@ -1,0 +1,1 @@
+REVIEW PASS b6f2fa0e4d6d5a9e08191f8f8ad947386d41514b: no blocking bug; its notes on the GeckoLib cap and the broad LinkageError catch are handled in the next commit. (fix-reviewer, 2026-11-04)
