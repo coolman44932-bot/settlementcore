@@ -116,20 +116,26 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
     // ------------------------------------------------------------------ taken off the rat
 
     /**
+     * Whether {@code e} is GeckoLib changed under this: a missing or reshaped method, field or class of GeckoLib's own. A NoSuchFieldError
+     * names only the field (HotSpot), so it counts whatever the message: fillHorde reads no fields but GeckoLib's and its own (the review
+     * of c557d78).
+     */
+    private static boolean geckolibChange(LinkageError e) {
+        if (e instanceof NoSuchFieldError) {
+            return true;
+        }
+        if (!(e instanceof NoSuchMethodError || e instanceof IncompatibleClassChangeError || e instanceof NoClassDefFoundError)) {
+            return false;
+        }
+        String m = String.valueOf(e.getMessage());
+        return m.contains("com.geckolib") || m.contains("com/geckolib");
+    }
+
+    /**
      * GeckoLib's own fill, cut short for a far rat: one drawn from its kept model takes nothing past what picks its
      * texture, and one whose pose is held this frame (HordeLod) skips the animation controllers and their Molang.
      * Plain GeckoLib's fill (with the missing-clip guard) if GeckoLib's internals have changed ({@link #geckolibChanged}).
      */
-    /** Whether {@code e} is GeckoLib changed under this: a missing or reshaped method, field or class of GeckoLib's own. */
-    private static boolean geckolibChange(LinkageError e) {
-        if (!(e instanceof NoSuchMethodError || e instanceof NoSuchFieldError || e instanceof IncompatibleClassChangeError
-                || e instanceof NoClassDefFoundError)) {
-            return false;
-        }
-        String m = String.valueOf(e.getMessage());
-        return m.contains("geckolib") || m.contains("com/geckolib") || m.contains("com.geckolib");
-    }
-
     @Override
     public R fillRenderState(T rat, @Nullable Void none, R state, float partialTick) {
         if (!geckolibChanged) {
