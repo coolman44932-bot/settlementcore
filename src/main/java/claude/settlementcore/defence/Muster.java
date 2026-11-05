@@ -201,6 +201,7 @@ public final class Muster {
             }
             prune(level, homeward);
             prune(level, defenders);
+            tellUntold(level);                                   // one out of the world at the stand-down, back now: sent home, its buff off
             return;
         }
         Map<Integer, Footing.Known> known = new HashMap<>();   // what the floods found about the foes, a body height to a Known

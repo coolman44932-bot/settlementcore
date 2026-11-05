@@ -900,10 +900,6 @@ public final class Works {
 
     // ------------------------------------------------------------------ loads left in a crew settler's hand
 
-    /**
-     * A crew settler about to be discarded by the Works (strayed, recalled, its room gone) hands what it carries back first ({@link #stow}), and its
-     * hand is emptied. Before, the load went with it: a Hoard-keeper's 64-stack, a furnace crew's smelt.
-     */
     /** Every loaded crew settler's load back into the settlement (the server stopping: OwedLoads#stopping). */
     public void handBackAll(ServerLevel level) {
         for (var e : new ArrayList<>(crew.entrySet())) {
@@ -913,6 +909,10 @@ public final class Works {
         }
     }
 
+    /**
+     * A crew settler about to be discarded by the Works (strayed, recalled, its room gone) hands what it carries back first ({@link #stow}), and its
+     * hand is emptied. Before, the load went with it: a Hoard-keeper's 64-stack, a furnace crew's smelt.
+     */
     private void handBack(ServerLevel level, SettlerMob r, @Nullable RoomWork w) {
         ItemStack held = r.carried();
         if (held.isEmpty()) {

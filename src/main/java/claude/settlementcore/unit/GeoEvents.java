@@ -31,6 +31,8 @@ import org.slf4j.Logger;
 import java.io.Reader;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Sound and particle keyframes from the Blockbench session's animation files (Verminlord, Rat Ogre),
@@ -51,21 +53,106 @@ public final class GeoEvents {
 
     public static <T extends LivingEntity & GeoEntity> void playSound(KeyFrameEvent<T, SoundKeyframeData> event) {
         T e = event.animatable();
-        String[] parts = event.keyframeData().getSound().split("\\|");
-        SoundEvent sound = BuiltInRegistries.SOUND_EVENT.getValue(Identifier.parse(parts[0].trim()));
+        Sound cue = sound(event.keyframeData().getSound());
+        if (cue == null) {
+            return;
+        }
+        SoundEvent sound = BuiltInRegistries.SOUND_EVENT.getValue(cue.id());
         if (sound == null) {
             return;
         }
-        float pitch = parts.length > 1 ? Float.parseFloat(parts[1]) : 1.0F;
-        float volume = parts.length > 2 ? Float.parseFloat(parts[2]) : 1.0F;
-        e.level().playLocalSound(e.getX(), e.getY(), e.getZ(), sound, SoundSource.HOSTILE, volume, pitch, false);
+        e.level().playLocalSound(e.getX(), e.getY(), e.getZ(), sound, SoundSource.HOSTILE, cue.volume(), cue.pitch(), false);
+    }
+
+    // ------------------------------------------------------------------ reading the keyframes' strings
+    // A keyframe plays on the render thread, every time its animation passes it: a string the animation file got wrong must
+    // not crash the client. Each of these is null for one it can't read (and the keyframe is skipped), and says so in the
+    // log once per string, not every frame.
+
+    /** A sound keyframe, read: the sound's id, its pitch and its volume. */
+    public record Sound(Identifier id, float pitch, float volume) {
+    }
+
+    private static final Logger LOG = LogUtils.getLogger();
+    /** The bad strings warned of already (at most 256, so a generated file can't grow it without end). */
+    private static final Set<String> WARNED = ConcurrentHashMap.newKeySet();
+
+    /** A sound keyframe's "vanilla_id|pitch|volume" (pitch and volume optional, 1 each), or null if it can't be read. */
+    @Nullable
+    public static Sound sound(@Nullable String raw) {
+        if (raw == null) {
+            return null;
+        }
+        String[] parts = raw.split("\\|");
+        Identifier id = parts.length == 0 || parts[0].isBlank() ? null : Identifier.tryParse(parts[0].trim());
+        float pitch = parts.length > 1 ? (float) number(parts[1]) : 1.0F;
+        float volume = parts.length > 2 ? (float) number(parts[2]) : 1.0F;
+        if (id == null || !Float.isFinite(pitch) || !Float.isFinite(volume)) {
+            warnOnce("sound", raw);
+            return null;
+        }
+        return new Sound(id, pitch, volume);
+    }
+
+    /** A particle keyframe's effect as a particle id, or null if it is no id (the warp effects are matched before this). */
+    @Nullable
+    public static Identifier particleId(@Nullable String effect) {
+        Identifier id = effect == null || effect.isBlank() ? null : Identifier.tryParse(effect.trim());
+        if (id == null) {
+            warnOnce("particle", effect);
+        }
+        return id;
+    }
+
+    /** No offset: the particles spawn at the middle of the entity. */
+    public static final double[] NO_OFFSET = new double[0];
+
+    /**
+     * A particle keyframe's spawn point, "right,up,forward" blocks from the entity (with the ";" Blockbench appends): the
+     * three, {@link #NO_OFFSET} for no script or one that isn't three parts (spawned at the entity's middle, as before), or
+     * null for three parts that aren't all numbers (the keyframe is skipped).
+     */
+    @Nullable
+    public static double[] offset(@Nullable String script) {
+        if (script == null) {
+            return NO_OFFSET;
+        }
+        String[] off = script.replace(";", "").split(",");
+        if (off.length != 3) {
+            return NO_OFFSET;
+        }
+        double[] v = new double[3];
+        for (int i = 0; i < 3; i++) {
+            v[i] = number(off[i]);
+            if (Double.isNaN(v[i])) {
+                warnOnce("particle offset", script);
+                return null;
+            }
+        }
+        return v;
+    }
+
+    /** A finite number, else NaN. */
+    private static double number(String s) {
+        try {
+            double d = Double.parseDouble(s.trim());
+            return Double.isFinite(d) ? d : Double.NaN;
+        } catch (NumberFormatException e) {
+            return Double.NaN;
+        }
+    }
+
+    private static void warnOnce(String what, @Nullable String raw) {
+        if (WARNED.size() < 256 && WARNED.add(what + "|" + raw)) {
+            LOG.warn("GeoEvents: a {} keyframe that can't be read is skipped: \"{}\"", what, raw);
+        }
     }
 
     public static <T extends LivingEntity & GeoEntity> void spawnParticles(KeyFrameEvent<T, ParticleKeyframeData> event) {
         T e = event.animatable();
         Level level = e.level();
         ParticleKeyframeData data = event.keyframeData();
-        String effect = data.getEffect().trim();
+        String effect = data.getEffect() == null ? "" : data.getEffect().trim();
         int count = 8;
         try {
             count = Integer.parseInt(data.getLocatorName() == null ? "" : data.getLocatorName().trim());
@@ -77,10 +164,12 @@ public final class GeoEvents {
         Vec3 at = e.position().add(0, e.getBbHeight() * 0.5, 0);
         AnimationPoint playing = event.controller().getCurrentAnimationPoint();
         String script = Scripts.of(e, playing == null ? null : playing.animation().name(), data);
-        String[] off = script == null ? new String[0] : script.replace(";", "").split(",");
+        double[] off = offset(script);
+        if (off == null) {
+            return;                                              // a spawn point it can't read (warned once): this keyframe is skipped
+        }
         if (off.length == 3) {
-            double r = Double.parseDouble(off[0].trim()), u = Double.parseDouble(off[1].trim()), f = Double.parseDouble(off[2].trim());
-            at = e.position().add(right.scale(r)).add(forward.scale(f)).add(0, u, 0);
+            at = e.position().add(right.scale(off[0])).add(forward.scale(off[2])).add(0, off[1], 0);
         }
         RandomSource rand = e.getRandom();
         if ("warpfire".equals(effect)) {
@@ -97,7 +186,7 @@ public final class GeoEvents {
         ParticleOptions particle;
         if ("warp".equals(effect)) {
             particle = new DustParticleOptions(WARP_GREEN, 1.6F);
-        } else if (BuiltInRegistries.PARTICLE_TYPE.getValue(Identifier.parse(effect)) instanceof SimpleParticleType simple) {
+        } else if (particleId(effect) instanceof Identifier id && BuiltInRegistries.PARTICLE_TYPE.getValue(id) instanceof SimpleParticleType simple) {
             particle = simple;
         } else {
             return;
@@ -119,7 +208,6 @@ public final class GeoEvents {
      */
     private static final class Scripts {
 
-        private static final Logger LOG = LogUtils.getLogger();
         /** By animation file: by animation name, the scripts by "time|effect|locator". */
         static final Map<Identifier, Map<String, Map<String, String>>> FILES = new HashMap<>();
 

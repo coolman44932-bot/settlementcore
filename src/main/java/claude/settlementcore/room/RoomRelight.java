@@ -61,15 +61,34 @@ public final class RoomRelight {
     private RoomRelight() {
     }
 
+    /**
+     * The room's relight plan, read the first time and kept until the server stops or its data is reloaded (RoomCaches); none when the room ships
+     * no relight file (kept too: most rooms have none). A file that would not read is not kept: it is read again next time, and said once.
+     */
     public static synchronized Plan get(ServerLevel level, String room) {
-        return CACHE.computeIfAbsent(room, k -> load(level, k));
+        Plan held = CACHE.get(room);
+        if (held != null) {
+            return held;
+        }
+        Plan read = load(level, room);
+        if (read == null) {
+            return NONE;
+        }
+        CACHE.put(room, read);
+        return read;
     }
 
+    /** Every plan dropped: the server stopped, or its data was reloaded (RoomCaches), or the tests. */
     public static synchronized void clear() {
         CACHE.clear();
+        FAILED.clear();
     }
 
-    private static Plan load(ServerLevel level, String room) {
+    /** Rooms whose relight file would not read: said so in the log once, until {@link #clear}. */
+    private static final java.util.Set<String> FAILED = new java.util.HashSet<>();
+
+    /** The room's plan, {@link #NONE} when it has no file, or null when its file would not read. */
+    private static @Nullable Plan load(ServerLevel level, String room) {
         Identifier loc = null;
         Optional<Resource> res = Optional.empty();
         for (String ns : Rooms.namespacesFor(room)) {             // the race that registered the room ships its relight
@@ -98,8 +117,10 @@ public final class RoomRelight {
             }
             return new Plan(o.get("version").getAsInt(), List.copyOf(steps));
         } catch (Exception ex) {
-            LOG.error("Under-Empire: failed to read {}", loc, ex);
-            return NONE;
+            if (FAILED.add(room)) {
+                LOG.error("Settlement Core: failed to read {}; it is read again each time it is asked for", loc, ex);
+            }
+            return null;
         }
     }
 

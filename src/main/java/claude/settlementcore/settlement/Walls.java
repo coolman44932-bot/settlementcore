@@ -1,6 +1,7 @@
 package claude.settlementcore.settlement;
 
 import it.unimi.dsi.fastutil.longs.LongArrayFIFOQueue;
+import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import claude.settlementcore.room.WallJob;
 import claude.settlementcore.room.WallStyle;
@@ -166,6 +167,17 @@ public final class Walls {
      * opened again, and only those: a door or a pen gate that was shut stays shut. Returns how many changed.
      */
     public int gates(ServerLevel level, boolean shut) {
+        return gates(level, shut, g -> false);
+    }
+
+    /**
+     * {@link #gates(ServerLevel, boolean)}, where opening leaves shut, and kept as shut by it, every gate {@code held} names (another
+     * settlement inside the same walls still alarmed: SettlementBlockEntity#shutGates) and every gate whose chunk is not loaded. Before, the
+     * all-clear forgot both: a gate out of the loaded ground stayed shut for good, and one heart's all-clear opened the gates of a ring another
+     * heart in it was still fighting at. A kept gate is opened by a later call (SettlementBlockEntity#second asks every second while
+     * {@link #anyShut}). A kept gate gone (broken, or opened by a hand) is let go.
+     */
+    public int gates(ServerLevel level, boolean shut, java.util.function.LongPredicate held) {
         int n = 0;
         if (shut) {
             for (long g : gates) {
@@ -176,18 +188,28 @@ public final class Walls {
             }
             return n;
         }
-        for (long g : shutByUs) {
-            if (flip(level, BlockPos.of(g), true)) {
+        for (LongIterator i = shutByUs.iterator(); i.hasNext(); ) {
+            long g = i.nextLong();
+            BlockPos p = BlockPos.of(g);
+            if (!level.isLoaded(p) || held.test(g)) {
+                continue;                                        // kept: opened when its chunk is back, or once the other's alarm is over
+            }
+            if (flip(level, p, true)) {
                 n++;
             }
+            i.remove();
         }
-        shutByUs.clear();
         return n;
     }
 
-    /** Whether gates it shut are still shut (a restart mid-alarm: the muster is not saved, so nothing would open them). */
+    /** Whether gates it shut are still shut (a restart mid-alarm: the muster is not saved, so nothing would open them; or kept, {@link #gates}). */
     public boolean anyShut() {
         return !shutByUs.isEmpty();
+    }
+
+    /** Whether the gate at {@code g} (packed) is one of its ring's (the last scan met it) or one it shut. */
+    public boolean hasGate(long g) {
+        return gates.contains(g) || shutByUs.contains(g);
     }
 
     /** The gate at {@code p} opened ({@code open}) or shut, if it is a gate a hand works and isn't so already. */

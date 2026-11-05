@@ -9,6 +9,7 @@ import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.ai.goal.Goal;
+import net.minecraft.world.level.pathfinder.Path;
 import net.minecraft.world.level.levelgen.structure.BoundingBox;
 import org.jetbrains.annotations.Nullable;
 
@@ -22,12 +23,14 @@ import java.util.EnumSet;
  */
 public class CrewGoal extends Goal {
 
-    private static final int GIVE_UP = 400;
-
     private final SettlerMob rat;
     @Nullable private Chore chore;
     @Nullable private RoomWork room;
-    private int stuck;
+    /** Whether the walk to the chore still gets anywhere (it gives the chore up when not). */
+    private final Approach approach = new Approach();
+    /** The path it walked last tick and the node it was making for, to see the path advance. */
+    @Nullable private Path lastPath;
+    private int lastNode;
     private int worked;
     private int nextTry;
     private int nextPath;
@@ -110,13 +113,13 @@ public class CrewGoal extends Goal {
                         + "worked={} navDone={} target={} broken={} goals={}",
                 h == null ? "?" : h.getBlockPos().toShortString(), sl.getGameTime(), rat.getId(), event, chore.what, chore.at.toShortString(),
                 chore.follow == null ? "-" : chore.follow.getType().toShortString() + "#" + chore.follow.getId(),
-                String.format("%.1f,%.1f,%.1f", rat.getX(), rat.getY(), rat.getZ()), rat.onGround(), stuck, worked,
+                String.format("%.1f,%.1f,%.1f", rat.getX(), rat.getY(), rat.getZ()), rat.onGround(), approach.idle(), worked,
                 rat.getNavigation().isDone(), rat.getTarget(), rat.isBroken(), rat.runningGoals());
     }
 
     @Override
     public void start() {
-        stuck = 0;
+        resetApproach();
         worked = 0;
         nextPath = 0;
         nextSwing = 0;
@@ -128,7 +131,9 @@ public class CrewGoal extends Goal {
 
     @Override
     public boolean canContinueToUse() {
-        return chore != null && rat.isCrew() && !rat.isBroken() && rat.getTarget() == null && !rat.isBurrowing();
+        return chore != null && rat.isCrew() && !rat.isBroken() && rat.getTarget() == null && !rat.isBurrowing()
+                && !rat.isHomeward();                            // sent home (its leave timed out in tick()): the chore ends here, though no
+                                                                 // goal of the race's takes MOVE from it
     }
 
     @Override
@@ -173,7 +178,7 @@ public class CrewGoal extends Goal {
                     rat.getNavigation().moveTo(path, 1.0);
                 }
             }
-            if (++stuck > GIVE_UP) {
+            if (approach.tick(Math.sqrt(dx * dx + dz * dz + dy * dy), rat.getX(), rat.getY(), rat.getZ(), pathAdvanced())) {
                 trace("unreachable");
                 giveUp(sl, true);                                // lost its way: give it up (set aside a while), and the load back
             }
@@ -200,6 +205,92 @@ public class CrewGoal extends Goal {
             rat.setDigging(false);
             trace("done");
             done(sl, chore.finish(sl, rat));
+        }
+    }
+
+    private void resetApproach() {
+        approach.reset();
+        lastPath = null;
+        lastNode = 0;
+    }
+
+    /** Whether the rat's path goes all the way to the chore and it passed a node of it since last tick. */
+    private boolean pathAdvanced() {
+        Path path = rat.getNavigation().getPath();
+        boolean advanced = path != null && path == lastPath && path.canReach() && path.getNextNodeIndex() > lastNode;
+        lastPath = path;
+        lastNode = path == null ? 0 : path.getNextNodeIndex();
+        return advanced;
+    }
+
+    /**
+     * The walk to a chore, tick by tick out of reach of it: whether it still gets anywhere. A settler gives a chore up as
+     * unreachable after {@link #GIVE_UP} ticks without progress, not {@link #GIVE_UP} ticks of walking: before this (to
+     * 0.5.5) a chore more than 20 s away (some 48 blocks, a drift on a deep level, a far batch on a big site) was given up
+     * though the settler was still closing in, shelved, the settler maybe burrowed off, and the next far chore went the same.
+     * <ul>
+     * <li>Progress is coming {@link #CLOSER} closer to the chore than it has ever been on this leg. That can't last for ever
+     * (the distance only falls), so a settler closing in never gives up, and one that only paces back and forth does.</li>
+     * <li>So is passing a node of a path that reaches the chore, having moved {@link #MOVED} since the last progress: a
+     * detour that leads away from the chore first (round a wall, up a stair). This counts only for the first
+     * {@link #DETOUR} ticks of a leg, so a rat walking in circles on a path it never finishes still gives up.</li>
+     * </ul>
+     * Public for its test (test/CrewApproachGameTests).
+     */
+    public static final class Approach {
+        /** Ticks without progress before the chore is given up. */
+        public static final int GIVE_UP = 400;
+        /** Blocks closer than ever before that count as progress. */
+        public static final double CLOSER = 1.0;
+        /** Blocks moved since the last progress before passing a path node counts as progress. */
+        public static final double MOVED = 1.0;
+        /** Ticks of a leg in which passing a node counts at all. */
+        public static final int DETOUR = 2400;
+
+        private double best;
+        private double markX, markY, markZ;
+        private int idle;
+        private int walked;
+
+        public Approach() {
+            reset();
+        }
+
+        /** A new leg. */
+        public void reset() {
+            best = Double.MAX_VALUE;
+            idle = 0;
+            walked = 0;
+        }
+
+        /** Ticks since the last progress. */
+        public int idle() {
+            return idle;
+        }
+
+        /**
+         * One tick out of reach, {@code dist} blocks from the chore, standing at x, y, z; {@code pathAdvanced}: it passed a node
+         * of a path that reaches the chore. True when the chore is to be given up.
+         */
+        public boolean tick(double dist, double x, double y, double z, boolean pathAdvanced) {
+            boolean moved = (x - markX) * (x - markX) + (y - markY) * (y - markY) + (z - markZ) * (z - markZ) >= MOVED * MOVED;
+            if (dist < best - CLOSER) {                          // (the first tick of a leg too: best starts at MAX_VALUE)
+                best = dist;
+                mark(x, y, z);
+            } else if (pathAdvanced && walked < DETOUR && moved) {
+                mark(x, y, z);
+            } else {
+                idle++;
+            }
+            walked++;
+            return idle > GIVE_UP;
+        }
+
+        private void mark(double x, double y, double z) {
+            idle = 0;
+            markX = x;
+            markY = y;
+            markZ = z;
         }
     }
 
@@ -261,7 +352,7 @@ public class CrewGoal extends Goal {
             room.claim(next.claim, sl.getGameTime());
             rat.crewDoing = next.what;
             worked = 0;
-            stuck = 0;
+            resetApproach();
             nextPath = 0;
             nextSwing = 0;
         } else {

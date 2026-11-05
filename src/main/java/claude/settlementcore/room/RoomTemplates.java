@@ -56,8 +56,25 @@ public final class RoomTemplates {
     /** What a client has read ({@link #lookup}): a render thread's own, apart from the server's {@link #CACHE}. */
     private static final Map<String, List<Entry>> CLIENT_CACHE = new ConcurrentHashMap<>();
 
+    /**
+     * Ids whose template could not be read (no file, or one that would not read): said so in the log once, until the next reload or stop. A failed
+     * read is never kept: it is tried again the next time it is asked for. Before, it was kept as an empty template until the tests cleared it,
+     * so a dig of the room had no cells and was done at once, for as long as the server ran.
+     */
+    private static final Set<String> FAILED = new HashSet<>();
+
+    /** The template of {@code id}, read from the server's resources the first time and kept (until {@link #reloaded} or {@link #clear}); a failed read is empty and not kept. */
     public static List<Entry> get(ServerLevel level, String id) {
-        return CACHE.computeIfAbsent(id, k -> load(level, k));
+        List<Entry> held = CACHE.get(id);
+        if (held != null) {
+            return held;
+        }
+        List<Entry> read = load(level, id);
+        if (read == null) {
+            return List.of();                                     // not kept: read again next time
+        }
+        CACHE.put(id, read);
+        return read;
     }
 
     /**
@@ -126,10 +143,23 @@ public final class RoomTemplates {
         return CACHE.containsKey(id);
     }
 
+    /** Every template dropped, the server's and a client's (and their prints): the server stopped (RoomCaches), or the tests. */
     public static void clear() {
         CACHE.clear();
         CLIENT_CACHE.clear();
         PRINTS.clear();
+        FAILED.clear();
+    }
+
+    /**
+     * The server's data was reloaded (/reload, RoomCaches): every template read from its resources is dropped, and read again when next asked, so a
+     * datapack's override of a room's template comes in; one given by hand ({@link #put}) is no file's, and stays. A dig under way keeps the task
+     * list it built: it reads the template again only when it is loaded, and finds from the print that the room changed (DigJob#ensureLoaded).
+     */
+    public static void reloaded() {
+        CACHE.keySet().retainAll(HAND);
+        PRINTS.keySet().retainAll(HAND);
+        FAILED.clear();
     }
 
     /**
@@ -165,17 +195,24 @@ public final class RoomTemplates {
      * that the room was changed under it (DigJob#ensureLoaded).
      */
     public static int print(ServerLevel level, String id) {
-        return PRINTS.computeIfAbsent(id, k -> {
-            int h = 1;
-            for (Entry e : get(level, k)) {
-                h = 31 * h + Long.hashCode(e.local().asLong());
-                h = 31 * h + net.minecraft.world.level.block.Block.getId(e.state());
-            }
-            return h == 0 ? 1 : h;
-        });
+        Integer held = PRINTS.get(id);
+        if (held != null) {
+            return held;
+        }
+        int h = 1;
+        for (Entry e : get(level, id)) {
+            h = 31 * h + Long.hashCode(e.local().asLong());
+            h = 31 * h + net.minecraft.world.level.block.Block.getId(e.state());
+        }
+        h = h == 0 ? 1 : h;
+        if (CACHE.containsKey(id)) {
+            PRINTS.put(id, h);                                    // a failed read's print is not kept either
+        }
+        return h;
     }
 
-    private static List<Entry> load(ServerLevel level, String id) {
+    /** The template of {@code id} from the server's resources, or null when it can't be read (logged once, {@link #FAILED}). */
+    private static @Nullable List<Entry> load(ServerLevel level, String id) {
         List<Entry> made = Rooms.madeCells(id);
         if (made != null) {
             return made;                                          // a room made in code (Rooms#family): no file to read
@@ -192,13 +229,19 @@ public final class RoomTemplates {
         }
         List<Entry> out = new ArrayList<>();
         if (res.isEmpty()) {
-            LOG.error("Under-Empire: missing room template structure/room/{}.nbt (looked in {}; it belongs in {})", id, tried, tried.get(0));
-            return out;
+            if (FAILED.add(id)) {
+                LOG.error("Settlement Core: missing room template structure/room/{}.nbt (looked in {}; it belongs in {}); it is looked for again "
+                        + "each time it is asked for", id, tried, tried.get(0));
+            }
+            return null;
         }
         try (InputStream in = res.get().open()) {
             out.addAll(entries(in, level.holderLookup(Registries.BLOCK)));
         } catch (Exception e) {
-            LOG.error("Under-Empire: failed to read room template {}", loc, e);
+            if (FAILED.add(id)) {
+                LOG.error("Settlement Core: failed to read room template {}; it is read again each time it is asked for", loc, e);
+            }
+            return null;
         }
         return out;
     }

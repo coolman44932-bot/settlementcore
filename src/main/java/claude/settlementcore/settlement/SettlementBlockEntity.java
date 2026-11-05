@@ -200,11 +200,38 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         return takesWalls() ? walls.bounds() : null;
     }
 
+    /**
+     * The ring's gates shut, or the ones it shut opened again. A gate is opened only when no other loaded settlement whose walls have it (its
+     * ring met it, or it shut it) is alarmed: two hearts inside one ring, and the first one's all-clear opened every gate while the second was
+     * still under attack (it found them shut, so it had shut none). Such a gate stays shut, kept as this one's, and opens at a later second once
+     * the other has stood down ({@link #second}); so does one whose chunk is not loaded (Walls#gates).
+     */
     @Override
     public void shutGates(ServerLevel level, boolean shut) {
-        if (takesWalls() && walls.gates(level, shut) > 0) {
+        if (takesWalls() && walls.gates(level, shut, shut ? g -> false : heldByOthers(level)) > 0) {
             setChanged();                                        // which it shut is saved
         }
+    }
+
+    /** The gates another loaded settlement of this level still wants shut: it takes walls, its alarm is up, and its walls have the gate. */
+    private java.util.function.LongPredicate heldByOthers(ServerLevel level) {
+        List<SettlementBlockEntity> alarmed = new ArrayList<>(0);
+        for (Settlement o : SettlementSpawns.loaded(level)) {
+            if (o != this && o instanceof SettlementBlockEntity b && b.takesWalls() && b.muster.alarmed()) {
+                alarmed.add(b);
+            }
+        }
+        if (alarmed.isEmpty()) {
+            return g -> false;                                   // the common case: one heart, or none other alarmed
+        }
+        return g -> {
+            for (SettlementBlockEntity b : alarmed) {
+                if (b.walls.hasGate(g)) {
+                    return true;
+                }
+            }
+            return false;
+        };
     }
 
     @Override
@@ -308,8 +335,10 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         if (takesWalls() && sec % Walls.SCAN_SECONDS == 7) {
             mendWalls(level);
         }
+        // gates it shut, saved mid-alarm or kept at the all-clear (their chunk not loaded, another heart in the ring alarmed): no alarm now, so
+        // open what can be opened (Walls#gates)
         if (takesWalls() && !muster.alarmed() && walls.anyShut()) {
-            shutGates(level, false);                             // shut when it was saved mid-alarm: no alarm now, so open
+            shutGates(level, false);
         }
         ration.second(level, this, eatsPerSecond());
         if (relightsRooms() && sec % 5 == 3) {
@@ -536,7 +565,11 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         return spoils;
     }
 
-    /** Into the spoils pile, stacked onto what is there (the pile holds at most MAX_SPOIL_STACKS stacks). */
+    /**
+     * Into the spoils pile, stacked onto what is there (the pile holds at most MAX_SPOIL_STACKS stacks). What the full pile has no room for is
+     * never lost: it is put away as a crew settler's load is (Works#stow: the Hoard, else on the ground at the heart, else owed to it). Before,
+     * it was dropped from the game: a failed making's give-back (Crafter), a meal's bowl (Larder#draw).
+     */
     @Override
     public void addSpoil(ItemStack st) {
         for (ItemStack have : spoils) {
@@ -551,6 +584,12 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         }
         if (!st.isEmpty() && spoils.size() < MAX_SPOIL_STACKS) {
             spoils.add(st);
+        } else if (!st.isEmpty()) {
+            if (level instanceof ServerLevel sl) {
+                works().stow(sl, st, "");                        // its spoils step finds the pile full: no call back here
+            } else {
+                spoils.add(st);                                  // no world to put it in: over the cap, rather than gone
+            }
         }
         setChanged();
     }

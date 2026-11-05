@@ -95,6 +95,13 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
      * run again (each try would throw, every unit, every frame) until resources reload (which makes new renderers).
      */
     private boolean clipsMissing;
+    /**
+     * Whether GeoEntityRenderer's internals this renderer reaches into ({@link #fillRenderState} is GeckoLib's @NonExtendable,
+     * captureDefaultRenderState and AnimationProcessor.extractControllerStates its @Internal) turned out to have changed under
+     * it (a GeckoLib past the range mods.toml allows, forced in): then every horde renderer fills its render state as plain
+     * GeckoLib does, without the far-rat savings, rather than crash the client every frame.
+     */
+    private static boolean geckolibChanged;
 
     protected HordeRenderer(EntityRendererProvider.Context ctx, HordeGeoModel<T> model) {
         super(ctx, model);
@@ -111,9 +118,29 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
     /**
      * GeckoLib's own fill, cut short for a far rat: one drawn from its kept model takes nothing past what picks its
      * texture, and one whose pose is held this frame (HordeLod) skips the animation controllers and their Molang.
+     * Plain GeckoLib's fill (with the missing-clip guard) if GeckoLib's internals have changed ({@link #geckolibChanged}).
      */
     @Override
     public R fillRenderState(T rat, @Nullable Void none, R state, float partialTick) {
+        if (!geckolibChanged) {
+            try {
+                return fillHorde(rat, none, state, partialTick);
+            } catch (LinkageError changed) {
+                // a method or class of GeckoLib's that this was compiled against is gone or changed shape
+                geckolibChanged = true;
+                LOG.error("Settlement Core's horde renderer doesn't fit this GeckoLib (it was built against {}); horde units are "
+                        + "drawn as plain GeckoLib draws them from now on, without the far-unit savings", "5.5.2", changed);
+            }
+        }
+        try {
+            return super.fillRenderState(rat, none, state, partialTick);
+        } catch (NoSuchElementException missing) {
+            missingClip(rat, missing);                           // GeckoLib's fill ends with the controllers: the rest is filled,
+            return state;                                        // and the unit stands in its rest pose
+        }
+    }
+
+    private R fillHorde(T rat, @Nullable Void none, R state, float partialTick) {
         captureDefaultRenderState(rat, none, state, partialTick);
         addRenderData(rat, none, state, partialTick);
         getGeoModel().addAdditionalStateData(rat, none, state);
@@ -151,28 +178,48 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
             try {
                 AnimationProcessor.extractControllerStates(rat, state, getGeoModel());
             } catch (NoSuchElementException missing) {
-                // GeckoLib 5.5.2 meets a clip it can't find (or a whole animation file it never loaded) with an empty
-                // timeline and List.getLast, which crashed the client the first time a test race Guard was drawn
-                // (its files were in 4.x's folders). Only that throw is caught; one from a race's own handler isn't.
-                if (!fromEmptyTimeline(missing)) {
-                    throw missing;
-                }
-                clipsMissing = true;
-                LOG.error("{} asked GeckoLib for a clip that {} doesn't have (or GeckoLib never loaded that file: it reads "
-                                + "assets/<ns>/geckolib/animations/); its units stand in their rest pose",
-                        rat.getType(), getGeoModel().getAnimationResource(rat), missing);
+                missingClip(rat, missing);
             }
         }
         return state;
     }
 
-    /** Whether {@code e} is GeckoLib's own throw for a clip it couldn't find (List.getLast in AnimationTimeline.create). */
-    private static boolean fromEmptyTimeline(NoSuchElementException e) {
+    /**
+     * GeckoLib 5.5.2 meets a clip it can't find (or a whole animation file it never loaded) with an empty timeline and
+     * List.getLast, which crashed the client the first time a test race Guard was drawn (its files were in 4.x's folders).
+     * Only GeckoLib's own throw is caught: one from a race's own handler isn't.
+     */
+    private void missingClip(T rat, NoSuchElementException missing) {
+        if (!fromGeckoLib(missing)) {
+            throw missing;
+        }
+        if (clipsMissing) {
+            return;                                              // (said once: plain GeckoLib's fill, after a change, meets it every frame)
+        }
+        clipsMissing = true;
+        LOG.error("{} asked GeckoLib for a clip that {} doesn't have (or GeckoLib never loaded that file: it reads "
+                        + "assets/<ns>/geckolib/animations/); its units stand in their rest pose",
+                rat.getType(), getGeoModel().getAnimationResource(rat), missing);
+    }
+
+    /**
+     * Whether {@code e} is GeckoLib's own throw for a clip it couldn't find: List.getLast in AnimationTimeline.create (5.5.2),
+     * or, should a later GeckoLib move that, thrown from GeckoLib's code itself (the first frame past the JDK's is in
+     * com.geckolib), so a renamed method doesn't bring the crash back. A throw from a race's own handler starts in the race.
+     */
+    static boolean fromGeckoLib(NoSuchElementException e) {
         StackTraceElement[] at = e.getStackTrace();
         for (int i = 0; i < Math.min(3, at.length); i++) {
             if (at[i].getClassName().equals("com.geckolib.animation.state.AnimationTimeline") && at[i].getMethodName().equals("create")) {
                 return true;
             }
+        }
+        for (StackTraceElement frame : at) {
+            String c = frame.getClassName();
+            if (c.startsWith("java.") || c.startsWith("jdk.") || c.startsWith("sun.")) {
+                continue;
+            }
+            return c.startsWith("com.geckolib.");
         }
         return false;
     }

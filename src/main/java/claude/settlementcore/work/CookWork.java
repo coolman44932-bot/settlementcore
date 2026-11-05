@@ -87,11 +87,22 @@ public class CookWork extends RoomWork {
     static boolean roastable(ItemStack s) {
         return !s.isEmpty() && s.has(net.minecraft.core.component.DataComponents.FOOD) && !cookedMeat(s)
                 && claude.settlementcore.food.Fare.grade(s) <= claude.settlementcore.food.Fare.RAW
-                && ROASTS.get() != null && ROASTS.get().test(s);
+                && roasts(s);
     }
 
-    /** Set per server on first use: whether a food has a campfire recipe. */
-    static final java.util.concurrent.atomic.AtomicReference<Predicate<ItemStack>> ROASTS = new java.util.concurrent.atomic.AtomicReference<>();
+    /**
+     * Whether a food has a campfire recipe on the server running now (its overworld's recipes, as they are since the last /reload). Nothing is
+     * kept: before, a static predicate was set once with the first level a kitchen scanned, so a singleplayer world switch kept the old world's
+     * level and server alive, and asked the old world's recipes. Off the server's thread (no server, or a client's): no.
+     */
+    static boolean roasts(ItemStack s) {
+        net.minecraft.server.MinecraftServer server = net.neoforged.neoforge.server.ServerLifecycleHooks.getCurrentServer();
+        if (server == null || !server.isSameThread()) {
+            return false;
+        }
+        ServerLevel level = server.overworld();
+        return level != null && level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(s), level).isPresent();
+    }
 
     static ItemStack roasted(ServerLevel level, ItemStack raw) {
         return level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(raw), level)
@@ -143,9 +154,6 @@ public class CookWork extends RoomWork {
 
     @Override
     protected void scan(ServerLevel level) {
-        if (ROASTS.get() == null) {
-            ROASTS.set(s -> level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(s), level).isPresent());
-        }
         var box = box();
         if (!loaded(level, box)) {
             return;                                              // not all of it loaded: what it found last stands (no chunk is loaded to look)

@@ -336,6 +336,7 @@ public interface Settlement extends RoomShoring.Warren {
     /** What its digs turned up, kept at the heart. */
     List<ItemStack> spoils();
 
+    /** Onto the spoils pile; what a full pile ({@link #MAX_SPOIL_STACKS}) has no room for is put away elsewhere, never lost. */
     void addSpoil(ItemStack st);
 
     /** A haul logged: {@code n} of {@code item} from one place to another (core/ledger/HaulLog). */
