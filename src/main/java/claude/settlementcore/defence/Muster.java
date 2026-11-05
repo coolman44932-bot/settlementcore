@@ -194,6 +194,13 @@ public final class Muster {
     /** Every second, from the Heart. */
     public void second(ServerLevel level, Settlement h) {
         if (!CoreConfig.muster.getAsBoolean() || h.owner() == null) {
+            // no muster to run (turned off, or no owner): an alarm loaded from a save, or left on when it was turned off, stands down, and
+            // those out are pruned, so the gates open and none is counted out for good (the review of ebfe243)
+            if (alarmed) {
+                standDown(level, h);
+            }
+            prune(level, homeward);
+            prune(level, defenders);
             return;
         }
         Map<Integer, Footing.Known> known = new HashMap<>();   // what the floods found about the foes, a body height to a Known

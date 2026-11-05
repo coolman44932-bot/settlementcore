@@ -904,6 +904,15 @@ public final class Works {
      * A crew settler about to be discarded by the Works (strayed, recalled, its room gone) hands what it carries back first ({@link #stow}), and its
      * hand is emptied. Before, the load went with it: a Hoard-keeper's 64-stack, a furnace crew's smelt.
      */
+    /** Every loaded crew settler's load back into the settlement (the server stopping: OwedLoads#stopping). */
+    public void handBackAll(ServerLevel level) {
+        for (var e : new ArrayList<>(crew.entrySet())) {
+            if (level.getEntity(e.getKey()) instanceof SettlerMob r && r.isAlive()) {
+                handBack(level, r, rooms.get(e.getValue()));
+            }
+        }
+    }
+
     private void handBack(ServerLevel level, SettlerMob r, @Nullable RoomWork w) {
         ItemStack held = r.carried();
         if (held.isEmpty()) {
@@ -1088,6 +1097,20 @@ public final class Works {
                     s.works().stow(level, l.stack(), "");
                 } else {
                     drop(level, net.minecraft.world.phys.Vec3.atBottomCenterOf(l.heart().above()), l.stack());
+                }
+            }
+        }
+
+        /**
+         * The server stopping: every loaded settlement's crew hand their loads back now, into its stores, before the levels save. Unsaved crew
+         * are never untracked at close on 26.1, so the hand-back hook doesn't fire for them, and their loads went with them (the review of
+         * ebfe243). Back after the load, the Works refund them as ever.
+         */
+        @net.neoforged.bus.api.SubscribeEvent
+        static void stopping(net.neoforged.neoforge.event.server.ServerStoppingEvent e) {
+            for (ServerLevel level : e.getServer().getAllLevels()) {
+                for (Settlement s : claude.settlementcore.settlement.SettlementSpawns.loaded(level)) {
+                    s.works().handBackAll(level);
                 }
             }
         }
