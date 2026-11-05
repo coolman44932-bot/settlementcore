@@ -1,0 +1,1 @@
+REVIEW PASS cf6dacd60cd3e7d58abc1263f688377cee579bf1: homeward units are now counted once in the settlement core's teeming() and in countDefenders, with no double count in the Waaagh! Idol diff and no caller relying on the old meaning; at worst a unit is counted twice for 1 s, the cost O(defenders). (fix-reviewer, 2026-11-04)
