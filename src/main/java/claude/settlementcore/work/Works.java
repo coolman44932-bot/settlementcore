@@ -729,6 +729,8 @@ public final class Works {
             }
             fromReserve.remove(r.getUUID());
             clanratCrew.remove(r.getUUID());
+            r.makeCrew(null);                                    // no crew any more on itself too: saved as any defender, and its
+            r.getNavigation().stop();                            // CrewGoal won't send it back to the dig mid-alarm (the review of 5969e3f)
             out.add(r);
         }
         if (!out.isEmpty()) {

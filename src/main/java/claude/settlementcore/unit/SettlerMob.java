@@ -311,8 +311,8 @@ public abstract class SettlerMob extends PathfinderMob {
     /** One of a work room's crew. */
     public abstract boolean isCrew();
 
-    /** Up out of the reserve to work the room whose door is {@code room}. */
-    public abstract void makeCrew(BlockPos room);
+    /** Up out of the reserve to work the room whose door is {@code room}; null: no room's crew any more (Works#draft, the muster's). */
+    public abstract void makeCrew(@Nullable BlockPos room);
 
     /** The door of the room it works, if it is crew. */
     @Nullable
