@@ -32,13 +32,14 @@ import java.util.UUID;
  *
  * <p>Each digger's chore is a batch of up to {@value #BATCH} cells claimed near where it stands ({@link DigJob#claim}), dug bite by
  * bite on its swings, about {@value #TICKS_PER_BLOCK} ticks a cell over its tempo; the cells the template furnishes (its walls,
- * pillars, lamps, tables) go in the same way. It wants {@value #CREW_MAX} diggers at most, one per {@value #CELLS_PER_DIGGER} cells
- * still to do. With no digger to come (an empty reserve), or the crew getting nowhere for {@value #STALL_SECONDS} s (a cell nobody
+ * pillars, lamps, tables) go in the same way. It wants one digger per {@value #CELLS_PER_DIGGER} cells still to do, as many as the
+ * reserve has: no cap since 0.5.6 (the user, 2026-11-04: "shouldnt miners have no cap too", as the Skaven's horde dug in 1.21.1; the cap
+ * of 6 left 12 Miners waiting in the deeps while 6 dug a Great Hall). DigJob#claim spreads them along the face, so a crowd doesn't
+ * queue for the same cells. With no digger to come (an empty reserve), or the crew getting nowhere for {@value #STALL_SECONDS} s (a cell nobody
  * can stand to), the settlement digs on itself, {@value #SELF_PER_SECOND} cells a second in dig order, so a dig never stalls for good.
  */
 public final class DigWork extends RoomWork {
 
-    public static final int CREW_MAX = 6;
     public static final int CELLS_PER_DIGGER = 40;
     public static final int BATCH = 4;
     public static final int TICKS_PER_BLOCK = 5;
@@ -89,7 +90,7 @@ public final class DigWork extends RoomWork {
             return 0;
         }
         int open = Math.max(0, job.taskCount() - job.finishedCount());
-        return Math.max(1, Math.min(CREW_MAX, (open + CELLS_PER_DIGGER - 1) / CELLS_PER_DIGGER));
+        return Math.max(1, (open + CELLS_PER_DIGGER - 1) / CELLS_PER_DIGGER);   // no cap: the whole reserve may come
     }
 
     /** A digger comes up outside the door, in the space the room opens off, or the nearest cell to stand in there. */

@@ -85,6 +85,10 @@ public class DigWorkGameTests {
         String twice = works.dig(level, pl, true);
         h.assertTrue(twice != null && twice.contains("already"), "a second dig at the same door was not refused: " + twice);
         h.assertTrue(works.digs().size() == 1, "not one dig: " + works.digs().size());
+        // no cap on the crew since 0.5.6: one digger per 40 cells still to do, the whole reserve if it has them (245 cells: 7, not 6)
+        int want = works.digs().get(0).crewWanted();
+        h.assertTrue(want == (7 * 5 * 7 + DigWork.CELLS_PER_DIGGER - 1) / DigWork.CELLS_PER_DIGGER && want > 6,
+                "a 245-cell dig wants " + want + " diggers, not one per " + DigWork.CELLS_PER_DIGGER + " cells");
 
         for (int sec = 0; sec < 200 && !works.digs().isEmpty(); sec++) {
             works.second(level, sec);                            // its reserve empty: the settlement digs it out itself
