@@ -136,4 +136,48 @@ public class CrewApproachGameTests {
         h.assertTrue(a.tick(10, 0, 0, 0, false), "did not give up after " + (CrewGoal.Approach.GIVE_UP + 1) + " idle ticks");
         h.succeed();
     }
+
+    /**
+     * The tail of a big dig (Khazuk!'s Great Hall, 2026-11-04: shown 100% at tick 9600, dug out at 10602, where the build before it had it
+     * at 9682). A digger whose stand it can't get into reach of, lapping a pillar: a lap is a path of 25 nodes that reaches its stand, a
+     * node passed every 8 ticks, and at the end of each lap (the walk done, in reach of nothing) CrewGoal makes a fresh path. It gets no
+     * nearer the chore than 10 blocks. Credit for every node passed (to this fix) kept it at it for DETOUR + GIVE_UP ticks, 2800, its
+     * claim long expired (DigJob: 600 ticks) and the cells it left with it; credit for getting nearer the end of a path than ever
+     * gives it up within GIVE_UP + two laps.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "unitlogic")
+    public static void aDiggerLappingAPillarOnFreshPathsGivesUpNearlyAsSoonAsFlat(GameTestHelper h) {
+        int lap = 200;                                           // ticks a lap of 25 nodes takes: 8 ticks a node
+        CrewGoal.Approach a = new CrewGoal.Approach();
+        int at = -1;
+        for (int t = 0; t < 6000 && at < 0; t++) {
+            double angle = (t % lap) / (double) lap * 2 * Math.PI;
+            double x = 4 * Math.cos(angle), z = 4 * Math.sin(angle);
+            int left = 25 - (t % lap) / 8;                       // nodes of this lap's path still to go
+            if (a.tick(Math.sqrt((x - 14) * (x - 14) + z * z), x, 0, z, left)) {
+                at = t;
+            }
+        }
+        int most = CrewGoal.Approach.GIVE_UP + 2 * lap;
+        h.assertTrue(at > 0 && at <= most, "a digger lapping a pillar on fresh paths gave its chore up at tick " + at + " (flat rule: "
+                + (CrewGoal.Approach.GIVE_UP + 1) + "; at most " + most + "; with every node counted: "
+                + (CrewGoal.Approach.DETOUR + CrewGoal.Approach.GIVE_UP + 1) + ")");
+        h.succeed();
+    }
+
+    /** One long path, nodes falling the whole way and no nearer the chore for the first 600 ticks: kept, as the long walks are. */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "unitlogic")
+    public static void aDiggerOnOneLongDetourPathIsStillKept(GameTestHelper h) {
+        CrewGoal.Approach a = new CrewGoal.Approach();
+        for (int t = 0; t < 2000; t++) {
+            double w = t * PACE;                                 // out 40 blocks along a wall, back 40 on the far side: 667 ticks
+            double x = w < 40 ? 0 : 5, z = w < 40 ? w : 80 - w;
+            if (w >= 80) {
+                break;
+            }
+            int left = 80 - (int) w;
+            h.assertTrue(!a.tick(Math.sqrt((x - 5) * (x - 5) + z * z), x, 0, z, left), "gave up the detour at tick " + t + " with " + left + " nodes left");
+        }
+        h.succeed();
+    }
 }

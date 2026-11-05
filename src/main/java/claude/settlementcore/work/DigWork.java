@@ -44,6 +44,8 @@ public final class DigWork extends RoomWork {
     public static final int BATCH = 4;
     public static final int TICKS_PER_BLOCK = 5;
     public static final int SELF_PER_SECOND = 4;
+    /** A stalled dig with this many cells or fewer left is dug on to the end by the settlement itself. */
+    public static final int TAIL = 600;
     public static final int STALL_SECONDS = 10;
     /** How far across from the work a digger's stand may be. */
     static final int STAND_ACROSS = 3;
@@ -144,7 +146,11 @@ public final class DigWork extends RoomWork {
         still = done == seen ? still + 1 : 0;
         seen = done;
         if (crewHere > 0 && still >= STALL_SECONDS) {
-            selfLeft = STALL_SECONDS * 3;                        // the crew got nowhere: the settlement digs on for 30 s, then looks again
+            // the crew got nowhere: the settlement digs on for 30 s, then looks again; in the dig's tail (TAIL cells or fewer left) it digs
+            // on to the end, since its own digging counts as progress and would otherwise cost a fresh 10 s wait after every 30 s (the Great
+            // Hall's last cells took ~1000 ticks: the diagnosis of 55438d6's long run)
+            int open = job.taskCount() - done;
+            selfLeft = open <= TAIL ? (open + SELF_PER_SECOND - 1) / SELF_PER_SECOND + 1 : STALL_SECONDS * 3;
             still = 0;
         }
         if (crewHere == 0 && heart.reserveWorkers() <= 0 || selfLeft > 0) {
@@ -294,6 +300,6 @@ public final class DigWork extends RoomWork {
     @Override
     public void describe(ServerLevel level, List<Component> out) {
         job.ensureLoaded(level);
-        out.add(Component.literal(room().displayName() + " (being dug): " + Math.round(job.progress() * 100) + "% dug").withStyle(ChatFormatting.DARK_GREEN));
+        out.add(Component.literal(room().displayName() + " (being dug): " + (int) Math.floor(job.progress() * 100) + "% dug").withStyle(ChatFormatting.DARK_GREEN));
     }
 }

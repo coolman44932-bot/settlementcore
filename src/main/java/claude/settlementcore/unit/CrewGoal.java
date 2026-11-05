@@ -28,9 +28,6 @@ public class CrewGoal extends Goal {
     @Nullable private RoomWork room;
     /** Whether the walk to the chore still gets anywhere (it gives the chore up when not). */
     private final Approach approach = new Approach();
-    /** The path it walked last tick and the node it was making for, to see the path advance. */
-    @Nullable private Path lastPath;
-    private int lastNode;
     private int worked;
     private int nextTry;
     private int nextPath;
@@ -178,7 +175,7 @@ public class CrewGoal extends Goal {
                     rat.getNavigation().moveTo(path, 1.0);
                 }
             }
-            if (approach.tick(Math.sqrt(dx * dx + dz * dz + dy * dy), rat.getX(), rat.getY(), rat.getZ(), pathAdvanced())) {
+            if (approach.tick(Math.sqrt(dx * dx + dz * dz + dy * dy), rat.getX(), rat.getY(), rat.getZ(), pathLeft())) {
                 trace("unreachable");
                 giveUp(sl, true);                                // lost its way: give it up (set aside a while), and the load back
             }
@@ -210,17 +207,12 @@ public class CrewGoal extends Goal {
 
     private void resetApproach() {
         approach.reset();
-        lastPath = null;
-        lastNode = 0;
     }
 
-    /** Whether the rat's path goes all the way to the chore and it passed a node of it since last tick. */
-    private boolean pathAdvanced() {
+    /** How many nodes the rat's path has still to go, when it goes all the way to the chore; -1 when it has none, or one that falls short. */
+    private int pathLeft() {
         Path path = rat.getNavigation().getPath();
-        boolean advanced = path != null && path == lastPath && path.canReach() && path.getNextNodeIndex() > lastNode;
-        lastPath = path;
-        lastNode = path == null ? 0 : path.getNextNodeIndex();
-        return advanced;
+        return path != null && path.canReach() ? Math.max(0, path.getNodeCount() - path.getNextNodeIndex()) : -1;
     }
 
     /**
@@ -231,9 +223,11 @@ public class CrewGoal extends Goal {
      * <ul>
      * <li>Progress is coming {@link #CLOSER} closer to the chore than it has ever been on this leg. That can't last for ever
      * (the distance only falls), so a settler closing in never gives up, and one that only paces back and forth does.</li>
-     * <li>So is passing a node of a path that reaches the chore, having moved {@link #MOVED} since the last progress: a
-     * detour that leads away from the chore first (round a wall, up a stair). This counts only for the first
-     * {@link #DETOUR} ticks of a leg, so a rat walking in circles on a path it never finishes still gives up.</li>
+     * <li>So is getting nearer the end of a path that reaches the chore than ever on this leg (fewer nodes left than at any time
+     * before), having moved {@link #MOVED} since the last progress: a detour that leads away from the chore first (round a wall, up a
+     * stair). The nodes left only fall along one path, but a fresh path starts them high again, so a settler pacing a loop and making
+     * a new path at each lap gets no credit for it (it did, for {@link #DETOUR} ticks a leg, when any passed node counted: a digger
+     * lapping a pillar for 2800 ticks where the flat rule gave up at 400). {@link #DETOUR} still caps what the credit can add.</li>
      * </ul>
      * Public for its test (test/CrewApproachGameTests).
      */
@@ -251,6 +245,7 @@ public class CrewGoal extends Goal {
         private double markX, markY, markZ;
         private int idle;
         private int walked;
+        private int bestLeft;
 
         public Approach() {
             reset();
@@ -261,6 +256,7 @@ public class CrewGoal extends Goal {
             best = Double.MAX_VALUE;
             idle = 0;
             walked = 0;
+            bestLeft = Integer.MAX_VALUE;
         }
 
         /** Ticks since the last progress. */
@@ -269,9 +265,18 @@ public class CrewGoal extends Goal {
         }
 
         /**
-         * One tick out of reach, {@code dist} blocks from the chore, standing at x, y, z; {@code pathAdvanced}: it passed a node
-         * of a path that reaches the chore. True when the chore is to be given up.
+         * One tick out of reach, {@code dist} blocks from the chore, standing at x, y, z; {@code pathLeft}: the nodes left on a path
+         * that reaches the chore (-1: it has none). True when the chore is to be given up.
          */
+        public boolean tick(double dist, double x, double y, double z, int pathLeft) {
+            boolean advanced = pathLeft >= 0 && pathLeft < bestLeft;   // nearer the end of a path than ever on this leg
+            if (pathLeft >= 0) {
+                bestLeft = Math.min(bestLeft, pathLeft);
+            }
+            return tick(dist, x, y, z, advanced);
+        }
+
+        /** {@link #tick(double, double, double, double, int)}, told outright whether the path advanced. */
         public boolean tick(double dist, double x, double y, double z, boolean pathAdvanced) {
             boolean moved = (x - markX) * (x - markX) + (y - markY) * (y - markY) + (z - markZ) * (z - markZ) >= MOVED * MOVED;
             if (dist < best - CLOSER) {                          // (the first tick of a leg too: best starts at MAX_VALUE)
