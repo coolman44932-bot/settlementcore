@@ -29,9 +29,8 @@ It adds nothing by itself: a race mod builds on it."""
 [[dependencies.settlementcore]]
     modId = "geckolib"
     type = "required"
-    # to the next minor only: the horde renderer (client/HordeRenderer) overrides GeckoLib's @NonExtendable fillRenderState and
-    # calls its @Internal captureDefaultRenderState and AnimationProcessor.extractControllerStates, which a minor may change.
-    # Raise geckolib_version past 5.5 and this bound goes with it.
-    versionRange = "[${geckolib_version},5.6)"
+    # any 5.x: the horde renderer (client/HordeRenderer) uses GeckoLib internals a minor may change, and falls back to GeckoLib's own fill
+    # if they did (a LinkageError of GeckoLib's), so a newer 5.x the CurseForge app hands players draws plain rather than refusing to load
+    versionRange = "[${geckolib_version},6)"
     ordering = "NONE"
     side = "BOTH"

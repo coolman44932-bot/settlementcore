@@ -120,13 +120,27 @@ public abstract class HordeRenderer<T extends SettlerMob & GeoEntity, R extends 
      * texture, and one whose pose is held this frame (HordeLod) skips the animation controllers and their Molang.
      * Plain GeckoLib's fill (with the missing-clip guard) if GeckoLib's internals have changed ({@link #geckolibChanged}).
      */
+    /** Whether {@code e} is GeckoLib changed under this: a missing or reshaped method, field or class of GeckoLib's own. */
+    private static boolean geckolibChange(LinkageError e) {
+        if (!(e instanceof NoSuchMethodError || e instanceof NoSuchFieldError || e instanceof IncompatibleClassChangeError
+                || e instanceof NoClassDefFoundError)) {
+            return false;
+        }
+        String m = String.valueOf(e.getMessage());
+        return m.contains("geckolib") || m.contains("com/geckolib") || m.contains("com.geckolib");
+    }
+
     @Override
     public R fillRenderState(T rat, @Nullable Void none, R state, float partialTick) {
         if (!geckolibChanged) {
             try {
                 return fillHorde(rat, none, state, partialTick);
             } catch (LinkageError changed) {
-                // a method or class of GeckoLib's that this was compiled against is gone or changed shape
+                // a method or class of GeckoLib's that this was compiled against is gone or changed shape; anything else (a race's own
+                // class failing to load, its static init throwing) is no GeckoLib change and goes on up (the review of b6f2fa0)
+                if (!geckolibChange(changed)) {
+                    throw changed;
+                }
                 geckolibChanged = true;
                 LOG.error("Settlement Core's horde renderer doesn't fit this GeckoLib (it was built against {}); horde units are "
                         + "drawn as plain GeckoLib draws them from now on, without the far-unit savings", "5.5.2", changed);
