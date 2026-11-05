@@ -1,5 +1,6 @@
 package claude.settlementcore.settlement;
 
+import claude.settlementcore.food.Fare;
 import claude.settlementcore.unit.Footing;
 import claude.settlementcore.unit.SettlerMob;
 import net.minecraft.core.BlockPos;
@@ -79,13 +80,23 @@ public final class Brood {
 
     /**
      * Up to {@code n} more of the reserve, workers or {@code soldier}s, one at a time, each only while the settlement has room for
-     * it and holds the food {@code cost} asks (the food goes out as each is made). Returns how many were made.
+     * it and holds the food {@code cost} asks (the food goes out as each is made). One is made only once its food is paid in full: the
+     * settlement's food counts its larder's containers in unloaded chunks (Larder keeps their counts), which no spend can reach, so a
+     * settlement whose food was all out of reach made its people for nothing, every round, up to its cap (the bug audit of 2026-11-04). A
+     * spend short of the cost goes back into the ration (as slop, the grade a spend takes first: never better food than was there) and
+     * the round makes no more. Returns how many were made.
      */
     public int add(boolean soldier, int n, Cost cost) {
         int made = 0;
         for (int i = 0; i < n && room() > 0 && settlement.food() >= cost.needed(); i++) {
+            int paid = spend.spend(cost.each(), cost.on());
+            if (paid < cost.each()) {
+                if (paid > 0) {
+                    settlement.addFood(paid, Fare.SLOP_GRADE, "");
+                }
+                break;
+            }
             settlement.addToReserve(soldier ? 0 : 1, soldier ? 1 : 0);
-            spend.spend(cost.each(), cost.on());
             made++;
         }
         return made;

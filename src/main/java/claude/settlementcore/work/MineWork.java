@@ -94,7 +94,11 @@ public class MineWork extends RoomWork {
         boolean done;
         final Deque<BlockPos> vein = new ArrayDeque<>();
         final Set<Long> queued = new HashSet<>();
-        /** Ore cells gnawed out along veins (not saved: only the cave check asks, and only while a vein is followed). */
+        /**
+         * Ore cells gnawed out along veins: the drift's own open ground, as its columns are. Saved (with {@link #vein} and
+         * {@link #queued}) since 2026-11-04: before, a load forgot them, the cave check took the vein's holes beside the drift's next
+         * column for a cave, and the drift (on the main drift, the whole of it and its branches) was given up for good.
+         */
         final Set<Long> veinDug = new HashSet<>();
         final BoundingBox extent;
         /** The mine's level it runs from: 0 the room's own, then each turn of the winze. */
@@ -165,6 +169,14 @@ public class MineWork extends RoomWork {
     }
 
     final List<Drift> drifts = new ArrayList<>();
+    /**
+     * Whether the mine was saved before its vein holes were (a save with no "veins"): it may have holes beside its drifts it
+     * no longer knows for its own. Its drifts then take a small pocket of air bordering their own open ground for theirs
+     * ({@link #veinHole}), not for a cave. Kept in the save, so the old holes stay known for what they are.
+     */
+    boolean veinsUnrecorded;
+    /** The most air a pocket beside a drift may hold to be taken for its own vein holes in an old save ({@link #veinHole}). */
+    static final int VEIN_HOLE_MAX = 2 * VEIN_MAX;
     /** How often each vein cell has been handed out: one no rat can get at is given up (not saved). */
     private final java.util.Map<Long, Integer> veinTries = new java.util.HashMap<>();
     List<BlockPos> carts = List.of();
@@ -585,8 +597,8 @@ public class MineWork extends RoomWork {
         if (feet.getY() - 2 <= level.getMinY() + BOTTOM_MARGIN) {
             return stop(level, "at the bedrock", true);
         }
-        for (int dx = -3; dx <= 3; dx += 6) {                    // what it walls and opens mouths in reaches 3 out from the post
-            for (int dz = -3; dz <= 3; dz += 6) {
+        for (int dx = -4; dx <= 4; dx += 8) {                    // what it walls and opens mouths in reaches 3 out from the post, and a
+            for (int dz = -4; dz <= 4; dz += 8) {                // new level's first column, 3 out, is looked at round its sides: 4 out
                 if (!level.isLoaded(new BlockPos(winze.getX() + dx, feet.getY(), winze.getZ() + dz))) {
                     return Verdict.WAIT;
                 }
@@ -826,15 +838,16 @@ public class MineWork extends RoomWork {
         while (!d.done && d.next < d.cells.size()) {
             BlockPos feet = d.cells.get(d.next);
             BlockPos head = feet.above();
-            if (!level.isLoaded(feet) || !level.isLoaded(feet.below()) || !level.isLoaded(head.above())) {
-                return Verdict.WAIT;
+            if (!level.isLoaded(feet) || !level.isLoaded(feet.below()) || !level.isLoaded(head.above()) || !sidesLoaded(level, feet)) {
+                return Verdict.WAIT;                             // (its sides too: the cave check, the shoring and the torch read them)
             }
             if (inOtherRoom(feet) || inOtherRoom(head)) {
                 d.blockHere();
                 return Verdict.BLOCKED;
             }
             BlockState below = level.getBlockState(feet.below());
-            if (!below.isFaceSturdy(level, feet.below(), Direction.UP) && !d.ours(feet.below())) {
+            if (!below.isFaceSturdy(level, feet.below(), Direction.UP) && !d.ours(feet.below())
+                    && !(below.isAir() && veinHole(level, d, feet.below()))) {
                 d.blockHere();                                   // a hole in the floor: no drift over a drop
                 return Verdict.BLOCKED;
             }
@@ -870,6 +883,73 @@ public class MineWork extends RoomWork {
         return false;
     }
 
+    /**
+     * Whether the air at {@code start} is one of the drift's own vein holes that a mine saved before 2026-11-04 forgot (only then:
+     * {@link #veinsUnrecorded}; a mine saved since knows its holes, {@link Drift#veinDug}). A vein is followed only from the
+     * drift's open ground, a cell at a time, each cell touching what is open already, so its holes are a small pocket of air that
+     * borders the drift's open cells (its columns gnawed, its mouth, the room). It is taken for one when the air it is part of,
+     * not counting the drift's open cells and the room, is all loaded, is no more than {@link #VEIN_HOLE_MAX} cells, and borders
+     * them. Opening onto such a pocket joins the drift to nothing it was not joined to already; a cave, a ravine or a cellar is
+     * bigger, and still ends the drift. A vein's holes that were more than that are still taken for a cave, as the old save did.
+     */
+    private boolean veinHole(ServerLevel level, Drift d, BlockPos start) {
+        if (!veinsUnrecorded) {
+            return false;
+        }
+        Set<Long> own = new HashSet<>();
+        own.add(d.mouth.asLong());
+        own.add(d.mouth.above().asLong());
+        for (int i = 0; i < d.next && i < d.cells.size(); i++) {
+            own.add(d.cells.get(i).asLong());
+            own.add(d.cells.get(i).above().asLong());
+        }
+        own.addAll(d.veinDug);
+        if (own.contains(start.asLong()) || box().isInside(start)) {
+            return true;
+        }
+        Deque<BlockPos> todo = new ArrayDeque<>();
+        Set<Long> pocket = new HashSet<>();
+        pocket.add(start.asLong());
+        todo.add(start.immutable());
+        boolean borders = false;
+        while (!todo.isEmpty()) {
+            BlockPos c = todo.poll();
+            for (Direction dir : Direction.values()) {
+                BlockPos n = c.relative(dir);
+                long k = n.asLong();
+                if (pocket.contains(k)) {
+                    continue;
+                }
+                if (!level.isLoaded(n)) {
+                    return false;                                // not all of it can be seen: not taken for the drift's
+                }
+                if (!level.getBlockState(n).isAir()) {
+                    continue;
+                }
+                if (own.contains(k) || box().isInside(n)) {
+                    borders = true;                              // the drift's open ground (or the room): the pocket's edge
+                    continue;
+                }
+                pocket.add(k);
+                if (pocket.size() > VEIN_HOLE_MAX) {
+                    return false;                                // too big for a vein's holes: a cave
+                }
+                todo.add(n);
+            }
+        }
+        return borders;
+    }
+
+    /** Whether the four cells beside {@code p} are loaded (the cells over and under it are in its own chunk). */
+    private static boolean sidesLoaded(ServerLevel level, BlockPos p) {
+        for (Direction dir : Direction.Plane.HORIZONTAL) {
+            if (!level.isLoaded(p.relative(dir))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     /** Air or natural ground that gives way to teeth (no bedrock, no fluid, nothing built). */
     private static boolean cuttable(ServerLevel level, BlockPos p, BlockState s) {
         if (s.isAir()) {
@@ -900,6 +980,9 @@ public class MineWork extends RoomWork {
                 continue;
             }
             BlockState ns = level.getBlockState(n);
+            if (ns.isAir() && veinHole(level, d, n)) {
+                continue;                                        // the drift's own vein holes, in a mine saved before they were
+            }
             if (ns.isAir() || plant(ns)) {
                 return true;                                     // open ground, a cave's plant in it or not
             }
@@ -928,8 +1011,11 @@ public class MineWork extends RoomWork {
     }
 
     private void followVein(ServerLevel level, Drift d, BlockPos cell) {
+        if (!level.isLoaded(cell) || !sidesLoaded(level, cell)) {
+            return;                                              // (asked before the block: a read loads its chunk)
+        }
         BlockState s = level.getBlockState(cell);
-        if (!s.is(Tags.Blocks.ORES) || !cuttable(level, cell, s) || !level.isLoaded(cell)) {
+        if (!s.is(Tags.Blocks.ORES) || !cuttable(level, cell, s)) {
             return;
         }
         boolean reached = false;
@@ -940,7 +1026,7 @@ public class MineWork extends RoomWork {
                 return;                                          // an ore against water or lava is left in the rock
             }
             if (ns.isAir()) {
-                if (!d.ours(n) && !box().isInside(n)) {
+                if (!d.ours(n) && !box().isInside(n) && !veinHole(level, d, n)) {
                     return;                                      // it shows in a cave's wall too: left for whoever finds the cave
                 }
                 reached = true;
@@ -988,6 +1074,9 @@ public class MineWork extends RoomWork {
      * Heart), stone to the Stone Bin while there is room. Public for the tests.
      */
     public void cut(ServerLevel level, BlockPos p, boolean noisy) {
+        if (!level.isLoaded(p)) {
+            return;
+        }
         BlockState s = level.getBlockState(p);
         if (s.isAir()) {
             return;
@@ -1214,6 +1303,18 @@ public class MineWork extends RoomWork {
         t.putBoolean("winze_stopped", winzeStopped);
         t.putString("winze_stop", winzeStop);
         t.putBoolean("winze_final", winzeFinal);
+        net.minecraft.nbt.ListTag veins = new net.minecraft.nbt.ListTag();
+        for (Drift d : drifts) {                                 // each drift's vein holes, the vein it follows and what it has noted
+            CompoundTag v = new CompoundTag();
+            v.putLongArray("dug", d.veinDug.stream().mapToLong(Long::longValue).toArray());
+            v.putLongArray("vein", d.vein.stream().mapToLong(BlockPos::asLong).toArray());
+            v.putLongArray("queued", d.queued.stream().mapToLong(Long::longValue).toArray());
+            veins.add(v);
+        }
+        t.put("veins", veins);
+        if (veinsUnrecorded) {
+            t.putBoolean("veins_unrecorded", true);
+        }
         return t;
     }
 
@@ -1235,5 +1336,45 @@ public class MineWork extends RoomWork {
         found = t.getLongOr("found", 0L);
         gnawed = t.getLongOr("gnawed", 0L);
         nextTrickle = t.getLongOr("trickle", 0L);
+        // the vein holes, the veins being followed and the cells noted (a save from before 2026-11-04 has none: veinsUnrecorded)
+        // (one that had gnawed no column had followed no vein: nothing forgotten)
+        veinsUnrecorded = !t.contains("veins") && drifts.stream().anyMatch(d -> d.next > 0) || t.getBooleanOr("veins_unrecorded", false);
+        net.minecraft.nbt.ListTag veins = t.getListOrEmpty("veins");
+        for (int i = 0; i < drifts.size() && i < veins.size(); i++) {
+            Drift d = drifts.get(i);
+            CompoundTag v = veins.getCompoundOrEmpty(i);
+            d.veinDug.clear();
+            d.vein.clear();
+            d.queued.clear();
+            for (long k : v.getLongArray("dug").orElse(new long[0])) {
+                d.veinDug.add(k);
+            }
+            for (long k : v.getLongArray("vein").orElse(new long[0])) {
+                d.vein.addLast(BlockPos.of(k));
+            }
+            for (long k : v.getLongArray("queued").orElse(new long[0])) {
+                d.queued.add(k);
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ for the tests
+
+    /** How far drift {@code i} has got (the index of its next column), and whether it is done. */
+    public int driftNext(int i) {
+        return drifts.get(i).next;
+    }
+
+    public boolean driftDone(int i) {
+        return drifts.get(i).done;
+    }
+
+    /** Drift {@code i}'s vein cells waiting to be followed, and those it has gnawed out. */
+    public int veinWaiting(int i) {
+        return drifts.get(i).vein.size();
+    }
+
+    public int veinGnawed(int i) {
+        return drifts.get(i).veinDug.size();
     }
 }

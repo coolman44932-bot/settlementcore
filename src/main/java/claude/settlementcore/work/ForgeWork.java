@@ -187,11 +187,21 @@ public class ForgeWork extends RoomWork {
         return recipe(level, type, s).isPresent();
     }
 
+    /**
+     * The furnace at {@code p}, or null: none there, or its chunk not loaded. The room's furnaces are as last found (every
+     * {@link #RESCAN} ticks), and the haul asks whether it has a smoker every few seconds, loaded or not (Works#haul): in 26.1 a
+     * block entity asked for in a chunk that is not loaded loads the chunk, on the server thread.
+     */
+    @Nullable
+    static AbstractFurnaceBlockEntity furnaceAt(ServerLevel level, BlockPos p) {
+        return level.isLoaded(p) && level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f ? f : null;
+    }
+
     /** Whether this room has a furnace of that kind. */
     public boolean has(ServerLevel level, RecipeType<?> type) {
         rescan(level);
         for (BlockPos p : furnaces) {
-            if (level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f && typeOf(f) == type) {
+            if (furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f && typeOf(f) == type) {
                 return true;
             }
         }
@@ -205,7 +215,7 @@ public class ForgeWork extends RoomWork {
             return;
         }
         for (BlockPos p : furnaces) {
-            if (level.isLoaded(p) && level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f) {
+            if (furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f) {
                 BlockState st = level.getBlockState(p);
                 if (st.getBlock() instanceof AbstractFurnaceBlock) {
                     AbstractFurnaceBlockEntity.serverTick(level, p, st, f);
@@ -239,7 +249,7 @@ public class ForgeWork extends RoomWork {
         rescan(level);
         int n = REFINED_PER_BLOCK * Bins.count(level, ores, s -> Currencies.block(heart, s));
         for (BlockPos p : furnaces) {
-            if (level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f) {
+            if (furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f) {
                 if (Currencies.block(heart, f.getItem(0))) {
                     n += REFINED_PER_BLOCK * f.getItem(0).getCount();
                 }
@@ -329,7 +339,7 @@ public class ForgeWork extends RoomWork {
         order.sort(Comparator.comparingDouble(p -> p.distSqr(rat.blockPosition())));
         // 1. a furnace's finished work out to the Ingot Bin
         for (BlockPos p : order) {
-            if (!free(p, now) || !(level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f)) {
+            if (!free(p, now) || !(furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f)) {
                 continue;
             }
             ItemStack out = f.getItem(2);
@@ -340,7 +350,7 @@ public class ForgeWork extends RoomWork {
                 continue;
             }
             return new Chore("emptying a furnace", p, 2.6, 6, p, (l, r) -> {
-                if (!(l.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity ff) || ff.getItem(2).isEmpty()) {
+                if (!(furnaceAt(l, p) instanceof AbstractFurnaceBlockEntity ff) || ff.getItem(2).isEmpty()) {
                     return null;
                 }
                 ItemStack got = ff.removeItem(2, ff.getItem(2).getCount());
@@ -359,7 +369,7 @@ public class ForgeWork extends RoomWork {
         }
         // 2. fuel to a furnace with something to cook that is burning out
         for (BlockPos p : order) {
-            if (!free(p, now) || !(level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f)) {
+            if (!free(p, now) || !(furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f)) {
                 continue;
             }
             ItemStack fuelSlot = f.getItem(1);
@@ -380,7 +390,7 @@ public class ForgeWork extends RoomWork {
         // 3. a load for a furnace with an empty (or like, and short) input: ore to the blast furnaces, food to the smokers
         order.sort(Comparator.comparingInt((BlockPos p) -> rank(level, p)).thenComparingDouble(p -> p.distSqr(rat.blockPosition())));
         for (BlockPos p : order) {
-            if (!free(p, now) || !(level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f)) {
+            if (!free(p, now) || !(furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f)) {
                 continue;
             }
             ItemStack in = f.getItem(0);
@@ -401,7 +411,7 @@ public class ForgeWork extends RoomWork {
 
     /** Blast furnaces first, then smokers, then plain furnaces: the special furnaces get their loads before a plain one takes them. */
     private static int rank(ServerLevel level, BlockPos p) {
-        if (!(level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f)) {
+        if (!(furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f)) {
             return 9;
         }
         return f instanceof BlastFurnaceBlockEntity ? 0 : f instanceof SmokerBlockEntity ? 1 : 2;
@@ -419,13 +429,16 @@ public class ForgeWork extends RoomWork {
     }
 
     private static boolean isLit(ServerLevel level, BlockPos p) {
+        if (!level.isLoaded(p)) {
+            return false;
+        }
         BlockState st = level.getBlockState(p);
         return st.hasProperty(AbstractFurnaceBlock.LIT) && st.getValue(AbstractFurnaceBlock.LIT);
     }
 
     /** Into a furnace's slot (0 input, 1 fuel), onto what is there. Returns what did not fit. */
     static ItemStack putIn(ServerLevel level, BlockPos p, int slot, ItemStack s) {
-        if (s.isEmpty() || !(level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f)) {
+        if (s.isEmpty() || !(furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f)) {
             return s;
         }
         ItemStack have = f.getItem(slot);
@@ -461,7 +474,7 @@ public class ForgeWork extends RoomWork {
         }
         int before = (int) smelted;
         for (BlockPos p : furnaces) {
-            if (!(level.getBlockEntity(p) instanceof AbstractFurnaceBlockEntity f)) {
+            if (!(furnaceAt(level, p) instanceof AbstractFurnaceBlockEntity f)) {
                 continue;
             }
             RecipeType<? extends AbstractCookingRecipe> type = typeOf(f);

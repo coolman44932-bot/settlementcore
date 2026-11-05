@@ -5,10 +5,14 @@ import claude.settlementcore.unit.SettlerMob;
 import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.Core;
 import claude.settlementcore.CoreConfig;
+import claude.settlementcore.Nbt;
 import claude.settlementcore.settlement.SettlementSpawns;
 import net.minecraft.ChatFormatting;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.ListTag;
+import net.minecraft.nbt.Tag;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.sounds.SoundEvents;
@@ -62,7 +66,11 @@ import java.util.UUID;
  *   <li><b>The all-clear.</b> {@link #ALL_CLEAR} seconds with no foe in the warren and the defenders sink back into the
  *   horde; the Warlord hears how it went: foes slain, rats lost.</li>
  * </ul>
- * Only where the warren is loaded. Nothing is saved: an alarm ends with the world.
+ * Only where the warren is loaded. What it needs to stand down is saved with the settlement ({@link #save}, {@link #load}): its defenders,
+ * those walking home, whether the alarm is up and its tally. A race whose settlers are saved as mobs (Khazuk!'s Dawi) had its defenders
+ * come back after a reload on no list at all: uncounted (the brood bred past the cap), never stood down, and refused by the race's absorb
+ * ({@link #defends}), so lost (the bug audit of 2026-11-04). A defender that is never saved as a mob (the Waaagh!'s, {@code !defending})
+ * is never written, nor kept once it leaves the world ({@link #left}).
  */
 @EventBusSubscriber(modid = Core.MODID)
 public final class Muster {
@@ -77,6 +85,8 @@ public final class Muster {
     /** How far from the fight rats take its buff. */
     private static final double FIGHT = 32;
     private static final long TELL_EVERY = 20 * 30;
+    /** How many of the muster's seconds a defender or homeward settler may be out of the world before it is given up: 10 minutes. */
+    public static final int MISSING_SECONDS = 10 * 60;
     public static final Identifier BUFF = Identifier.fromNamespaceAndPath(Core.NAMESPACE, "defending_the_settlement");
 
     private final Set<UUID> defenders = new LinkedHashSet<>();
@@ -86,6 +96,17 @@ public final class Muster {
      * nobody, and a digger the muster drafted (Works#draft, on no roll) was lost for good (the review of ffb5306).
      */
     private final Set<UUID> homeward = new LinkedHashSet<>();
+    /**
+     * The homeward not yet told to go home: stood down while their chunk was unloaded, or loaded back from a save (a settler's walk home is
+     * its own, not saved). Each is told ({@link SettlerMob#goHome}) the first second it is loaded again.
+     */
+    private final Set<UUID> untold = new LinkedHashSet<>();
+    /**
+     * Seconds each defender or homeward settler has been out of the world (its chunk unloaded: it chased a foe off, say). Kept that long, as it
+     * comes back with its chunk; dropped after {@link #MISSING_SECONDS} (dead or absorbed where the settlement could not hear of it), so
+     * neither list grows for ever. A death or an absorb the settlement hears of drops it at once ({@link #left}).
+     */
+    private final Map<UUID, Integer> missing = new HashMap<>();
     private final Set<UUID> foes = new HashSet<>();
     private final Set<UUID> buffed = new HashSet<>();
     private boolean alarmed;
@@ -126,11 +147,20 @@ public final class Muster {
         return n;
     }
 
-    /** Its defenders up now and those stood down still walking home (#homeward), alive: the settlement's people out of the reserve for now. */
+    /**
+     * Its defenders up now and those stood down still walking home (#homeward): the settlement's people out of the reserve for now. One alive
+     * counts, and so does one out of the world (its chunk unloaded: it comes back with it, and was bred past the cap when it was not counted);
+     * one dead and not yet gone does not.
+     */
     public int out(ServerLevel level) {
-        int n = defenders(level);
-        for (UUID id : homeward) {
-            if (level.getEntity(id) instanceof SettlerMob r && r.isAlive()) {
+        return outOf(level, defenders) + outOf(level, homeward);
+    }
+
+    private static int outOf(ServerLevel level, Set<UUID> ids) {
+        int n = 0;
+        for (UUID id : ids) {
+            Entity e = level.getEntity(id);
+            if (e == null || (e instanceof SettlerMob r && r.isAlive())) {
                 n++;
             }
         }
@@ -217,11 +247,12 @@ public final class Muster {
             standDown(level, h);
             return;
         }
-        homeward.removeIf(id -> !(level.getEntity(id) instanceof SettlerMob r) || !r.isAlive());   // home (sunk), or gone
+        prune(level, homeward);                                  // home (sunk) or dead: gone; out of the world: kept a while
+        prune(level, defenders);                                 // the same: one that chased a foe off past the loaded ground comes back
+        tellUntold(level);
         if (!alarmed) {
             return;
         }
-        defenders.removeIf(id -> !(level.getEntity(id) instanceof SettlerMob r) || !r.isAlive());
         if (!in.isEmpty()) {
             rise(level, h, in);
         }
@@ -327,7 +358,7 @@ public final class Muster {
 
     private void rise(ServerLevel level, Settlement h, List<Mob> in) {
         int want = Math.min(max(), perFoe() * in.size());
-        int alive = defenders.size();
+        int alive = defenders(level);                            // up here: one kept while out of the world is not at this fight
         Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
         Mob head = in.stream().min(Comparator.comparingDouble(m -> m.distanceToSqr(heart))).orElseThrow();
         for (int i = 0; i < STEP && alive < want && h.reserve() > 0; i++) {
@@ -545,10 +576,15 @@ public final class Muster {
         broke = false;
         int home = 0;
         for (UUID id : defenders) {
-            if (level.getEntity(id) instanceof SettlerMob r && r.isAlive()) {
+            Entity e = level.getEntity(id);
+            if (e instanceof SettlerMob r && r.isAlive()) {
                 clear(r);
                 homeward.add(id);                                // the muster's until it is home: the race's absorb takes it back
                 r.goHome();                                      // back down into the horde
+                home++;
+            } else if (e == null) {
+                homeward.add(id);                                // out of the world (or loaded back from a save, not in yet): stood down all
+                untold.add(id);                                  // the same, and told to go home the first second it is back (tellUntold)
                 home++;
             }
         }
@@ -617,5 +653,155 @@ public final class Muster {
     /** Tests: the defenders' ids. */
     public Set<UUID> defenderIds() {
         return Set.copyOf(defenders);
+    }
+
+    /** Tests: the ids of those stood down and still walking home. */
+    public Set<UUID> homewardIds() {
+        return Set.copyOf(homeward);
+    }
+
+    // ------------------------------------------------------------------ out of the world, and back
+
+    /**
+     * Each second: off {@code ids} each one in the world that is no settler or is dead (home and sunk, or killed), and each out of the world
+     * for more than {@link #MISSING_SECONDS} of the muster's seconds; one out of the world for less is kept, as it comes back with its chunk.
+     * A defender that merely went out of the loaded ground mid-alarm (it chased a foe off) was dropped at once, and came back an orphan. Telling
+     * an unload from a death or an absorb is {@link #left}'s: it drops those at once, where it can.
+     */
+    private void prune(ServerLevel level, Set<UUID> ids) {
+        for (Iterator<UUID> it = ids.iterator(); it.hasNext(); ) {
+            UUID id = it.next();
+            Entity e = level.getEntity(id);
+            boolean gone;
+            if (e != null) {
+                missing.remove(id);
+                gone = !(e instanceof SettlerMob r) || !r.isAlive();
+            } else {
+                gone = missing.merge(id, 1, Integer::sum) > MISSING_SECONDS;
+            }
+            if (gone) {
+                it.remove();
+                missing.remove(id);
+                untold.remove(id);
+            }
+        }
+    }
+
+    /** The homeward not yet told, that are back in the world: told to go home now. */
+    private void tellUntold(ServerLevel level) {
+        for (Iterator<UUID> it = untold.iterator(); it.hasNext(); ) {
+            UUID id = it.next();
+            if (!homeward.contains(id)) {
+                it.remove();
+            } else if (level.getEntity(id) instanceof SettlerMob r && r.isAlive()) {
+                clear(r);
+                r.goHome();
+                it.remove();
+            }
+        }
+    }
+
+    /** {@code id} is off every list of the muster's: it is gone for good. */
+    public void forget(UUID id) {
+        defenders.remove(id);
+        homeward.remove(id);
+        untold.remove(id);
+        missing.remove(id);
+        buffed.remove(id);
+    }
+
+    /**
+     * Whether {@code r}, leaving the world now (or in it, asked at a save), comes back: only if it leaves with its chunk (no removal yet, or
+     * unloaded to the chunk), and is saved there. A settler killed or discarded (sunk home into the reserve: the race's absorb, then a
+     * discard) does not, nor one that changed worlds, nor one its race never saves as a mob (the Waaagh!'s defenders: Greenskin's
+     * {@code shouldBeSaved}). A passenger is saved with its vehicle, so its vehicle is asked.
+     */
+    static boolean comesBack(Entity r) {
+        Entity.RemovalReason why = r.getRemovalReason();
+        if (why != null && why != Entity.RemovalReason.UNLOADED_TO_CHUNK) {
+            return false;
+        }
+        Entity root = r.getRootVehicle();
+        return root.shouldBeSaved();
+    }
+
+    /**
+     * A settler leaving the world: if it is gone for good ({@link #comesBack}: dead, sunk home, never saved) it is off every loaded settlement's
+     * muster now, so the muster neither counts it ({@link #out}) nor keeps it the {@link #MISSING_SECONDS}. A settler out with its chunk is kept.
+     * Every loaded one is asked, the settler's own settlement being unloaded first, perhaps.
+     */
+    @SubscribeEvent
+    public static void left(net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent e) {
+        if (!(e.getEntity() instanceof SettlerMob r) || !(e.getLevel() instanceof ServerLevel level) || comesBack(r)) {
+            return;
+        }
+        UUID id = r.getUUID();
+        for (Settlement h : SettlementSpawns.loaded(level)) {
+            h.muster().forget(id);
+        }
+    }
+
+    // ------------------------------------------------------------------ save and load
+
+    /**
+     * What the muster needs to resume or stand down after a reload, or null when it has nothing (no alarm, no one out): its defenders and
+     * those walking home, by id, whether the alarm is up and broke in, its quiet seconds and its tally. A settler in the world that will not
+     * be saved as a mob ({@link #comesBack}) is left out, as it will not be there after the reload; one out of the world is written (it left
+     * with its chunk, saved: one that was not was forgotten as it left). {@code level} null writes every id.
+     */
+    @Nullable
+    public CompoundTag save(@Nullable ServerLevel level) {
+        ListTag up = ids(level, defenders), home = ids(level, homeward);
+        if (up.isEmpty() && home.isEmpty() && !alarmed) {
+            return null;
+        }
+        CompoundTag t = new CompoundTag();
+        t.put("defenders", up);
+        t.put("homeward", home);
+        t.putBoolean("alarmed", alarmed);
+        t.putBoolean("broke", broke);
+        t.putInt("quiet", quiet);
+        t.putInt("slain", slain);
+        t.putInt("lost", lost);
+        t.putInt("risen", risen);
+        return t;
+    }
+
+    private static ListTag ids(@Nullable ServerLevel level, Set<UUID> ids) {
+        ListTag list = new ListTag();
+        for (UUID id : ids) {
+            Entity e = level == null ? null : level.getEntity(id);
+            if (e == null || (e instanceof SettlerMob r && r.isAlive() && comesBack(r))) {
+                list.add(Nbt.uuid(id));
+            }
+        }
+        return list;
+    }
+
+    /**
+     * The muster as {@link #save} wrote it; an empty tag (an old save, or one with nothing out) is a muster at peace. Defenders loaded back
+     * hold the alarm up, so its all-clear comes as it would have ({@link #ALL_CLEAR} quiet seconds, if no foe is left) and stands them down;
+     * the homeward are told to go home again once they are back in the world (their walk home is theirs, and not saved).
+     */
+    public void load(CompoundTag t) {
+        defenders.clear();
+        homeward.clear();
+        untold.clear();
+        missing.clear();
+        foes.clear();
+        buffed.clear();
+        for (Tag id : t.getListOrEmpty("defenders")) {
+            defenders.add(Nbt.uuid(id));
+        }
+        for (Tag id : t.getListOrEmpty("homeward")) {
+            homeward.add(Nbt.uuid(id));
+        }
+        untold.addAll(homeward);
+        alarmed = t.getBooleanOr("alarmed", false) || !defenders.isEmpty();
+        broke = t.getBooleanOr("broke", false);
+        quiet = Math.max(0, t.getIntOr("quiet", 0));
+        slain = t.getIntOr("slain", 0);
+        lost = t.getIntOr("lost", 0);
+        risen = t.getIntOr("risen", 0);
     }
 }

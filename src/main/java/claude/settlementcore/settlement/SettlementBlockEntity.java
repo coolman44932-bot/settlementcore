@@ -783,6 +783,10 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         if (walls.recorded()) {
             tag.put("walls", walls.save());                     // only once it has raised a wall: an old save is as it was
         }
+        CompoundTag mustered = muster.save(level instanceof ServerLevel sl ? sl : null);
+        if (mustered != null) {
+            tag.put("muster", mustered);                        // only with an alarm up or defenders out: a settlement at peace saves as it did
+        }
         tag.putLongArray("ledger_stores", ledgerStores.toLongArray());
         ListTag spoilList = new ListTag();
         for (ItemStack st : spoils) {
@@ -809,6 +813,7 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
         book.load(tag);
         works().load(tag.getCompoundOrEmpty("works"), registries);
         walls.load(tag.getCompoundOrEmpty("walls"));
+        muster.load(tag.getCompoundOrEmpty("muster"));          // none (an old save, or peace): no alarm, no one out
         ledgerStores = new LongOpenHashSet(tag.getLongArray("ledger_stores").orElse(new long[0]));
         spoils.clear();
         for (Tag t : tag.getListOrEmpty("spoils")) {

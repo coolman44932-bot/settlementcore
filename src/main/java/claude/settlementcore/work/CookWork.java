@@ -125,13 +125,35 @@ public class CookWork extends RoomWork {
         super(heart, building, placement);
     }
 
+    /**
+     * Whether every chunk the room's box stands in is loaded. In 26.1 a block read in a chunk that is not loaded loads it, on
+     * the server thread, there and then: the haul asks for the Pantry every few seconds whether the kitchen is loaded or not
+     * (Works#haul), and the scan read the whole box, so a kitchen out of view was loaded and unloaded again over and over.
+     */
+    static boolean loaded(ServerLevel level, net.minecraft.world.level.levelgen.structure.BoundingBox box) {
+        for (int cx = box.minX() >> 4; cx <= box.maxX() >> 4; cx++) {
+            for (int cz = box.minZ() >> 4; cz <= box.maxZ() >> 4; cz++) {
+                if (!level.hasChunk(cx, cz)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     @Override
     protected void scan(ServerLevel level) {
-        pantry = Bins.named(level, box(), PANTRY);
-        out = Bins.named(level, box(), FARE_BIN);
+        if (ROASTS.get() == null) {
+            ROASTS.set(s -> level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(s), level).isPresent());
+        }
+        var box = box();
+        if (!loaded(level, box)) {
+            return;                                              // not all of it loaded: what it found last stands (no chunk is loaded to look)
+        }
+        pantry = Bins.named(level, box, PANTRY);
+        out = Bins.named(level, box, FARE_BIN);
         List<BlockPos> p = new ArrayList<>(), f = new ArrayList<>(), o = new ArrayList<>(), b = new ArrayList<>();
         boolean w = false;
-        var box = box();
         BlockPos.MutableBlockPos m = new BlockPos.MutableBlockPos();
         for (int x = box.minX(); x <= box.maxX(); x++) {
             for (int z = box.minZ(); z <= box.maxZ(); z++) {
@@ -155,9 +177,6 @@ public class CookWork extends RoomWork {
         ovens = o;
         benches = b;
         water = w;
-        if (ROASTS.get() == null) {
-            ROASTS.set(s -> level.recipeAccess().getRecipeFor(RecipeType.CAMPFIRE_COOKING, new SingleRecipeInput(s), level).isPresent());
-        }
     }
 
     /** How many dishes the cooks have laced with warpstone. */

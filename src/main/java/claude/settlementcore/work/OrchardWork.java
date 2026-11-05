@@ -129,7 +129,7 @@ public class OrchardWork extends RoomWork {
     public int trees(ServerLevel level) {
         int n = 0;
         for (Spot sp : beds) {
-            if (level.getBlockState(sp.pos().above()).is(BlockTags.LOGS)) {
+            if (level.isLoaded(sp.pos()) && level.getBlockState(sp.pos().above()).is(BlockTags.LOGS)) {
                 n++;
             }
         }
@@ -179,8 +179,11 @@ public class OrchardWork extends RoomWork {
         int n = Math.max(1, growing.size() / BOOST_PER);
         for (int i = 0; i < n; i++) {
             BlockPos p = growing.get(level.getRandom().nextInt(growing.size()));
+            if (!level.isLoaded(p)) {
+                continue;                                        // (asked before the block: a read loads its chunk)
+            }
             BlockState s = level.getBlockState(p);
-            if (level.isLoaded(p) && s.isRandomlyTicking() && !ripe(s)) {
+            if (s.isRandomlyTicking() && !ripe(s)) {
                 s.randomTick(level, p, level.getRandom());
                 if (s.getBlock() instanceof SaplingBlock && level.getBlockState(p).is(BlockTags.LOGS)) {
                     rescanSoon();                                // a sapling grew by itself: its fruit, to be found
@@ -335,6 +338,9 @@ public class OrchardWork extends RoomWork {
                 }
                 for (int dy = 0; dy <= POLE; dy++) {
                     BlockPos q = p.offset(dx, -dy, dz);
+                    if (!level.isLoaded(q)) {
+                        break;                                   // a column over the edge of the loaded ground: not looked at
+                    }
                     if (SettlerMob.standable(level, q) && !level.getBlockState(q.below()).is(BlockTags.LEAVES)) {
                         bd = h;
                         best = q;
@@ -351,7 +357,7 @@ public class OrchardWork extends RoomWork {
     static BlockPos beside(ServerLevel level, BlockPos p) {
         for (Direction d : Direction.Plane.HORIZONTAL) {
             BlockPos q = p.relative(d);
-            if (SettlerMob.standable(level, q) && !(level.getBlockState(q).getBlock() instanceof SweetBerryBushBlock)) {
+            if (level.isLoaded(q) && SettlerMob.standable(level, q) && !(level.getBlockState(q).getBlock() instanceof SweetBerryBushBlock)) {
                 return q;
             }
         }
@@ -364,6 +370,9 @@ public class OrchardWork extends RoomWork {
 
     /** Pick what is ripe at {@code p} into the Fruit Bin: the fruit or pod starts again, a bush goes back to bare, a vine goes dark. */
     boolean pick(ServerLevel level, BlockPos p) {
+        if (!level.isLoaded(p)) {
+            return false;
+        }
         BlockState s = level.getBlockState(p);
         List<ItemStack> got = new ArrayList<>();
         BlockState after;
@@ -407,7 +416,7 @@ public class OrchardWork extends RoomWork {
     /** A sapling on a bare bed; returns whether it took. */
     boolean plant(ServerLevel level, BlockPos ground, ItemStack held) {
         BlockPos up = ground.above();
-        if (!sapling(held) || !level.getBlockState(up).isAir()) {
+        if (!sapling(held) || !level.isLoaded(up) || !level.getBlockState(up).isAir()) {
             return false;
         }
         BlockState s = ((BlockItem) held.getItem()).getBlock().defaultBlockState();
@@ -422,6 +431,9 @@ public class OrchardWork extends RoomWork {
     /** Warp-dust on a sapling: like bone meal, it grows about half the time. Returns whether it is a tree now. */
     boolean feed(ServerLevel level, BlockPos ground) {
         BlockPos up = ground.above();
+        if (!level.isLoaded(up)) {
+            return false;
+        }
         BlockState a = level.getBlockState(up);
         if (!(a.getBlock() instanceof SaplingBlock sb)) {
             return false;
@@ -452,6 +464,9 @@ public class OrchardWork extends RoomWork {
         BlockPos up = ground.above();
         boolean oak = false;
         for (BlockPos p : BlockPos.betweenClosed(up.offset(-3, 0, -3), up.offset(3, 8, 3))) {
+            if (!level.isLoaded(p)) {
+                continue;
+            }
             BlockState s = level.getBlockState(p);
             if (s.is(Blocks.OAK_LEAVES) || s.is(Blocks.DARK_OAK_LEAVES)) {
                 oak = true;
@@ -474,6 +489,9 @@ public class OrchardWork extends RoomWork {
 
     /** Warp-dust on a picked glow-berry vine: it fruits again. */
     void dust(ServerLevel level, BlockPos p) {
+        if (!level.isLoaded(p)) {
+            return;
+        }
         BlockState s = level.getBlockState(p);
         if ((s.is(Blocks.CAVE_VINES) || s.is(Blocks.CAVE_VINES_PLANT)) && !CaveVines.hasGlowBerries(s)) {
             level.levelEvent(1505, p, 0);
@@ -529,7 +547,7 @@ public class OrchardWork extends RoomWork {
         rescan(level);
         for (Spot sp : beds) {
             BlockPos ground = sp.pos();
-            if (level.getBlockState(ground.above()).is(BlockTags.LOGS) && bearsNoFruit(ground)) {
+            if (level.isLoaded(ground) && level.getBlockState(ground.above()).is(BlockTags.LOGS) && bearsNoFruit(ground)) {
                 for (int i = 0; i < shakes; i++) {
                     shake(level, ground);
                 }
@@ -551,6 +569,9 @@ public class OrchardWork extends RoomWork {
         rescan(level);
         int bare = 0;
         for (Spot sp : beds) {
+            if (!level.isLoaded(sp.pos())) {
+                continue;
+            }
             BlockState a = level.getBlockState(sp.pos().above());
             if (a.isAir() && level.getBlockState(sp.pos()).is(BlockTags.DIRT)) {
                 bare++;
@@ -567,6 +588,9 @@ public class OrchardWork extends RoomWork {
         rescan(level);
         int trees = 0, saplings = 0, ripe = 0, berried = 0;
         for (Spot sp : beds) {
+            if (!level.isLoaded(sp.pos())) {
+                continue;
+            }
             BlockState a = level.getBlockState(sp.pos().above());
             if (a.is(BlockTags.LOGS)) {
                 trees++;
@@ -575,17 +599,17 @@ public class OrchardWork extends RoomWork {
             }
         }
         for (BlockPos p : fruit) {
-            if (ripe(level.getBlockState(p))) {
+            if (level.isLoaded(p) && ripe(level.getBlockState(p))) {
                 ripe++;
             }
         }
         for (BlockPos p : bushes) {
-            if (ripe(level.getBlockState(p))) {
+            if (level.isLoaded(p) && ripe(level.getBlockState(p))) {
                 berried++;
             }
         }
         for (BlockPos p : vines) {
-            if (CaveVines.hasGlowBerries(level.getBlockState(p))) {
+            if (level.isLoaded(p) && CaveVines.hasGlowBerries(level.getBlockState(p))) {
                 berried++;
             }
         }

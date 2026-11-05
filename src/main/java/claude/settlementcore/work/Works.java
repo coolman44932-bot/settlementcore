@@ -331,6 +331,7 @@ public final class Works {
                 // settlement takes it back into the reserve when it gets there (forget), or here, if it is lost on the way (no entity: the branch below)
             } else {
                 if (ent instanceof SettlerMob r && r.isAlive()) {
+                    handBack(level, r, home);                    // what it carries back into the settlement before it goes (strayed, or its room gone)
                     r.discard();
                 }
                 if (toReserve(e.getKey(), rooms.get(e.getValue()))) {
@@ -342,23 +343,36 @@ public final class Works {
         }
         here.clear();
         enlisted.keySet().retainAll(crew.keySet());              // gone from the crew (sent home, lost, its room gone): no longer on its way
+        List<RoomWork> live = new ArrayList<>();
+        Map<BlockPos, Integer> wants = new HashMap<>();
         for (RoomWork w : rooms.values()) {
             BlockPos c = w.box().getCenter();
-            boolean live = level.isLoaded(c) && level.isPositionEntityTicking(c);
-            List<SettlerMob> mine = up.getOrDefault(w.key(), List.of());
-            if (!live) {
+            if (!level.isLoaded(c) || !level.isPositionEntityTicking(c)) {
                 continue;
             }
             if (opened.add(w.key())) {
                 w.opened(level);
             }
-            int want = w.crewWanted();
-            if (mine.size() < want) {
-                staff(level, w, want - mine.size());
-            } else if (mine.stream().filter(r -> !r.isHomeward() && r.leaveSpot() == null).count() > want + 1) {
+            live.add(w);
+            wants.put(w.key(), w.crewWanted());
+        }
+        Map<BlockPos, Integer> shares = shares(live, wants, up);
+        overShare.keySet().retainAll(shares.keySet());
+        for (RoomWork w : live) {
+            List<SettlerMob> mine = up.getOrDefault(w.key(), List.of());
+            int want = wants.get(w.key());
+            Integer share = shares.get(w.key());                 // the reserve is short for every room's want: its fair share of the crew
+            int cap = share == null ? want : share;
+            long active = mine.stream().filter(r -> !r.isHomeward() && r.leaveSpot() == null).count();
+            if (share != null && active <= share) {
+                overShare.remove(w.key());
+            }
+            if (mine.size() < cap) {
+                staff(level, w, cap - mine.size());
+            } else if (share == null ? active > want + 1 : active > share && overShareFor(w.key())) {
                 SettlerMob r = surplus(mine);
                 if (r != null) {
-                    sendHome(level, w.building, r);              // no work for it: back down to the horde (off a building first)
+                    sendHome(level, w.building, r);              // no work for it, or more than its share: back down to the horde (off a building first)
                 }
             }
             if (!enlisted.isEmpty()) {
@@ -375,6 +389,90 @@ public final class Works {
             haul(level);
         }
         extension.second(this, level);
+    }
+
+    // ------------------------------------------------------------------ sharing a short reserve
+
+    /** Seconds a room may hold more than its fair share of a short reserve before its surplus goes home, one a second: a want that dips a moment moves nobody. */
+    public static final int SHARE_PATIENCE = 5;
+    /** The rooms over their fair share, and for how many seconds in a row. Not saved: crew never are. */
+    private final Map<BlockPos, Integer> overShare = new HashMap<>();
+
+    /** One more second over its share; true once it has been for {@value #SHARE_PATIENCE}. */
+    private boolean overShareFor(BlockPos room) {
+        return overShare.merge(room, 1, Integer::sum) >= SHARE_PATIENCE;
+    }
+
+    /**
+     * Each live room's fair share of the crew, for the rooms whose reserve (the workers', or the soldiers') can't give every room what it wants:
+     * what they want beyond what they hold is more than the reserve has. A room of a reserve with enough is not in the map, and takes what it wants as
+     * ever. Since 0.5.6 a dig's want has no cap (one digger per 40 cells, the user's "shouldnt miners have no cap too"), and the rooms were staffed in
+     * the order they were begun, so a big dig wanting 350 took the whole reserve and a site begun after it got no builder (a site lays its courses only
+     * with builders): it waited for the dig to finish. Shared, the reserve and the rooms' crew go round fairly ({@link #fairShares}): every room that
+     * wants crew gets one, the small rooms what they want, and the big digs share the rest alike. A dig alone still takes the whole reserve, and a dig
+     * beside rooms that have all they want takes all the rest. A room over its share sends the surplus home, one a second once it has been over for
+     * {@value #SHARE_PATIENCE} s, and the reserve staffs the others. The muster's draft (#draft) still takes the digs' crew when the reserve is empty.
+     */
+    private Map<BlockPos, Integer> shares(List<RoomWork> live, Map<BlockPos, Integer> wants, Map<BlockPos, List<SettlerMob>> up) {
+        Map<BlockPos, Integer> out = new HashMap<>();
+        for (boolean soldiers : new boolean[]{false, true}) {
+            List<RoomWork> pool = new ArrayList<>();
+            int held = 0;
+            int lacking = 0;
+            for (RoomWork w : live) {
+                if (!w.crewFromHorde() || (w.crewType() == heart.soldierType()) != soldiers) {
+                    continue;                                    // a lent crew, or the other reserve's
+                }
+                int has = up.getOrDefault(w.key(), List.of()).size();
+                pool.add(w);
+                held += has;
+                lacking += Math.max(0, wants.get(w.key()) - has);
+            }
+            int reserve = soldiers ? heart.reserveSoldiers() : heart.reserveWorkers();
+            if (pool.size() < 2 || lacking <= reserve) {
+                continue;                                        // one room alone takes the whole reserve; or there is enough for every room
+            }
+            int[] want = new int[pool.size()];
+            for (int i = 0; i < want.length; i++) {
+                want[i] = wants.get(pool.get(i).key());
+            }
+            int[] fair = fairShares(want, reserve + held);
+            for (int i = 0; i < fair.length; i++) {
+                out.put(pool.get(i).key(), fair[i]);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * {@code supply} settlers shared out among rooms that want {@code want} each, fairly (max-min): a level is raised for every room alike, each
+     * taking up to its want, until the supply is spent. Every room that wants crew gets one if there are as many settlers as such rooms (the first
+     * rooms, in order, when there are fewer); a room wanting little has all it wants; rooms wanting more than the level share what is left alike; and
+     * no room gets more than it wants. Proportional to want would cut a furnace crew of 3 to 1 the moment a dig wanting 350 began.
+     */
+    public static int[] fairShares(int[] want, int supply) {
+        int[] got = new int[want.length];
+        int left = Math.max(0, supply);
+        while (left > 0) {
+            int open = 0;
+            for (int i = 0; i < want.length; i++) {
+                if (got[i] < want[i]) {
+                    open++;
+                }
+            }
+            if (open == 0) {
+                break;
+            }
+            int each = Math.max(1, left / open);
+            for (int i = 0; i < want.length && left > 0; i++) {
+                if (got[i] < want[i]) {
+                    int g = Math.min(Math.min(each, want[i] - got[i]), left);
+                    got[i] += g;
+                    left -= g;
+                }
+            }
+        }
+        return got;
     }
 
     // ------------------------------------------------------------------ gear: the workshop's orders
@@ -558,6 +656,7 @@ public final class Works {
                 continue;
             }
             r.makeCrew(w.key());
+            r.crewFor(heart.getBlockPos());
             w.crewSpawned(r);
             crew.put(r.getUUID(), w.key());
             fromReserve.add(r.getUUID());                        // it ends as a crew out of the reserve does: back into it
@@ -635,6 +734,7 @@ public final class Works {
         rat.bindTo(heart);
         rat.finalizeSpawn(level, level.getCurrentDifficultyAt(at), EntitySpawnReason.MOB_SUMMONED, null);
         rat.makeCrew(w.key());
+        rat.crewFor(heart.getBlockPos());
         w.crewSpawned(rat);
         level.addFreshEntity(rat);
         crew.put(rat.getUUID(), w.key());
@@ -759,6 +859,7 @@ public final class Works {
                 letGo(k, id);
             }
             if (level.getEntity(id) instanceof SettlerMob r) {
+                handBack(level, r, k == null ? null : rooms.get(k));
                 r.discard();
             }
             if (toReserve(id, k == null ? null : rooms.get(k))) {
@@ -788,10 +889,219 @@ public final class Works {
             if (e.getValue().equals(room)) {
                 letGo(room, e.getKey());
                 if (level.getEntity(e.getKey()) instanceof SettlerMob r) {
+                    handBack(level, r, rooms.get(room));
                     r.discard();
                 }
                 refund(e.getKey());
                 it.remove();
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ loads left in a crew settler's hand
+
+    /**
+     * A crew settler about to be discarded by the Works (strayed, recalled, its room gone) hands what it carries back first ({@link #stow}), and its
+     * hand is emptied. Before, the load went with it: a Hoard-keeper's 64-stack, a furnace crew's smelt.
+     */
+    private void handBack(ServerLevel level, SettlerMob r, @Nullable RoomWork w) {
+        ItemStack held = r.carried();
+        if (held.isEmpty()) {
+            return;
+        }
+        ItemStack load = held.copy();
+        r.carry(ItemStack.EMPTY);
+        stow(level, load, name(w));
+    }
+
+    /**
+     * A load back into the settlement, as the haul puts things away: into the Hoard (its own section, then Spoils, then anywhere), then onto the
+     * heart's spoils pile while it has room ({@link Settlement#MAX_SPOIL_STACKS} stacks), and what neither takes on the ground at the heart, so
+     * nothing is lost; with the heart's chunk not loaded, owed to it ({@link OwedLoads}). {@code from}: the room, for the haul log ("" logs nothing).
+     */
+    public void stow(ServerLevel level, ItemStack load, String from) {
+        if (load.isEmpty()) {
+            return;
+        }
+        net.minecraft.world.item.Item item = load.getItem();
+        int was = load.getCount();
+        ItemStack rest = toHoard(level, load.copy());
+        heart.log(from, heart.hoardName(), item, was - rest.getCount());
+        was = rest.getCount();
+        rest = toSpoils(rest);
+        heart.log(from, heart.spoilsName(), item, was - rest.getCount());
+        if (!rest.isEmpty()) {
+            BlockPos at = heart.getBlockPos();
+            if (level.isLoaded(at)) {
+                drop(level, net.minecraft.world.phys.Vec3.atBottomCenterOf(at.above()), rest);
+            } else {
+                OwedLoads.of(level).owe(at, rest);
+            }
+        }
+        heart.setChanged();
+    }
+
+    /** Onto the heart's spoils pile, stacked onto what is there, then in new stacks while the pile has room; what is left is returned. */
+    private ItemStack toSpoils(ItemStack s) {
+        ItemStack rest = s.copy();
+        List<ItemStack> pile = heart.spoils();
+        for (ItemStack have : pile) {
+            if (rest.isEmpty()) {
+                break;
+            }
+            if (ItemStack.isSameItemSameComponents(have, rest) && have.getCount() < have.getMaxStackSize()) {
+                int move = Math.min(rest.getCount(), have.getMaxStackSize() - have.getCount());
+                have.grow(move);
+                rest.shrink(move);
+            }
+        }
+        while (!rest.isEmpty() && pile.size() < Settlement.MAX_SPOIL_STACKS) {
+            heart.addSpoil(rest.split(rest.getMaxStackSize()));  // the pile has room for it: addSpoil keeps all of it
+        }
+        return rest;
+    }
+
+    private static void drop(ServerLevel level, net.minecraft.world.phys.Vec3 at, ItemStack s) {
+        net.minecraft.world.entity.item.ItemEntity e = new net.minecraft.world.entity.item.ItemEntity(level, at.x, at.y, at.z, s);
+        e.setDefaultPickUpDelay();
+        level.addFreshEntity(e);
+    }
+
+    /**
+     * A settler is gone from the world without dying (SettlerMob#onRemovedFromLevel, for every race): the load in a crew settler's hand goes back
+     * into its settlement and leaves its hand, once. Before, only a death dropped it: whatever a crew settler carried when it was discarded, or when
+     * its chunk unloaded or the server stopped (a crew settler is never saved), was gone, and the settler refunded into the reserve all the same.
+     * <ul>
+     * <li>Killed: nothing here, its death dropped the load. Saved with its chunk, or gone to another dimension: the load goes with it.</li>
+     * <li>Discarded, its heart loaded: into the settlement now ({@link #stow}).</li>
+     * <li>Discarded where its heart's chunk is loaded and no heart stands: the settlement is gone, and the load lies where the settler was.</li>
+     * <li>Its chunk unloaded or the server stopping (on 26.1 a chunk's unsaved entities are not removed, they stop being tracked: no reason is
+     * given), or discarded with its heart's chunk not loaded: owed to the heart ({@link OwedLoads}, the level's saved data), and put away the
+     * next second its heart is loaded. Never put away there and then: the chunk's entities are being walked over, and the heart's chunk may be
+     * going too, so nothing in the world is touched, and nothing is loaded.</li>
+     * </ul>
+     * A settler whose settlement is not known (it was made crew outside the Works) keeps its load, as before.
+     */
+    public static void handOverLoad(ServerLevel level, SettlerMob r) {
+        Entity.RemovalReason why = r.getRemovalReason();
+        boolean discarded = why == Entity.RemovalReason.DISCARDED;
+        boolean unloaded = why == null && !r.shouldBeSaved();
+        if (!discarded && !unloaded) {
+            return;
+        }
+        ItemStack held = r.carried();
+        if (held.isEmpty()) {
+            return;
+        }
+        BlockPos at = r.crewHeart();
+        Settlement home = discarded ? r.settlement() : null;
+        if (at == null && home == null) {
+            home = r.settlement();
+            if (home == null) {
+                return;
+            }
+        }
+        if (at == null) {
+            at = home.getBlockPos();
+        }
+        ItemStack load = held.copy();
+        r.carry(ItemStack.EMPTY);
+        if (discarded && home != null) {
+            home.works().stow(level, load, "");
+        } else if (discarded && level.isLoaded(at) && !(level.getBlockEntity(at) instanceof Settlement)) {
+            drop(level, r.position(), load);
+        } else {
+            OwedLoads.of(level).owe(at, load);
+        }
+    }
+
+    /**
+     * Loads owed to settlements whose heart was not loaded when the settler carrying them left the world (its chunk unloaded, the server stopping):
+     * kept per level, saved, and put away into the settlement ({@link #stow}) the first second its heart is loaded. A heart's place loaded with no heart
+     * there (it was broken, or carried off) has the load on the ground there.
+     */
+    @net.neoforged.fml.common.EventBusSubscriber(modid = claude.settlementcore.Core.MODID)
+    public static final class OwedLoads extends net.minecraft.world.level.saveddata.SavedData {
+
+        /** A load, and the heart it is owed to. */
+        record Load(BlockPos heart, ItemStack stack) {
+            static final com.mojang.serialization.Codec<Load> CODEC = com.mojang.serialization.codecs.RecordCodecBuilder.create(i -> i.group(
+                    BlockPos.CODEC.fieldOf("heart").forGetter(Load::heart),
+                    ItemStack.CODEC.fieldOf("load").forGetter(Load::stack)).apply(i, Load::new));
+        }
+
+        public static final com.mojang.serialization.Codec<OwedLoads> CODEC = Load.CODEC.listOf().xmap(OwedLoads::new, o -> o.loads);
+        static final net.minecraft.world.level.saveddata.SavedDataType<OwedLoads> TYPE = new net.minecraft.world.level.saveddata.SavedDataType<>(
+                net.minecraft.resources.Identifier.fromNamespaceAndPath(claude.settlementcore.Core.MODID, "owed_loads"), OwedLoads::new, CODEC);
+
+        private final List<Load> loads;
+
+        OwedLoads() {
+            this(new ArrayList<>());
+        }
+
+        OwedLoads(List<Load> loads) {
+            this.loads = new ArrayList<>(loads);
+        }
+
+        static OwedLoads of(ServerLevel level) {
+            return level.getDataStorage().computeIfAbsent(TYPE);
+        }
+
+        void owe(BlockPos heart, ItemStack s) {
+            if (!s.isEmpty()) {
+                loads.add(new Load(heart.immutable(), s.copy()));
+                setDirty();
+            }
+        }
+
+        /** How many items are owed to the heart at {@code heart} in {@code level} (the tests). */
+        public static int owedTo(ServerLevel level, BlockPos heart) {
+            OwedLoads o = level.getDataStorage().get(TYPE);
+            int n = 0;
+            if (o != null) {
+                for (Load l : o.loads) {
+                    if (l.heart().equals(heart)) {
+                        n += l.stack().getCount();
+                    }
+                }
+            }
+            return n;
+        }
+
+        /** Every load whose heart's place is loaded, put away (taken off the list first: a stow never hands it back). */
+        private void deliver(ServerLevel level) {
+            List<Load> due = new ArrayList<>();
+            for (Iterator<Load> it = loads.iterator(); it.hasNext(); ) {
+                Load l = it.next();
+                if (level.isLoaded(l.heart())) {
+                    due.add(l);
+                    it.remove();
+                }
+            }
+            if (due.isEmpty()) {
+                return;
+            }
+            setDirty();
+            for (Load l : due) {
+                if (level.getBlockEntity(l.heart()) instanceof Settlement s) {
+                    s.works().stow(level, l.stack(), "");
+                } else {
+                    drop(level, net.minecraft.world.phys.Vec3.atBottomCenterOf(l.heart().above()), l.stack());
+                }
+            }
+        }
+
+        @net.neoforged.bus.api.SubscribeEvent
+        static void tick(net.neoforged.neoforge.event.tick.ServerTickEvent.Post e) {
+            if (e.getServer().getTickCount() % 20 != 0) {
+                return;
+            }
+            for (ServerLevel level : e.getServer().getAllLevels()) {
+                OwedLoads o = level.getDataStorage().get(TYPE);
+                if (o != null && !o.loads.isEmpty()) {
+                    o.deliver(level);
+                }
             }
         }
     }

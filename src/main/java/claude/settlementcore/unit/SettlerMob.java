@@ -3,6 +3,7 @@ package claude.settlementcore.unit;
 import claude.settlementcore.Core;
 import claude.settlementcore.settlement.Settlement;
 import claude.settlementcore.work.RoomWork;
+import claude.settlementcore.work.Works;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.entity.EntityType;
@@ -105,6 +106,39 @@ public abstract class SettlerMob extends PathfinderMob {
     }
 
     /**
+     * The heart of the settlement whose crew it is (Works#spawnCrew, Works#enlist set it as they make it crew), or null. Never saved: a crew
+     * settler never is. It says where a load in its hand goes back to when it is gone from the world and its settlement is not loaded to say so
+     * itself ({@link #onRemovedFromLevel}).
+     */
+    @Nullable private BlockPos crewHeart;
+
+    /** Crew of the settlement whose heart is at {@code heart} (null: of none). */
+    public void crewFor(@Nullable BlockPos heart) {
+        crewHeart = heart == null ? null : heart.immutable();
+    }
+
+    /** The heart of the settlement whose crew it is, if the Works made it crew. */
+    @Nullable
+    public BlockPos crewHeart() {
+        return crewHeart;
+    }
+
+    /**
+     * Gone from the world without dying (discarded, or its chunk unloaded or the server stopping, when a crew settler is not saved with it): the
+     * load in its hand goes back into its settlement ({@link Works#handOverLoad}) and leaves its hand, for every race. Before, only a death dropped
+     * it; a Hoard-keeper's 64-stack or a furnace crew's smelt was gone with the settler, which was refunded into the reserve all the same. Neo
+     * calls this as the entity stops being tracked, which on 26.1 is how a chunk's unsaved entities leave it (they are never removed: the chunk's
+     * store skips them), and as any removal ends.
+     */
+    @Override
+    public void onRemovedFromLevel() {
+        super.onRemovedFromLevel();
+        if (level() instanceof net.minecraft.server.level.ServerLevel sl) {
+            Works.handOverLoad(sl, this);
+        }
+    }
+
+    /**
      * The arm's swing runs out. Vanilla ticks a swing only for monsters, players and mannequins (Monster#aiStep), so on a settler,
      * a PathfinderMob, {@code swinging} stayed true from its first blow on, on the server and every client: a race's look that
      * reads it (an attack clip) played the blow forever (the review of settlementcore 737e467).
@@ -113,6 +147,15 @@ public abstract class SettlerMob extends PathfinderMob {
     public void aiStep() {
         updateSwingTime();
         super.aiStep();
+        if (tickCount > 100 && tickCount % 40 == 0 && isCrew() && !level().isClientSide()) {
+            // a crew settler its Works don't know: one hidden with its chunk (crew are never saved, so on 26.1 they're only untracked) whom the
+            // Works refunded to the reserve when they lost it; back with the chunk it would be a second of the same settler. It goes (its hand
+            // was emptied as it was hidden: Works#handOverLoad), the reserve already holding it (the bug hunt of 0.5.6).
+            Settlement h = settlement();
+            if (h != null && !h.works().isCrew(getUUID())) {
+                discard();
+            }
+        }
     }
 
     /** Out on the surface: nothing solid overhead all the way up. Heightmap-based, so it holds before lighting settles. */
