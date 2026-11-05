@@ -80,6 +80,12 @@ public final class Muster {
     public static final Identifier BUFF = Identifier.fromNamespaceAndPath(Core.NAMESPACE, "defending_the_settlement");
 
     private final Set<UUID> defenders = new LinkedHashSet<>();
+    /**
+     * The defenders stood down and not yet home: still the muster's to the race's absorb ({@link #defends}) until they sink back into the
+     * reserve or are gone. The all-clear cleared them at once, so a defender who walked home (not sinking where it stood) was taken back by
+     * nobody, and a digger the muster drafted (Works#draft, on no roll) was lost for good (the review of ffb5306).
+     */
+    private final Set<UUID> homeward = new LinkedHashSet<>();
     private final Set<UUID> foes = new HashSet<>();
     private final Set<UUID> buffed = new HashSet<>();
     private boolean alarmed;
@@ -106,7 +112,7 @@ public final class Muster {
 
     /** One of the defenders the alarm raised (the horde's own: Horde#tend leaves it be). */
     public boolean defends(UUID id) {
-        return defenders.contains(id);
+        return defenders.contains(id) || homeward.contains(id);
     }
 
     /** Defenders up and alive. */
@@ -200,6 +206,7 @@ public final class Muster {
             standDown(level, h);
             return;
         }
+        homeward.removeIf(id -> !(level.getEntity(id) instanceof SettlerMob r) || !r.isAlive());   // home (sunk), or gone
         if (!alarmed) {
             return;
         }
@@ -529,6 +536,7 @@ public final class Muster {
         for (UUID id : defenders) {
             if (level.getEntity(id) instanceof SettlerMob r && r.isAlive()) {
                 clear(r);
+                homeward.add(id);                                // the muster's until it is home: the race's absorb takes it back
                 r.goHome();                                      // back down into the horde
                 home++;
             }
@@ -577,6 +585,17 @@ public final class Muster {
                 return;
             }
         }
+    }
+
+    /** How many of its defenders up now {@code which} holds for (a race counting those it didn't raise itself: Works#draft's diggers). */
+    public int countDefenders(java.util.function.Predicate<UUID> which) {
+        int n = 0;
+        for (UUID id : defenders) {
+            if (which.test(id)) {
+                n++;
+            }
+        }
+        return n;
     }
 
     /** Tests: the defenders' ids. */
