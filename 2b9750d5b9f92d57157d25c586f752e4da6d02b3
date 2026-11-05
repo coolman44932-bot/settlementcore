@@ -1,0 +1,1 @@
+REVIEW PASS 2b9750d5b9f92d57157d25c586f752e4da6d02b3: the cap is gone as said and the test fails before and passes after; its side effect (a dig emptying the muster's reserve) is fixed in 5969e3f and c1d8bda. (fix-reviewer, 2026-11-04)
