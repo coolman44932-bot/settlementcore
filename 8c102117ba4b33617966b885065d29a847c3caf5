@@ -1,0 +1,1 @@
+REVIEW PASS 8c102117ba4b33617966b885065d29a847c3caf5: the refund fix, the pruning and the Khazuk! round-trip test are sound (no double refund; the test fails at c1d8bda for the right reason); its note (walking-home defenders uncounted in population) is fixed in the next commit. (fix-reviewer, 2026-11-04)
