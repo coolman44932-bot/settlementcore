@@ -1,6 +1,7 @@
 package claude.settlementcore.test;
 
 import claude.settlementcore.Core;
+import claude.settlementcore.room.PlanPlacement;
 import claude.settlementcore.room.RoomTemplates;
 import claude.settlementcore.room.Rooms;
 import claude.settlementcore.settlement.Building;
@@ -56,6 +57,46 @@ public class FoundingGameTests {
             Rooms.register(Core.NAMESPACE, new Rooms.Catalog(List.of(), List.of(), List.of(), java.util.Set.of(), 0, List.of(r)));
         }
         return Rooms.get(HALL);
+    }
+
+    /**
+     * Carved down in the rock (Founding#beginCarved, 0.5.7; the user, 2026-11-06: "dwarves cant build underground?"): the god cuts the hall
+     * out of the dig site's rock as a dig cuts a room, a save and a load half way keep it a carving, and its heart takes it as a raised one's.
+     * The rock round it is left.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aFoundingHallIsCarvedOutOfTheRock(GameTestHelper h) {
+        Rooms.Room room = hall();
+        var level = h.getLevel();
+        BlockPos door = h.absolutePos(new BlockPos(10, 5, 20));
+        PlanPlacement pl = PlanPlacement.compute(room, door, Direction.EAST);
+        h.assertTrue(!level.getBlockState(pl.world(new BlockPos(4, 3, 4))).isAir() && !level.getBlockState(pl.world(new BlockPos(9, 2, 4))).isAir(),
+                "the test needs the hall's place and beyond it in rock");
+        Founding f = Founding.of(level);
+        UUID god = new UUID(0xf00dL, 7L);
+        String no = f.beginCarved(level, pl, god);
+        h.assertTrue(no == null, "the carved hall was refused: " + no);
+        h.assertTrue(f.beginCarved(level, pl, god) != null && f.begin(level, pl, god) != null, "a second hall at the same place wasn't refused");
+        h.assertTrue(f.carving(pl.door()) && f.rising(pl.door()), "the hall isn't being carved");
+        f.second(level, 40);                                     // a little of it cut, then saved and read back, as a restart would
+        var saved = Founding.CODEC.encodeStart(net.minecraft.nbt.NbtOps.INSTANCE, f).getOrThrow();
+        Founding back = Founding.CODEC.parse(net.minecraft.nbt.NbtOps.INSTANCE, saved).getOrThrow();
+        h.assertTrue(back.carving(pl.door()), "the carving read back as a raising");
+        for (int sec = 0; sec < 100 && back.rising(pl.door()); sec++) {
+            back.second(level, Founding.PER_SECOND);
+        }
+        h.assertTrue(!back.rising(pl.door()), "the hall was never carved through");
+        h.assertTrue(level.getBlockState(pl.world(new BlockPos(4, 1, 4))).is(Blocks.CHISELED_STONE_BRICKS)
+                        && level.getBlockState(pl.world(new BlockPos(8, 2, 2))).is(Blocks.STONE_BRICKS)
+                        && level.getBlockState(pl.world(new BlockPos(4, 3, 4))).isAir(),
+                "the hall wasn't carved as its template: its dais, its back wall, its open space");
+        h.assertTrue(!level.getBlockState(pl.world(new BlockPos(9, 2, 4))).isAir(), "the rock beyond the hall was cut");
+        BlockPos spot = Founding.heartSpot(pl);
+        h.assertTrue(back.spot(spot, god), "the carved hall's spot doesn't wait for its heart");
+        Building b = back.claim(spot, god);
+        h.assertTrue(b != null && b.box().equals(pl.box()), "the god's heart didn't take the carved hall: " + b);
+        f.forget(pl.door());
+        h.succeed();
     }
 
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "settlement")

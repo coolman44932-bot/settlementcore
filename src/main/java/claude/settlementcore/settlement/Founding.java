@@ -1,8 +1,10 @@
 package claude.settlementcore.settlement;
 
 import claude.settlementcore.Core;
+import claude.settlementcore.room.DigJob;
 import claude.settlementcore.room.PlanPlacement;
 import claude.settlementcore.room.RaiseJob;
+import claude.settlementcore.room.RoomTemplates;
 import claude.settlementcore.room.RoomShoring;
 import claude.settlementcore.room.Rooms;
 import claude.settlementcore.room.Siting;
@@ -45,6 +47,10 @@ import java.util.UUID;
  * on that spot ({@link #claim}), and the settlement is born owning the hall as its first building: its walls are the settlement's walls
  * if they close a yard (Walls). Or the hall is raised round a heart that already stands ({@link #beginRound}), which then has it.
  *
+ * <p>Or a founding hall placed down in the rock is <b>carved</b> ({@link #beginCarved}, 0.5.7; the user, 2026-11-06, of a Dwarf hold's gate
+ * refused deep underground: "dwarves cant build underground?"): the god cuts it out of the rock as a dig cuts a room, its template's cells
+ * outward from its door, whatever is open beside it walled up as it goes (RoomShoring), nothing levelled or ramped.
+ *
  * <p>Kept per level (SavedData): the halls rising, their jobs saved, and the halls risen waiting for their heart.
  */
 @EventBusSubscriber(modid = Core.MODID)
@@ -53,6 +59,8 @@ public final class Founding extends SavedData {
     /** The station role of a founding hall's heart spot. */
     public static final String HEART = "heart";
     public static final int PER_SECOND = 300;
+    /** A rising hall's job tag key: the hall is carved (a dig), not raised. */
+    static final String CARVED = "carved";
 
     /** A hall rising or risen: its room, door and way; its owner; its job while it rises (else empty); the heart it is raised round, if any. */
     record Hall(String room, BlockPos door, Direction facing, UUID owner, Optional<CompoundTag> job, Optional<BlockPos> heart) {
@@ -79,7 +87,7 @@ public final class Founding extends SavedData {
 
     private final List<Hall> halls;
     /** The jobs of the halls rising, loaded once (not saved here: each saves into its hall's tag). */
-    private final java.util.Map<BlockPos, RaiseJob> jobs = new java.util.HashMap<>();
+    private final java.util.Map<BlockPos, DigJob> jobs = new java.util.HashMap<>();
 
     Founding() {
         this(new ArrayList<>());
@@ -156,9 +164,81 @@ public final class Founding extends SavedData {
         RaiseJob job = new RaiseJob(pl.room().id(), pl.door(), pl.facing(), (Siting.Plan) sited, 0);
         job.ensureLoaded(level);
         jobs.put(pl.door(), job);
-        halls.add(new Hall(pl.room().id(), pl.door(), pl.facing(), owner, Optional.of(job.save()), Optional.ofNullable(heart)));
+        halls.add(new Hall(pl.room().id(), pl.door(), pl.facing(), owner, Optional.of(saved(job)), Optional.ofNullable(heart)));
         setDirty();
         return null;
+    }
+
+    /**
+     * Begins carving the founding hall at {@code pl} for {@code owner} out of the rock it is placed in: no siting (nothing is levelled,
+     * ramped or raised), the hall's cells cut and set by the god outward from its door, {@value #PER_SECOND} a second, and whatever is open
+     * beside it (a cave, water, lava, loose gravel) walled up as it goes; its doorway is left open. It waits for its heart as a raised one
+     * does. Refused over another hall, where its land is not loaded, or where it would cut into another settlement. Returns why it can't
+     * be, or null when begun.
+     */
+    @Nullable
+    public String beginCarved(ServerLevel level, PlanPlacement pl, UUID owner) {
+        String the = Settlement.the(pl.room().displayName());
+        if (!isFoundingHall(pl.room())) {
+            return cap(the) + " is no founding hall";
+        }
+        for (Hall h : halls) {
+            if (h.known() && h.placement().box().intersects(pl.box())) {
+                return "Another hall is founded there already";
+            }
+        }
+        if (RoomTemplates.get(level, pl.room().id()).isEmpty()) {
+            return cap(the) + "'s template is missing";
+        }
+        BoundingBox box = pl.box();
+        for (int cz = (box.minZ() - 1) >> 4; cz <= (box.maxZ() + 1) >> 4; cz++) {
+            for (int cx = (box.minX() - 1) >> 4; cx <= (box.maxX() + 1) >> 4; cx++) {
+                if (!level.hasChunk(cx, cz)) {
+                    return "The land at " + (cx << 4) + " " + (cz << 4) + " is not loaded: the whole site must be";
+                }
+            }
+        }
+        for (Settlement s : SettlementSpawns.loaded(level)) {
+            if (box.inflatedBy(2).isInside(s.getBlockPos())) {
+                return cap(the) + " would be cut round another " + s.centreName();
+            }
+            for (Building b : s.buildings()) {
+                if (b.box().inflatedBy(1).intersects(box)) {
+                    return cap(the) + " would cut into another settlement's rooms at " + b.box().minX() + " " + b.box().minY() + " " + b.box().minZ();
+                }
+            }
+        }
+        DigJob job = new DigJob(pl.room().id(), pl.door(), pl.facing());
+        job.ensureLoaded(level);
+        jobs.put(pl.door(), job);
+        halls.add(new Hall(pl.room().id(), pl.door(), pl.facing(), owner, Optional.of(saved(job)), Optional.empty()));
+        setDirty();
+        return null;
+    }
+
+    /** A rising hall's job as saved in its hall: a carved one marked ({@value #CARVED}). */
+    private static CompoundTag saved(DigJob job) {
+        CompoundTag t = job.save();
+        if (!(job instanceof RaiseJob)) {
+            t.putBoolean(CARVED, true);
+        }
+        return t;
+    }
+
+    /** A rising hall's job back: carved (a dig) or raised. Null if it can't be read. */
+    @Nullable
+    private static DigJob loadJob(CompoundTag t) {
+        return t.getBooleanOr(CARVED, false) ? DigJob.load(t) : RaiseJob.load(t);
+    }
+
+    /** Whether the hall at {@code door} is being carved (the tests). */
+    public boolean carving(BlockPos door) {
+        for (Hall h : halls) {
+            if (h.door().equals(door)) {
+                return h.job().isPresent() && h.job().get().getBooleanOr(CARVED, false);
+            }
+        }
+        return false;
     }
 
     /**
@@ -262,7 +342,7 @@ public final class Founding extends SavedData {
             if (!h.known() || h.job().isEmpty() || !level.isLoaded(h.door())) {
                 continue;
             }
-            RaiseJob job = jobs.computeIfAbsent(h.door(), d -> RaiseJob.load(h.job().get()));
+            DigJob job = jobs.computeIfAbsent(h.door(), d -> loadJob(h.job().get()));
             if (job == null) {
                 halls.remove(i--);                               // a job that can't be read: nothing was raised of it to stand on
                 setDirty();
@@ -270,9 +350,13 @@ public final class Founding extends SavedData {
             }
             job.ensureLoaded(level);
             List<BlockPos> sample = new ArrayList<>();
-            int n = job.raiseInOrder(level, budget, sample);   // the god's: in order, nothing held back for its readiness
-            if (n == 0 && !job.isDone()) {
-                job.heaveFront(level);                           // a cell its kind of job holds back: the god sets it in anyway
+            if (job instanceof RaiseJob raise) {
+                int n = raise.raiseInOrder(level, budget, sample);   // the god's: in order, nothing held back for its readiness
+                if (n == 0 && !raise.isDone()) {
+                    raise.heaveFront(level);                     // a cell its kind of job holds back: the god sets it in anyway
+                }
+            } else {
+                job.gnawInOrder(level, budget, sample);          // carved: cut out of the rock, outward from its door
             }
             for (BlockPos p : sample) {
                 level.sendParticles(ParticleTypes.CLOUD, p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5, 4, 0.4, 0.4, 0.4, 0.02);
@@ -289,7 +373,7 @@ public final class Founding extends SavedData {
                     halls.set(i, new Hall(h.room(), h.door(), h.facing(), h.owner(), Optional.empty(), Optional.empty()));
                 }
             } else {
-                halls.set(i, new Hall(h.room(), h.door(), h.facing(), h.owner(), Optional.of(job.save()), h.heart()));
+                halls.set(i, new Hall(h.room(), h.door(), h.facing(), h.owner(), Optional.of(saved(job)), h.heart()));
             }
             setDirty();
         }
