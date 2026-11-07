@@ -173,8 +173,8 @@ public final class Founding extends SavedData {
      * Begins carving the founding hall at {@code pl} for {@code owner} out of the rock it is placed in: no siting (nothing is levelled,
      * ramped or raised), the hall's cells cut and set by the god outward from its door, {@value #PER_SECOND} a second, and whatever is open
      * beside it (a cave, water, lava, loose gravel) walled up as it goes; its doorway is left open. It waits for its heart as a raised one
-     * does. Refused over another hall, where its land is not loaded, or where it would cut into another settlement. Returns why it can't
-     * be, or null when begun.
+     * does. Refused over another hall, where its land is not loaded, where a block entity stands in its box (a chest's contents would be cut
+     * away with it: the review of c0fe286), or where it would cut into another settlement. Returns why it can't be, or null when begun.
      */
     @Nullable
     public String beginCarved(ServerLevel level, PlanPlacement pl, UUID owner) {
@@ -195,6 +195,16 @@ public final class Founding extends SavedData {
             for (int cx = (box.minX() - 1) >> 4; cx <= (box.maxX() + 1) >> 4; cx++) {
                 if (!level.hasChunk(cx, cz)) {
                     return "The land at " + (cx << 4) + " " + (cz << 4) + " is not loaded: the whole site must be";
+                }
+            }
+        }
+        for (int cz = box.minZ() >> 4; cz <= box.maxZ() >> 4; cz++) {
+            for (int cx = box.minX() >> 4; cx <= box.maxX() >> 4; cx++) {
+                for (BlockPos p : level.getChunk(cx, cz).getBlockEntitiesPos()) {
+                    if (box.isInside(p)) {                       // a chest, a furnace, a spawner: someone's, never cut away with what is in it
+                        return "Something stands in " + the + "'s way at " + p.getX() + " " + p.getY() + " " + p.getZ()
+                                + " (" + level.getBlockState(p).getBlock().getName().getString() + "): take it out first";
+                    }
                 }
             }
         }

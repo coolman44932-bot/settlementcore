@@ -74,6 +74,12 @@ public class FoundingGameTests {
                 "the test needs the hall's place and beyond it in rock");
         Founding f = Founding.of(level);
         UUID god = new UUID(0xf00dL, 7L);
+        BlockPos chest = pl.world(new BlockPos(6, 2, 6));
+        level.setBlockAndUpdate(chest, Blocks.CHEST.defaultBlockState());
+        String hoard = f.beginCarved(level, pl, god);
+        h.assertTrue(hoard != null && hoard.contains(chest.getX() + " " + chest.getY() + " " + chest.getZ()) && !f.rising(pl.door()),
+                "a chest in the hall's way wasn't refused: " + hoard);
+        level.setBlockAndUpdate(chest, Blocks.STONE.defaultBlockState());
         String no = f.beginCarved(level, pl, god);
         h.assertTrue(no == null, "the carved hall was refused: " + no);
         h.assertTrue(f.beginCarved(level, pl, god) != null && f.begin(level, pl, god) != null, "a second hall at the same place wasn't refused");
