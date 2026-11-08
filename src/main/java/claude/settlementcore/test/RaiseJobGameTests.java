@@ -219,6 +219,63 @@ public class RaiseJobGameTests {
     }
 
     /**
+     * A site whose builders fill its hollows (Siting's fillHollows) lays them as its other seals, held or not: on section 6's patch a cave 1 to
+     * 4 under the box (the fill's lowest cell is over the cave's air), and water 1 under the berm. A made-up builder is handed batch after
+     * batch till the building stands: no claim comes back empty, nothing is heaved or spared, the band 1 and 2 under the floor is stone, the
+     * cave under it is still air, and the water is walled.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
+    public static void aSiteFillsTheHollowsUnderItWithItsBuilders(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> patch(s.floor, s.bx0, s.bz0, x, z));
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            ServerLevel level = s.level;
+            for (int x = s.bx0 + 2; x <= s.bx0 + 4; x++) {
+                for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
+                    for (int y = s.floor - 4; y <= s.floor - 1; y++) {
+                        s.set(x, y, z, Blocks.AIR.defaultBlockState());
+                    }
+                }
+            }
+            BlockPos wet = new BlockPos(s.bx1() + 1, s.floor - 1, s.bz0 + 2);
+            s.set(wet.getX(), wet.getY(), wet.getZ(), Blocks.WATER.defaultBlockState());
+            Plan p = s.expectPlan(Siting.plan(level, s.pl, claude.settlementcore.room.RoomShoring.Warren.alone(), true, true), "the patch over a cave, filling");
+            RaiseJob job = new RaiseJob(SitingGameTests.PLATFORM, s.pl.door(), Direction.EAST, p, 0);
+            job.ensureLoaded(level);
+            for (int k = 0; job.clearing(); k++) {
+                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+            }
+            UUID builder = new UUID(0x5a17eL, 2L);
+            BlockPos near = s.pl.door();
+            for (int round = 0; !job.isDone(); round++) {
+                h.assertTrue(round < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size() + " done");
+                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+                h.assertTrue(anchor != null, "nothing could be handed out, " + (job.taskList().size() - job.finishedCount()) + " cells left, "
+                        + job.state() + " (" + job.openNow() + " open now)");
+                int n = job.batch(builder).size();
+                for (int k = 0; k < n; k++) {
+                    job.gnawSome(level, builder, (k + 0.5f) / n);
+                }
+                job.complete(level, builder);
+                near = anchor;
+            }
+            h.assertTrue(job.heaved() == 0 && job.spared() == 0, "heaved " + job.heaved() + ", spared " + job.spared());
+            for (int x = s.bx0 + 2; x <= s.bx0 + 4; x++) {
+                for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
+                    for (int y = s.floor - 2; y <= s.floor - 1; y++) {
+                        h.assertTrue(s.get(x, y, z).is(Blocks.STONE), "the hollow at " + x + " " + y + " " + z + " is " + s.get(x, y, z));
+                    }
+                    h.assertTrue(s.get(x, s.floor - 3, z).isAir(), "the cave under the band at " + x + " " + z + " was filled");
+                }
+            }
+            h.assertTrue(level.getFluidState(wet).isEmpty(), "the water under the berm is " + level.getBlockState(wet));
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
      * Nobody is built into a raised building's courses, a player least of all (the review of 51b59f8: Clearance moved only
      * mobs, and a player standing on a half-built step, in the next course's cell, was built into, feet then head). On flat
      * ground the earthworks and the first course are laid by hand; then a mock player stands in a cell of the 2nd course (on

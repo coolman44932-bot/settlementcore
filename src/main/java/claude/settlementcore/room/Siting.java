@@ -156,8 +156,23 @@ public final class Siting {
      * round a settlement's heart, settlement/Founding#beginRound: the heart stands on its spot through the raising).
      */
     public static Result plan(Level level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape, LongSet spare) {
+        return plan(level, pl, warren, reshape, spare, false);
+    }
+
+    /**
+     * {@link #plan}, and with {@code fillHollows} the hollows under the site are no refusal: a cave, or a pocket of water or lava, up to 2
+     * under the ground the pad or ramp lays (Settlement#fillsHollows; the user, 2026-11-08, of the Dwarfs: "wherever they are gonna build at
+     * so i dont get the message for hollow ground") is filled by the builders in the plinth phase with the column's deep block, as the pad's
+     * seals are ({@link Plan#seals}). What isn't the land (a player's block, a chest) is refused as ever.
+     */
+    public static Result plan(Level level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape, boolean fillHollows) {
+        return plan(level, pl, warren, reshape, it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET, fillHollows);
+    }
+
+    /** {@link #plan(Level, PlanPlacement, RoomShoring.Warren, boolean, LongSet)}, filling the hollows under it or not. */
+    public static Result plan(Level level, PlanPlacement pl, RoomShoring.Warren warren, boolean reshape, LongSet spare, boolean fillHollows) {
         try {
-            return new Planner(level, pl, warren, spare).plan(reshape);   // spare before anything is scanned: the constructor scans columns
+            return new Planner(level, pl, warren, spare, fillHollows).plan(reshape);   // spare before anything is scanned: the constructor scans columns
         } catch (Refused r) {
             return r.refusal;
         }
@@ -224,7 +239,12 @@ public final class Siting {
 
     /** {@link #preview(Level, PlanPlacement)}, with the land round the pad reshaped as the plan is asked to, or not. */
     public static Preview preview(Level level, PlanPlacement pl, boolean reshape) {
-        return new Planner(level, pl, RoomShoring.Warren.alone()).preview(reshape);
+        return preview(level, pl, reshape, false);
+    }
+
+    /** {@link #preview(Level, PlanPlacement, boolean)} for builders who fill the hollows under a site ({@link #plan(Level, PlanPlacement, RoomShoring.Warren, boolean, boolean)}). */
+    public static Preview preview(Level level, PlanPlacement pl, boolean reshape, boolean fillHollows) {
+        return new Planner(level, pl, RoomShoring.Warren.alone(), it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET, fillHollows).preview(reshape);
     }
 
     // --- what the land is made of --------------------------------------------------------------------------------------
@@ -471,7 +491,10 @@ public final class Siting {
             return trees.clone();
         }
 
-        /** The water beside a cut of the pad that the plinth phase walls up first, with the soil beside it (packed BlockPos). */
+        /**
+         * The water beside a cut of the pad that the plinth phase walls up first, with the soil beside it, and the hollows under the pad and
+         * ramp that its builders fill ({@link Siting#plan(Level, PlanPlacement, RoomShoring.Warren, boolean, boolean)}) (packed BlockPos).
+         */
         public long[] seals() {
             return seals.clone();
         }
@@ -922,13 +945,18 @@ public final class Siting {
 
         /** Cells left as they are, never a thing on the site ({@link Siting#plan(Level, PlanPlacement, RoomShoring.Warren, boolean, LongSet)}). */
         final LongSet spare;
+        /** The hollows under the site are filled, not refused ({@link Siting#plan(Level, PlanPlacement, RoomShoring.Warren, boolean, boolean)}). */
+        final boolean fillHollows;
+        /** Every cell in {@link #seals}, once. */
+        final LongOpenHashSet sealed = new LongOpenHashSet();
 
         Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren) {
-            this(level, pl, warren, it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET);
+            this(level, pl, warren, it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET, false);
         }
 
-        Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren, LongSet spare) {
+        Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren, LongSet spare, boolean fillHollows) {
             this.spare = spare;
+            this.fillHollows = fillHollows;
             this.level = level;
             this.pl = pl;
             this.warren = warren;
@@ -1217,6 +1245,13 @@ public final class Siting {
                 now = r.height();
                 seamed = r.seamed();
                 walk(f, now, seamed);
+                if (fillHollows) {
+                    for (int i = 0; i < now.length; i++) {
+                        if (f.kinds()[i] == Reshape.Kind.FREE && now[i] != g[i]) {
+                            fillUnder(col(f.x0() + i % f.w(), f.z0() + i / f.w()), now[i]);   // the hollows under the ramp's cuts and fills
+                        }
+                    }
+                }
             }
             return finish(f, g, now, margin, trees, extra, reshape, seamed);
         }
@@ -1347,11 +1382,17 @@ public final class Siting {
             for (int y = lo; y <= g; y++) {
                 BlockState s = at(x, y, z);
                 if (!ground(s) || s.hasBlockEntity()) {
+                    if (fillable(x, y, z, s)) {
+                        continue;                                // the builders fill it (fillUnder, below)
+                    }
                     BlockPos p = new BlockPos(x, y, z);
                     throw refuse(s.isAir() || wet(s)
                             ? "The ground is hollow at " + x + " " + y + " " + z + ", under " + whose + " site"
                             : "Something is in the ground at " + x + " " + y + " " + z + ", under " + whose + " site: only the ground itself can be cut", p);
                 }
+            }
+            if (fillHollows) {
+                fillUnder(c, floor);
             }
             // what stands on a column the pad cuts, fills or builds on goes with it: a torch on a cut berm would float
             boolean moved = boxed || g != floor;
@@ -1432,7 +1473,7 @@ public final class Siting {
                             if (!(s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock) && !cover(s)) {
                                 throw refuse("Water at " + nx + " " + y + " " + nz + " would pour onto " + whose + " site through the cut beside it", q);
                             }
-                            if (seen.add(q.asLong())) {
+                            if (seen.add(q.asLong()) && sealed.add(q.asLong())) {
                                 Look l = sample(n);
                                 if (l == null) {
                                     l = sample(c);
@@ -1444,6 +1485,40 @@ public final class Siting {
                     }
                 }
             }
+        }
+
+        /** A cell under the ground that the builders fill ({@link #fillHollows}): air, water, lava or ice, no block entity, not spared. */
+        boolean fillable(int x, int y, int z, BlockState s) {
+            return fillHollows && (s.isAir() || wet(s)) && !s.hasBlockEntity() && !spare.contains(BlockPos.asLong(x, y, z));
+        }
+
+        /**
+         * The hollows of {@code c} under the surface it is given ({@code now}: the floor, for the pad), from 2 under the lower of that and its
+         * ground up to the cell under the lower one: filled by the builders in the plinth phase with the column's deep block, as the pad's
+         * seals are ({@link #fillHollows}). Nothing over the new surface is filled: it is cut away, or the building's own.
+         */
+        void fillUnder(Col c, int now) {
+            int g = c.foot;
+            for (int y = Math.min(g, now) - 2; y <= Math.min(g, now - 1); y++) {
+                BlockState s = at(c.x, y, c.z);
+                long k = BlockPos.asLong(c.x, y, c.z);
+                if (fillable(c.x, y, c.z, s) && sealed.add(k)) {
+                    Look l = hollowLook(c, y);
+                    seals.add(k);
+                    sealLooks.add(l);
+                }
+            }
+        }
+
+        /** What a hollow is filled with: the column's deep block, or stone (deepslate under 0) where that is loose, not whole or none. */
+        Look hollowLook(Col c, int y) {
+            Look l = c.fluid() ? null : sample(c);
+            BlockState s = l == null ? null : l.deep();
+            if (s == null || s.getBlock() instanceof net.minecraft.world.level.block.FallingBlock
+                    || !s.isCollisionShapeFullBlock(EmptyBlockGetter.INSTANCE, BlockPos.ZERO)) {
+                s = (y < 0 ? Blocks.DEEPSLATE : Blocks.STONE).defaultBlockState();
+            }
+            return new Look(s, s, s);
         }
 
         /**
@@ -1676,6 +1751,9 @@ public final class Siting {
             for (int y = lo; y <= g; y++) {
                 BlockState s = at(c.x, y, c.z);
                 if (!ground(s) || s.hasBlockEntity()) {
+                    if (fillable(c.x, y, c.z, s)) {
+                        continue;                                // filled once the ramp is solved (plan)
+                    }
                     return s.isAir() ? Why.CAVE : wet(s) ? Why.WATER : log(s) ? Why.TREE : Why.BLOCK;
                 }
             }

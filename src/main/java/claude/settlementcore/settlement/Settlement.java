@@ -136,6 +136,15 @@ public interface Settlement extends RoomShoring.Warren {
     }
 
     /**
+     * Whether this race's builders fill the hollows under what they raise (a cave, a pocket of water or lava under the ground the pad or ramp
+     * lays: room/Siting#plan with fillHollows) instead of the site being refused for hollow ground. Off until a race takes it up (the Dwarfs,
+     * 2026-11-08).
+     */
+    default boolean fillsHollows() {
+        return false;
+    }
+
+    /**
      * The words of the muster's two lines to the owner (core/defence/Muster): the alarm, "The warren is attacked! 3 Zombies in the tunnels: the horde
      * rises to meet them.", and the all-clear, "The warren is clear: 3 foes slain, 1 of ours lost. 4 defenders sink back into the tunnels." (the Warren
      * Heart's words). {@code place} is what the settlement is called in them ("warren"), {@code ground} where a foe is that is in none of its rooms

@@ -1291,7 +1291,7 @@ public final class Works {
         if (!heart.inSettlement(door) && !heart.insideWalls(door) && !besideSite(door)) {
             return cap(the) + "'s door at " + at + " is outside the settlement: raise it near its " + heart.centreName() + ", or beside what it has built";
         }
-        Siting.Result sited = Siting.plan(level, pl, withSites(), reshape);
+        Siting.Result sited = Siting.plan(level, pl, withSites(), reshape, heart.fillsHollows());   // a race's builders may fill the hollows under it
         if (sited instanceof Siting.Refusal no) {
             return no.why();
         }

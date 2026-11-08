@@ -249,6 +249,16 @@ public class RaiseJob extends DigJob {
             lf.add(e.local().getY());
         }
         index(out, ph.toByteArray(), lf.toIntArray(), pl);
+        if (plan != null) {
+            // the plan's seals in the box too: a hollow under the plinth filled (Siting's fillHollows) is laid as it is, held or not, as
+            // the water walled beside a cut is (a cave under it holds nothing up)
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet seals = new it.unimi.dsi.fastutil.longs.LongOpenHashSet(plan.seals());
+            for (int i = 0; i < out.size(); i++) {
+                if (phase[i] == PLINTH && seals.contains(out.get(i).pos().asLong())) {
+                    seal.set(i);
+                }
+            }
+        }
         return out;
     }
 

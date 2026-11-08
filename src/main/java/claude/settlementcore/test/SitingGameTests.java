@@ -1398,6 +1398,108 @@ public class SitingGameTests {
     }
 
     /**
+     * Builders who fill the hollows under a site (Siting's fillHollows, Settlement#fillsHollows; the user, 2026-11-08, of the Dwarfs: "wherever
+     * they are gonna build at so i dont get the message for hollow ground") are given the site the engine alone refuses. Under flat ground: a
+     * cave 1 and 2 under the box (over more cave), water 1 under the berm and lava 2 under the landing. Without the fill it is refused for
+     * hollow ground; with it, it is sited, and every one of those cells is a seal of the plinth phase, stone (the column's deep block), laid
+     * before the berm's work; nothing over the floor is filled; the saved plan rebuilds the same earthworks; and laid, the cells are stone and
+     * the cave under them stays a cave. A player's planks in the ground are refused all the same. Then a sunken site, its ramp cut down into
+     * the rise: a cave 1 under a ramp column's new surface makes the ramp go round it unfilled, and with the fill the column is the ramp's,
+     * the cave's cells filled.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 400, batch = "siting")
+    public static void theHollowsUnderASiteAreFilledByBuildersWhoFillThem(GameTestHelper h) {
+        Site s = new Site(h);
+        s.lay((x, z) -> s.floor);
+        h.runAfterDelay(20, () -> s.guard(() -> {
+            BlockState air = Blocks.AIR.defaultBlockState();
+            List<BlockPos> hollow = new ArrayList<>();
+            for (int x = s.bx0 + 3; x <= s.bx0 + 5; x++) {
+                for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
+                    for (int y = s.floor - 4; y <= s.floor - 1; y++) {
+                        s.set(x, y, z, air);
+                        if (y >= s.floor - 2) {
+                            hollow.add(new BlockPos(x, y, z));
+                        }
+                    }
+                }
+            }
+            BlockPos wet = new BlockPos(s.bx1() + 1, s.floor - 1, s.bz0 + 2);   // under the berm
+            s.set(wet.getX(), wet.getY(), wet.getZ(), Blocks.WATER.defaultBlockState());
+            hollow.add(wet);
+            BlockPos hot = new BlockPos(s.bx0 - 2, s.floor - 2, s.bz0 + 4);     // under the landing, before the door
+            s.set(hot.getX(), hot.getY(), hot.getZ(), Blocks.LAVA.defaultBlockState());
+            hollow.add(hot);
+            Refusal no = s.expectRefusal(s.plan(true), "the site over a cave, unfilled");
+            h.assertTrue(no.why().startsWith("The ground is hollow"), "unfilled, the site over a cave is refused for \"" + no.why() + "\", not hollow ground");
+            Plan p = s.expectPlan(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true), "the site over a cave, its hollows filled");
+            LongOpenHashSet seals = new LongOpenHashSet(p.seals());
+            for (BlockPos c : hollow) {
+                h.assertTrue(seals.contains(c.asLong()), "the hollow at " + c.toShortString() + " isn't filled: seals " + seals.size());
+            }
+            h.assertTrue(seals.size() == hollow.size(), "the plan fills " + seals.size() + " cells, not the " + hollow.size() + " hollows under its ground");
+            int firstPad = Integer.MAX_VALUE;
+            int lastSeal = -1;
+            List<Earthwork> works = p.earthworks();
+            for (int k = 0; k < works.size(); k++) {
+                Earthwork e = works.get(k);
+                if (seals.contains(e.pos().asLong())) {
+                    h.assertTrue(e.phase() == Phase.PLINTH && e.state().is(Blocks.STONE), "the hollow's fill is " + e);
+                    h.assertTrue(e.pos().getY() < s.floor, "a cell over the floor is filled: " + e);
+                    lastSeal = k;
+                }
+                if (e.phase() == Phase.PAD) {
+                    firstPad = Math.min(firstPad, k);
+                }
+            }
+            h.assertTrue(lastSeal < firstPad, "a hollow (task " + lastSeal + ") is filled after the berm's work begins (task " + firstPad + ")");
+            Plan again = Plan.load(roundTrip(p.save()), s.pl, s.template);
+            h.assertTrue(again != null && again.earthworks().equals(works), "the saved plan rebuilds other earthworks: "
+                    + (again == null ? "it didn't load" : firstDifference(works, again.earthworks())));
+            p.applyNow(s.level);
+            for (BlockPos c : hollow) {
+                h.assertTrue(s.level.getBlockState(c).is(Blocks.STONE), "the hollow at " + c.toShortString() + " is " + s.level.getBlockState(c) + " once laid");
+            }
+            h.assertTrue(s.get(s.bx0 + 4, s.floor - 3, s.bz0 + 4).isAir(), "the cave under the filled band was filled too");
+            // a player's planks in the ground are no hollow
+            s.lay((x, z) -> s.floor);
+            s.set(s.bx0 + 4, s.floor - 1, s.bz0 + 4, Blocks.OAK_PLANKS.defaultBlockState());
+            Refusal planks = s.expectRefusal(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true), "the site over a player's planks, filling");
+            h.assertTrue(planks.why().startsWith("Something is in the ground"), "planks in the ground are refused for \"" + planks.why() + "\"");
+            // the ramp: a sunken site cut into the rise, a cave under a ramp column's new surface
+            int land = s.floor + 3;
+            s.lay((x, z) -> land);
+            Plan plain = s.expectPlan(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true), "the sunken site");
+            int rx = Integer.MIN_VALUE;
+            int rz = 0;
+            for (int z = plain.z0(); z < plain.z0() + plain.depth() && rx == Integer.MIN_VALUE; z++) {
+                for (int x = plain.x0(); x < plain.x0() + plain.width(); x++) {
+                    if (plain.kind(x, z) == claude.settlementcore.room.Reshape.Kind.FREE && plain.newHeight(x, z) < plain.oldGround(x, z)
+                            && plain.newHeight(x, z) > s.floor) {
+                        rx = x;
+                        rz = z;
+                        break;
+                    }
+                }
+            }
+            h.assertTrue(rx != Integer.MIN_VALUE, "the sunken site's ramp cuts no column over the floor: " + plain);
+            int under = plain.newHeight(rx, rz) - 1;
+            s.set(rx, under, rz, air);
+            s.set(rx, under - 1, rz, air);
+            Siting.Result round = s.plan(true);
+            h.assertTrue(!(round instanceof Plan q) || q.kind(rx, rz) != claude.settlementcore.room.Reshape.Kind.FREE,
+                    "unfilled, the ramp still cuts over the cave at " + rx + " " + rz);
+            Plan filled = s.expectPlan(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true), "the sunken site over a cave, filling");
+            LongOpenHashSet rs = new LongOpenHashSet(filled.seals());
+            h.assertTrue(filled.kind(rx, rz) == claude.settlementcore.room.Reshape.Kind.FREE && rs.contains(BlockPos.asLong(rx, under, rz))
+                    && rs.contains(BlockPos.asLong(rx, under - 1, rz)), "filling, the ramp's column at " + rx + " " + rz + " is "
+                    + filled.kind(rx, rz) + " and its cave filled: " + rs.contains(BlockPos.asLong(rx, under, rz)));
+            s.clear();
+            h.succeed();
+        }));
+    }
+
+    /**
      * The pad's own refusals, each naming its spot: water 3 deep in the box (WATER_MAX is 2); lava on the ground in the box;
      * a pond standing 2 over the floor beside the berm (its bank would be cut); a cave 1 and 2 under the box's ground; and
      * another building (a fake settlement's, the ground's own cells) beside the berm.
