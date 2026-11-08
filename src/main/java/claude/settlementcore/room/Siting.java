@@ -646,10 +646,15 @@ public final class Siting {
                     plinth.add(new Earthwork(new BlockPos(x, y, z), s, Phase.PLINTH, 0));
                 }
             }
+            List<Earthwork> late = new ArrayList<>();
             for (int k = 0; k < seals.length; k++) {
                 int v = sealLooks[k];
                 Look l = v == 0 ? PLAIN : looks.get(Math.abs(v) - 1);
-                plinth.add(new Earthwork(BlockPos.of(seals[k]), l.soil(), Phase.PLINTH, 0));   // walled before the cut opens it
+                if (v < 0) {
+                    late.add(new Earthwork(BlockPos.of(seals[k]), l.soil(), Phase.PAD, 0));   // a hollow under a cut: filled once it is cut down to
+                } else {
+                    plinth.add(new Earthwork(BlockPos.of(seals[k]), l.soil(), Phase.PLINTH, 0));   // walled before the cut opens it
+                }
             }
             int lowest = plinth.stream().mapToInt(e -> e.pos().getY()).min().orElse(0);
             plinth.sort(Comparator.<Earthwork>comparingInt(e -> e.pos().getY()).thenComparingInt(e -> e.pos().getZ()).thenComparingInt(e -> e.pos().getX()));
@@ -657,8 +662,41 @@ public final class Siting {
                 out.add(new Earthwork(e.pos(), e.state(), Phase.PLINTH, e.pos().getY() - lowest));
             }
             // the berm and landing, then the ramp
-            out.addAll(works(Phase.PAD, true));
-            out.addAll(works(Phase.RAMP, false));
+            List<Earthwork> pad = works(Phase.PAD, true);
+            out.addAll(pad);
+            out.addAll(lateSeals(late, Phase.PAD, pad));
+            List<Earthwork> ramp = works(Phase.RAMP, false);
+            out.addAll(ramp);
+            out.addAll(lateSeals(late, Phase.RAMP, ramp));
+            return out;
+        }
+
+        /**
+         * The hollows under the columns of {@code phase} that it cuts down (Siting's fillHollows; the review of b8610cd): filled after the
+         * phase's own cuts and fills, bottom-up, each a lift past the phase's last, so the builders stand on the cut surface over them, not
+         * on the old ground several over (a stand reaches 3 down at most). The berm's and landing's in PAD, the ramp's in RAMP.
+         */
+        private List<Earthwork> lateSeals(List<Earthwork> late, Phase phase, List<Earthwork> works) {
+            List<Earthwork> mine = new ArrayList<>();
+            for (Earthwork e : late) {
+                int x = e.pos().getX();
+                int z = e.pos().getZ();
+                Reshape.Kind k = inArea(x, z) ? kind(x, z) : Reshape.Kind.FREE;
+                boolean pad = k == Reshape.Kind.PAD;
+                if (phase == Phase.PAD ? pad : !pad) {
+                    mine.add(e);
+                }
+            }
+            if (mine.isEmpty()) {
+                return mine;
+            }
+            int top = works.stream().mapToInt(Earthwork::lift).max().orElse(-1);
+            int lowest = mine.stream().mapToInt(e -> e.pos().getY()).min().orElse(0);
+            mine.sort(Comparator.<Earthwork>comparingInt(e -> e.pos().getY()).thenComparingInt(e -> e.pos().getZ()).thenComparingInt(e -> e.pos().getX()));
+            List<Earthwork> out = new ArrayList<>(mine.size());
+            for (Earthwork e : mine) {
+                out.add(new Earthwork(e.pos(), e.state(), phase, top + 1 + e.pos().getY() - lowest));
+            }
             return out;
         }
 
@@ -949,6 +987,8 @@ public final class Siting {
         final boolean fillHollows;
         /** Every cell in {@link #seals}, once. */
         final LongOpenHashSet sealed = new LongOpenHashSet();
+        /** The seals under a column the pad or ramp cuts down (outside the box): laid after the cut, not in the plinth phase. */
+        final LongOpenHashSet lateSeals = new LongOpenHashSet();
 
         Planner(Level level, PlanPlacement pl, RoomShoring.Warren warren) {
             this(level, pl, warren, it.unimi.dsi.fastutil.longs.LongSets.EMPTY_SET, false);
@@ -1382,7 +1422,7 @@ public final class Siting {
             for (int y = lo; y <= g; y++) {
                 BlockState s = at(x, y, z);
                 if (!ground(s) || s.hasBlockEntity()) {
-                    if (fillable(x, y, z, s)) {
+                    if (y < floor && fillable(x, y, z, s)) {
                         continue;                                // the builders fill it (fillUnder, below)
                     }
                     BlockPos p = new BlockPos(x, y, z);
@@ -1487,9 +1527,14 @@ public final class Siting {
             }
         }
 
-        /** A cell under the ground that the builders fill ({@link #fillHollows}): air, water, lava or ice, no block entity, not spared. */
+        /**
+         * A cell under the ground that the builders fill ({@link #fillHollows}): air, water, lava or ice (the fluid itself: a player's
+         * waterlogged slab is theirs), no block entity, not spared. Only under the surface the column ends at: one in what is cut away
+         * would be opened by the cut (lava let out onto the site), and refuses it as ever.
+         */
         boolean fillable(int x, int y, int z, BlockState s) {
-            return fillHollows && (s.isAir() || wet(s)) && !s.hasBlockEntity() && !spare.contains(BlockPos.asLong(x, y, z));
+            return fillHollows && (s.isAir() || s.getBlock() instanceof net.minecraft.world.level.block.LiquidBlock || s.is(BlockTags.ICE))
+                    && !s.hasBlockEntity() && !spare.contains(BlockPos.asLong(x, y, z));
         }
 
         /**
@@ -1506,6 +1551,9 @@ public final class Siting {
                     Look l = hollowLook(c, y);
                     seals.add(k);
                     sealLooks.add(l);
+                    if (now < g && !inBox(c.x, c.z)) {
+                        lateSeals.add(k);                        // under a cut: filled after it (Plan#lateSeals)
+                    }
                 }
             }
         }
@@ -1751,7 +1799,7 @@ public final class Siting {
             for (int y = lo; y <= g; y++) {
                 BlockState s = at(c.x, y, c.z);
                 if (!ground(s) || s.hasBlockEntity()) {
-                    if (fillable(c.x, y, c.z, s)) {
+                    if (y < now && fillable(c.x, y, c.z, s)) {
                         continue;                                // filled once the ramp is solved (plan)
                     }
                     return s.isAir() ? Why.CAVE : wet(s) ? Why.WATER : log(s) ? Why.TREE : Why.BLOCK;
@@ -1947,7 +1995,8 @@ public final class Siting {
                     l = PLAIN;
                 }
                 index.putIfAbsent(l, index.size());
-                sealLook[k] = (byte) (index.get(l) + 1);
+                int sv = index.get(l) + 1;
+                sealLook[k] = (byte) (lateSeals.contains(seals.getLong(k)) ? -sv : sv);   // negative: laid after its column's cut
             }
             List<Look> looks = new ArrayList<>(index.keySet());
             // the numbers

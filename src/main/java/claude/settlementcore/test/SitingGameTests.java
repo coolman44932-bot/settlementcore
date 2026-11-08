@@ -1466,6 +1466,12 @@ public class SitingGameTests {
             s.set(s.bx0 + 4, s.floor - 1, s.bz0 + 4, Blocks.OAK_PLANKS.defaultBlockState());
             Refusal planks = s.expectRefusal(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true), "the site over a player's planks, filling");
             h.assertTrue(planks.why().startsWith("Something is in the ground"), "planks in the ground are refused for \"" + planks.why() + "\"");
+            // nor is a player's waterlogged slab (the review of b8610cd: it read as water)
+            s.lay((x, z) -> s.floor);
+            s.set(s.bx0 + 4, s.floor - 1, s.bz0 + 4, Blocks.OAK_SLAB.defaultBlockState()
+                    .setValue(net.minecraft.world.level.block.state.properties.BlockStateProperties.WATERLOGGED, true));
+            Siting.Result slab = Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true);
+            h.assertTrue(slab instanceof Refusal, "a player's waterlogged slab under the box was taken for a hollow and filled");
             // the ramp: a sunken site cut into the rise, a cave under a ramp column's new surface
             int land = s.floor + 3;
             s.lay((x, z) -> land);
@@ -1494,6 +1500,40 @@ public class SitingGameTests {
             h.assertTrue(filled.kind(rx, rz) == claude.settlementcore.room.Reshape.Kind.FREE && rs.contains(BlockPos.asLong(rx, under, rz))
                     && rs.contains(BlockPos.asLong(rx, under - 1, rz)), "filling, the ramp's column at " + rx + " " + rz + " is "
                     + filled.kind(rx, rz) + " and its cave filled: " + rs.contains(BlockPos.asLong(rx, under, rz)));
+            // under a cut the hollow is filled after it, from the cut surface (the review of b8610cd: before the cut, under 3 of ground,
+            // no stand reached it): the ramp's in RAMP after its column's own work, and a pocket 1 and 2 under the berm, cut down 3, in PAD
+            BlockPos berm = new BlockPos(s.bx1() + 1, s.floor - 1, s.bz0 + 4);
+            s.set(berm.getX(), berm.getY(), berm.getZ(), air);
+            s.set(berm.getX(), berm.getY() - 1, berm.getZ(), air);
+            Plan cut = s.expectPlan(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true), "the sunken site over a cave and a pocket, filling");
+            h.assertTrue(cut.oldGround(berm.getX(), berm.getZ()) == land && cut.newHeight(berm.getX(), berm.getZ()) == s.floor,
+                    "the berm's column at " + berm.toShortString() + " isn't cut down from the land to the floor");
+            List<Earthwork> cutWorks = cut.earthworks();
+            int[][] cells = {{berm.getX(), berm.getY(), berm.getZ()}, {berm.getX(), berm.getY() - 1, berm.getZ()}, {rx, under, rz}, {rx, under - 1, rz}};
+            for (int[] c : cells) {
+                int at = -1;
+                int lastOfColumn = -1;
+                for (int k = 0; k < cutWorks.size(); k++) {
+                    Earthwork e = cutWorks.get(k);
+                    if (e.pos().getX() == c[0] && e.pos().getY() == c[1] && e.pos().getZ() == c[2]) {
+                        at = k;
+                    } else if (e.pos().getX() == c[0] && e.pos().getZ() == c[2] && e.phase() != Phase.CLEARING) {
+                        lastOfColumn = Math.max(lastOfColumn, k);
+                    }
+                }
+                Phase want = c[0] == rx && c[2] == rz ? Phase.RAMP : Phase.PAD;
+                h.assertTrue(at >= 0 && cutWorks.get(at).phase() == want && at > lastOfColumn && cutWorks.get(at).state().is(Blocks.STONE),
+                        "the hollow at " + c[0] + " " + c[1] + " " + c[2] + " is " + (at < 0 ? "not filled" : cutWorks.get(at) + " (task " + at
+                                + ", its column's last other work task " + lastOfColumn + ")") + ", not stone in " + want + " after its column's cut");
+            }
+            Plan cutAgain = Plan.load(roundTrip(cut.save()), s.pl, s.template);
+            h.assertTrue(cutAgain != null && cutAgain.earthworks().equals(cutWorks), "the saved plan with fills after a cut rebuilds other earthworks: "
+                    + (cutAgain == null ? "it didn't load" : firstDifference(cutWorks, cutAgain.earthworks())));
+            // a pocket of lava in what the berm's cut takes away is still refused: the cut would let it out onto the site
+            s.lay((x, z) -> land);
+            s.set(berm.getX(), s.floor + 1, berm.getZ(), Blocks.LAVA.defaultBlockState());
+            h.assertTrue(Siting.plan(s.level, s.pl, RoomShoring.Warren.alone(), true, true) instanceof Refusal,
+                    "lava in the berm's cut was taken for a hollow to fill, under its new surface");
             s.clear();
             h.succeed();
         }));

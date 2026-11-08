@@ -222,7 +222,8 @@ public class RaiseJobGameTests {
      * A site whose builders fill its hollows (Siting's fillHollows) lays them as its other seals, held or not: on section 6's patch a cave 1 to
      * 4 under the box (the fill's lowest cell is over the cave's air), and water 1 under the berm. A made-up builder is handed batch after
      * batch till the building stands: no claim comes back empty, nothing is heaved or spared, the band 1 and 2 under the floor is stone, the
-     * cave under it is still air, and the water is walled.
+     * cave under it is still air, and the water is walled. Then a sunken site whose berm is cut down 3 over a pocket shut in under it: the
+     * pocket is filled after the cut (the review of b8610cd), with the same checks.
      */
     @GameTest(template = "digsite", timeoutTicks = 400, batch = "raise")
     public static void aSiteFillsTheHollowsUnderItWithItsBuilders(GameTestHelper h) {
@@ -240,27 +241,7 @@ public class RaiseJobGameTests {
             BlockPos wet = new BlockPos(s.bx1() + 1, s.floor - 1, s.bz0 + 2);
             s.set(wet.getX(), wet.getY(), wet.getZ(), Blocks.WATER.defaultBlockState());
             Plan p = s.expectPlan(Siting.plan(level, s.pl, claude.settlementcore.room.RoomShoring.Warren.alone(), true, true), "the patch over a cave, filling");
-            RaiseJob job = new RaiseJob(SitingGameTests.PLATFORM, s.pl.door(), Direction.EAST, p, 0);
-            job.ensureLoaded(level);
-            for (int k = 0; job.clearing(); k++) {
-                h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
-                job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
-            }
-            UUID builder = new UUID(0x5a17eL, 2L);
-            BlockPos near = s.pl.door();
-            for (int round = 0; !job.isDone(); round++) {
-                h.assertTrue(round < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size() + " done");
-                BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
-                h.assertTrue(anchor != null, "nothing could be handed out, " + (job.taskList().size() - job.finishedCount()) + " cells left, "
-                        + job.state() + " (" + job.openNow() + " open now)");
-                int n = job.batch(builder).size();
-                for (int k = 0; k < n; k++) {
-                    job.gnawSome(level, builder, (k + 0.5f) / n);
-                }
-                job.complete(level, builder);
-                near = anchor;
-            }
-            h.assertTrue(job.heaved() == 0 && job.spared() == 0, "heaved " + job.heaved() + ", spared " + job.spared());
+            raiseByHand(h, s, p, 2L);
             for (int x = s.bx0 + 2; x <= s.bx0 + 4; x++) {
                 for (int z = s.bz0 + 3; z <= s.bz0 + 5; z++) {
                     for (int y = s.floor - 2; y <= s.floor - 1; y++) {
@@ -270,9 +251,49 @@ public class RaiseJobGameTests {
                 }
             }
             h.assertTrue(level.getFluidState(wet).isEmpty(), "the water under the berm is " + level.getBlockState(wet));
+            // a sunken site: the berm cut down 3 from the land over a pocket 1 and 2 under the floor, shut in, filled after the cut
+            s.lay((x, z) -> s.floor + 3);
+            BlockPos pocket = new BlockPos(s.bx1() + 1, s.floor - 1, s.bz0 + 4);
+            s.set(pocket.getX(), pocket.getY(), pocket.getZ(), Blocks.AIR.defaultBlockState());
+            s.set(pocket.getX(), pocket.getY() - 1, pocket.getZ(), Blocks.AIR.defaultBlockState());
+            Plan sunk = s.expectPlan(Siting.plan(level, s.pl, claude.settlementcore.room.RoomShoring.Warren.alone(), true, true),
+                    "the sunken site over a pocket under its berm, filling");
+            raiseByHand(h, s, sunk, 3L);
+            h.assertTrue(s.get(pocket.getX(), pocket.getY(), pocket.getZ()).is(Blocks.STONE) && s.get(pocket.getX(), pocket.getY() - 1, pocket.getZ()).is(Blocks.STONE),
+                    "the pocket under the berm's cut is " + s.get(pocket.getX(), pocket.getY(), pocket.getZ()) + " over "
+                            + s.get(pocket.getX(), pocket.getY() - 1, pocket.getZ()));
             s.clear();
             h.succeed();
         }));
+    }
+
+    /**
+     * Raises {@code p} at the test's site by hand: cleared, then a made-up builder handed batch after batch till it stands, each batch
+     * laid a cell at a time. No claim comes back empty, and nothing is heaved or spared.
+     */
+    private static void raiseByHand(GameTestHelper h, Site s, Plan p, long id) {
+        ServerLevel level = s.level;
+        RaiseJob job = new RaiseJob(SitingGameTests.PLATFORM, s.pl.door(), Direction.EAST, p, 0);
+        job.ensureLoaded(level);
+        for (int k = 0; job.clearing(); k++) {
+            h.assertTrue(k < 64, "the site's clearing never ends: " + job.state());
+            job.clear(level, SiteWork.CLEAR_PER_SECOND, new ArrayList<>());
+        }
+        UUID builder = new UUID(0x5a17eL, id);
+        BlockPos near = s.pl.door();
+        for (int round = 0; !job.isDone(); round++) {
+            h.assertTrue(round < 4000, "no end to the claims: " + job.state() + ", " + job.finishedCount() + " of " + job.taskList().size() + " done");
+            BlockPos anchor = job.claim(level, builder, SiteWork.BATCH, level.getGameTime(), near);
+            h.assertTrue(anchor != null, "nothing could be handed out, " + (job.taskList().size() - job.finishedCount()) + " cells left, "
+                    + job.state() + " (" + job.openNow() + " open now)");
+            int n = job.batch(builder).size();
+            for (int k = 0; k < n; k++) {
+                job.gnawSome(level, builder, (k + 0.5f) / n);
+            }
+            job.complete(level, builder);
+            near = anchor;
+        }
+        h.assertTrue(job.heaved() == 0 && job.spared() == 0, "heaved " + job.heaved() + ", spared " + job.spared());
     }
 
     /**
