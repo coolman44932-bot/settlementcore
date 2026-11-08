@@ -1,0 +1,1 @@
+REVIEW PASS c74a120158b87214cdcbeb2c96f3c9619cf3a4f4: test-only fix; the order check still counts the column's cuts and top block, so it still proves fills come after the cut, and the bottom-up assert is real
