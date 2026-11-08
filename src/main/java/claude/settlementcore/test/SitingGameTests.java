@@ -1509,6 +1509,7 @@ public class SitingGameTests {
             h.assertTrue(cut.oldGround(berm.getX(), berm.getZ()) == land && cut.newHeight(berm.getX(), berm.getZ()) == s.floor,
                     "the berm's column at " + berm.toShortString() + " isn't cut down from the land to the floor");
             List<Earthwork> cutWorks = cut.earthworks();
+            LongOpenHashSet cutSeals = new LongOpenHashSet(cut.seals());
             int[][] cells = {{berm.getX(), berm.getY(), berm.getZ()}, {berm.getX(), berm.getY() - 1, berm.getZ()}, {rx, under, rz}, {rx, under - 1, rz}};
             for (int[] c : cells) {
                 int at = -1;
@@ -1517,7 +1518,7 @@ public class SitingGameTests {
                     Earthwork e = cutWorks.get(k);
                     if (e.pos().getX() == c[0] && e.pos().getY() == c[1] && e.pos().getZ() == c[2]) {
                         at = k;
-                    } else if (e.pos().getX() == c[0] && e.pos().getZ() == c[2] && e.phase() != Phase.CLEARING) {
+                    } else if (e.pos().getX() == c[0] && e.pos().getZ() == c[2] && e.phase() != Phase.CLEARING && !cutSeals.contains(e.pos().asLong())) {
                         lastOfColumn = Math.max(lastOfColumn, k);
                     }
                 }
@@ -1526,6 +1527,16 @@ public class SitingGameTests {
                         "the hollow at " + c[0] + " " + c[1] + " " + c[2] + " is " + (at < 0 ? "not filled" : cutWorks.get(at) + " (task " + at
                                 + ", its column's last other work task " + lastOfColumn + ")") + ", not stone in " + want + " after its column's cut");
             }
+            int lower = -1, upper = -1;
+            for (int k = 0; k < cutWorks.size(); k++) {
+                if (cutWorks.get(k).pos().equals(berm.below())) {
+                    lower = k;
+                } else if (cutWorks.get(k).pos().equals(berm)) {
+                    upper = k;
+                }
+            }
+            h.assertTrue(lower >= 0 && lower < upper, "the pocket under the berm isn't filled bottom-up: its lower cell is task " + lower
+                    + ", its upper " + upper);
             Plan cutAgain = Plan.load(roundTrip(cut.save()), s.pl, s.template);
             h.assertTrue(cutAgain != null && cutAgain.earthworks().equals(cutWorks), "the saved plan with fills after a cut rebuilds other earthworks: "
                     + (cutAgain == null ? "it didn't load" : firstDifference(cutWorks, cutAgain.earthworks())));
