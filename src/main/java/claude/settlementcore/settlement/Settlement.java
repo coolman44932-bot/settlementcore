@@ -114,9 +114,21 @@ public interface Settlement extends RoomShoring.Warren {
         return settlementBoxes();
     }
 
-    /** Whether the muster takes {@code p} as ground to defend, besides the ring about the heart: {@link #inSettlement}, until a race says. */
+    /**
+     * Whether the muster takes {@code p} as ground to defend, besides the ring about the heart: {@link #inSettlement}, until a race says. A
+     * race that narrows it keeps it within its {@link #musterBoxes} and the ring: the muster finds foes only there.
+     */
     default boolean musterHolds(BlockPos p) {
         return inSettlement(p);
+    }
+
+    /**
+     * Whether a foe of the alarm standing at {@code p}, out of the ground the muster defends now (a Watch-Post saw it, or it stepped back out),
+     * is still one: anywhere within 96 of the heart, until a race says. A race that narrows its ground ({@link #musterHolds}) says the same of
+     * this, or a foe that stepped in and back out into a cave 40 blocks off keeps the alarm up for ever (the review of 7905bbd).
+     */
+    default boolean musterFollows(BlockPos p) {
+        return true;
     }
 
     /**

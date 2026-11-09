@@ -212,12 +212,15 @@ public final class Muster {
         in.addAll(at);
         boolean walled = h.walled();
         Vec3 heart = Vec3.atCenterOf(h.getBlockPos());
+        BoundingBox ringNow = ring(h);
         for (Iterator<UUID> it = foes.iterator(); it.hasNext(); ) {   // the ones a Watch-Post saw, still about the warren
             if (!(level.getEntity(it.next()) instanceof LivingEntity e) || !e.isAlive()) {
                 it.remove();
             } else if (e instanceof Mob m && !in.contains(m) && m.distanceToSqr(heart) < 96 * 96) {
                 if (walled && !h.insideWalls(m.blockPosition())) {
                     it.remove();                                // walled in: a foe gone from the walls is outside, and no foe of this alarm
+                } else if (!walled && !ringNow.isInside(m.blockPosition()) && !h.musterFollows(m.blockPosition())) {
+                    it.remove();                                // gone from the ground the race defends (Settlement#musterFollows)
                 } else if (shutIn(level, m, known)) {
                     it.remove();                                // shut in since it was seen: no foe, nor one slain when it dies (Jade's count, the tally)
                 } else {

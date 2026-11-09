@@ -16,6 +16,7 @@ import net.minecraft.world.entity.monster.spider.Spider;
 import net.minecraft.world.entity.monster.hoglin.Hoglin;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.levelgen.structure.BoundingBox;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -231,6 +232,54 @@ public class MusterGameTests {
             clearGround(h, middle);
         }
         h.succeed();
+    }
+
+    /**
+     * A race names the ground its muster defends (Settlement#musterBoxes, #musterHolds, #musterFollows; Khazuk!'s hold, 2026-11-09: a zombie
+     * 38 blocks off in a cave of its 81-block cube kept the alarm up for ever, every Miner a defender). A foe 18 off, past the ring of 16, in a
+     * settlement whose boxes cover it: seen by the defaults, the alarm up; not seen by one that holds only 4 round its heart. Then a foe of the
+     * alarm (it came within the ring) steps back out to 18: still counted by the defaults (anywhere within 96 of the heart), dropped by a race
+     * that follows foes only on its own ground, and its alarm goes quiet.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aRaceThatNamesItsGroundIsNotAlarmedByAFoeOutsideIt(GameTestHelper h) {
+        BlockPos middle = openGround(h);
+        try {
+            ServerLevel level = h.getLevel();
+            BoundingBox plot = new BoundingBox(middle.getX() - HALF, middle.getY() - 4, middle.getZ() - HALF, middle.getX() + HALF, middle.getY() + 8,
+                    middle.getZ() + HALF);
+            BoundingBox own = new BoundingBox(middle.getX() - 4, middle.getY() - 4, middle.getZ() - 4, middle.getX() + 4, middle.getY() + 4, middle.getZ() + 4);
+            var foe = foeAt(level, middle.offset(18, 0, 0), true);
+            Muster wide = new Muster();
+            Muster narrow = new Muster();
+            wide.second(level, city(middle, middle, new ArrayList<>()).is("settlementBoxes", List.of(plot)).settlement());
+            narrow.second(level, narrowCity(middle, plot, own).settlement());
+            h.assertTrue(wide.lastSeen == 1 && wide.alarmed(), "the defaults missed the foe 18 off in the settlement's boxes (" + wide.lastSeen + ")");
+            h.assertTrue(narrow.lastSeen == 0 && !narrow.alarmed(), "a race holding 4 round its heart saw the foe 18 off (" + narrow.lastSeen + ")");
+            // a foe of the alarm steps back out
+            foe.snapTo(middle.getX() + 3.5, middle.getY(), middle.getZ() + 0.5, 0, 0);
+            Muster stays = new Muster();
+            Muster lets = new Muster();
+            stays.second(level, city(middle, middle, new ArrayList<>()).settlement());
+            lets.second(level, narrowCity(middle, plot, own).settlement());
+            h.assertTrue(stays.lastSeen == 1 && lets.lastSeen == 1 && stays.alarmed() && lets.alarmed(), "the foe 3 off didn't raise both alarms ("
+                    + stays.lastSeen + ", " + lets.lastSeen + ")");
+            foe.snapTo(middle.getX() + 18.5, middle.getY(), middle.getZ() + 0.5, 0, 0);
+            stays.second(level, city(middle, middle, new ArrayList<>()).settlement());
+            lets.second(level, narrowCity(middle, plot, own).settlement());
+            h.assertTrue(stays.lastSeen == 1, "the defaults let go of a foe of the alarm 18 off (" + stays.lastSeen + "): they follow it within 96");
+            h.assertTrue(lets.lastSeen == 0, "a race that follows foes only on its own ground still counts the one gone 18 off (" + lets.lastSeen + ")");
+            foe.discard();
+        } finally {
+            clearGround(h, middle);
+        }
+        h.succeed();
+    }
+
+    /** {@link #city} whose boxes cover {@code plot} but whose muster holds, looks in and follows foes on only {@code own}. */
+    private static StubSettlement narrowCity(BlockPos middle, BoundingBox plot, BoundingBox own) {
+        return city(middle, middle, new ArrayList<>()).is("settlementBoxes", List.of(plot)).is("musterBoxes", List.of(own))
+                .answer("musterHolds", a -> own.isInside((BlockPos) a[0])).answer("musterFollows", a -> own.isInside((BlockPos) a[0]));
     }
 
     /**
