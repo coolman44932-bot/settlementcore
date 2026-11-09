@@ -106,6 +106,20 @@ public interface Settlement extends RoomShoring.Warren {
     List<BoundingBox> settlementBoxes();
 
     /**
+     * The boxes the muster looks for foes in, besides the ring about the heart ({@link #reach}): {@link #settlementBoxes}, until a race says. A
+     * race whose land is a great cube round its heart (Khazuk!'s 81 blocks across, deep in the rock of caves) names only what it holds: a cave
+     * mob 40 blocks off in the dark, which no Dawi will ever meet, kept the alarm up for ever and every Miner a defender.
+     */
+    default List<BoundingBox> musterBoxes() {
+        return settlementBoxes();
+    }
+
+    /** Whether the muster takes {@code p} as ground to defend, besides the ring about the heart: {@link #inSettlement}, until a race says. */
+    default boolean musterHolds(BlockPos p) {
+        return inSettlement(p);
+    }
+
+    /**
      * How far round its heart the muster looks for foes, and defends, besides {@link #settlementBoxes}: a foe within this of the heart
      * (a box about it this wide each way across, and {@link #HEART_REACH} at most up and down) counts whether or not {@link #inSettlement}
      * says the ground is the settlement's, and a defender may come up and fight there. {@link #HEART_REACH}, the Warren Heart's, until a

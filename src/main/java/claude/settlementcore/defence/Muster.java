@@ -327,7 +327,7 @@ public final class Muster {
     static List<Mob> intruders(ServerLevel level, Settlement h) {
         Set<Mob> out = new LinkedHashSet<>();
         BoundingBox ring = ring(h);
-        List<BoundingBox> boxes = new ArrayList<>(h.settlementBoxes());
+        List<BoundingBox> boxes = new ArrayList<>(h.musterBoxes());
         boxes.add(ring);
         for (BoundingBox b : boxes) {
             AABB area = AABB.of(b).inflate(3);
@@ -359,7 +359,7 @@ public final class Muster {
         if (h.walled()) {
             return h.insideWalls(p);                             // walled in: outside the walls is outside (docs/plans/walls.md)
         }
-        return h.inSettlement(p) || ring.isInside(p);
+        return h.musterHolds(p) || ring.isInside(p);
     }
 
     // ------------------------------------------------------------------ the horde rises
