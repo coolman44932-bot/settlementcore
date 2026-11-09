@@ -1,0 +1,1 @@
+REVIEW PASS WITH NOTES 7905bbd9acc5ba14512e1ad35154e733d0154d76: defaults keep every race as before, no muster path missed; notes: no test, the 96-block foes persistence can keep a narrow hold's alarm up (both answered in the next commit)
