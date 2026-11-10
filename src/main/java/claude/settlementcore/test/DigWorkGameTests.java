@@ -105,4 +105,50 @@ public class DigWorkGameTests {
         h.assertTrue(t.heard.stream().anyMatch(l -> l.contains("is dug out")), "nobody was told the hall is dug out: " + t.heard);
         h.succeed();
     }
+
+    /**
+     * The tail of a big dig (Khazuk!'s long run, 2026-11-05: the Great Hall read 100% at tick 9600 and was dug out at 10722). A dig wants one
+     * digger per 40 cells still to do, so as it nears its end the crew shrinks to one or two, who dig a few cells a minute between walks; and
+     * the settlement's own digging (DigWork#second) starts only when the dig STALLS, 10 s with no cell done. A thin crew that finishes a cell
+     * every few seconds never stalls it, so the last cells wait on one or two diggers. Here the crew (crewHere 1) finishes one cell every 5 s,
+     * 60 cells are left: the settlement's 4 a second should have them done in ~15 s; the crew alone takes 300 s.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 200, batch = "settlement")
+    public static void aThinCrewsLastCellsAreNotLeftToItAlone(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        Rooms.Room room = hall();
+        TestSettlement t = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        t.holds = true;
+        BlockPos door = h.absolutePos(new BlockPos(10, 5, 20));
+        PlanPlacement pl = PlanPlacement.compute(room, door, Direction.EAST);
+        level.setBlockAndUpdate(door.west(), Blocks.AIR.defaultBlockState());
+        level.setBlockAndUpdate(door.west().above(), Blocks.AIR.defaultBlockState());
+        level.setBlockAndUpdate(door.west().below(), Blocks.STONE.defaultBlockState());
+        String begun = t.works().dig(level, pl, true);
+        h.assertTrue(begun == null, "the dig was refused: " + begun);
+        DigWork d = t.works().digs().get(0);
+        int total = d.job().taskCount();
+        int left = 60;
+        d.job().gnawInOrder(level, total - left, new ArrayList<>());
+        h.assertTrue(total - d.job().finishedCount() == left, "the set-up left " + (total - d.job().finishedCount()) + " cells, not " + left);
+        int want = d.crewWanted();
+        h.assertTrue(want == 2, "60 cells left should want 2 diggers, wants " + want);
+        List<Integer> open = new ArrayList<>();
+        int doneAt = -1;
+        for (int sec = 1; sec <= 90 && doneAt < 0; sec++) {
+            if (sec % 5 == 0) {
+                d.job().gnawInOrder(level, 1, new ArrayList<>());   // the thin crew's one cell
+            }
+            if (!d.dug()) {
+                d.second(level, 1);                              // crewHere 1: the crew is there and getting on
+            }
+            open.add(total - d.job().finishedCount());
+            if (d.dug()) {
+                doneAt = sec;
+            }
+        }
+        h.assertTrue(doneAt > 0 && doneAt <= 30, "60 cells left with a crew of 1 finishing a cell every 5 s: dug out at second " + doneAt
+                + " (the settlement's own 4 a second would take ~15; the crew alone 300); open cells each second: " + open);
+        h.succeed();
+    }
 }

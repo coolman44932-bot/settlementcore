@@ -583,6 +583,51 @@ public class DigJob {
         return anchor;
     }
 
+    /** Ticks a batch is held before a nearer worker may take it off a far holder (3 s: a walk of a few blocks is done by then). */
+    public static final int HANDOVER_AFTER = 60;
+    /** How much nearer to the work than its holder (blocks) the asking worker must be to take a batch off it. */
+    public static final double HANDOVER_GAP = 8;
+    /** A batch held this long (15 s) is done by no one who is not nearer to it than the asker: it is anyone's. */
+    public static final int HANDOVER_STALE = 300;
+
+    /**
+     * A worker with nothing to claim takes over a batch from a holder who is far from it (or gone, or has held it too long): the last
+     * cells of a dig were held by whichever worker asked first, wherever it stood, while the crew beside them idled with nothing to
+     * hand out (the user, 2026-11-09: "only 1 person is in charge of the last block and they dont come"). {@code holderDist} gives the
+     * holder's distance to a cell, or a huge number when it is gone. The holder's batch is released (its chore, still walking, finds it
+     * gone and goes on to its next batch) and the asker is handed what it freed. Null when there is none to take.
+     */
+    @Nullable
+    public BlockPos takeOver(ServerLevel level, UUID rat, int batch, long now, BlockPos near,
+                             java.util.function.ToDoubleBiFunction<UUID, BlockPos> holderDist) {
+        ensureLoaded(level);
+        expire(now);
+        if (claims.containsKey(rat) || claims.isEmpty()) {
+            return null;
+        }
+        UUID victim = null;
+        double bestGap = 0;
+        for (Map.Entry<UUID, Claim> e : claims.entrySet()) {
+            long age = now - (e.getValue().expires() - 600);
+            if (age < HANDOVER_AFTER) {
+                continue;
+            }
+            BlockPos at = tasks.get(e.getValue().indices()[0]).pos();
+            double theirs = holderDist.applyAsDouble(e.getKey(), at);
+            double mine = Math.sqrt(near.distSqr(at));
+            double gap = theirs - mine;
+            if ((gap >= HANDOVER_GAP || age >= HANDOVER_STALE && gap > 0) && gap > bestGap) {
+                bestGap = gap;
+                victim = e.getKey();
+            }
+        }
+        if (victim == null) {
+            return null;
+        }
+        release(victim);
+        return claim(level, rat, batch, now, near);
+    }
+
     /** How many tasks the job has (built when it is loaded; 0 before). */
     public int taskCount() {
         return tasks == null ? 0 : tasks.size();

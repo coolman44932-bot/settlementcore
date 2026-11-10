@@ -45,6 +45,8 @@ public class MusterSaveGameTests {
         boolean told;
         /** Whether it is saved as a mob (the Waaagh!'s defenders are not: Greenskin's shouldBeSaved). */
         boolean saved = true;
+        /** Whether it is a room's crew (DigCrowdGameTests: a crew settler at a chore is not shoved). */
+        boolean crew;
 
         @SuppressWarnings("unchecked")
         Fake(ServerLevel level, Settlement home) {
@@ -101,7 +103,7 @@ public class MusterSaveGameTests {
 
         @Override
         public boolean isCrew() {
-            return false;
+            return crew;
         }
 
         @Override

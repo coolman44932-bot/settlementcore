@@ -47,6 +47,8 @@ public final class DigWork extends RoomWork {
     /** A stalled dig with this many cells or fewer left is dug on to the end by the settlement itself. */
     public static final int TAIL = 600;
     public static final int STALL_SECONDS = 10;
+    /** A dig that gets fewer cells than this done in {@value #STALL_SECONDS} s is stalled (a crew walking between far cells, or getting nowhere). */
+    public static final int STALL_CELLS = 10;
     /** How far across from the work a digger's stand may be. */
     static final int STAND_ACROSS = 3;
 
@@ -57,8 +59,11 @@ public final class DigWork extends RoomWork {
     private final DigJob job;
     private final Map<UUID, Integer> serials = new HashMap<>();
     private int serial;
-    private int seen = -1;
-    private int still;
+    /** The cells done at each of the last {@value #STALL_SECONDS} seconds (a ring, by {@code secs}). */
+    private final int[] doneAt = new int[STALL_SECONDS];
+    private int secs;
+    /** Where each digger's current chore has it stand: no two diggers are given one cell (they shove each other out of reach). */
+    private final Map<UUID, BlockPos> stands = new HashMap<>();
     /** Seconds the settlement goes on digging itself once the crew got stuck (a latch: its own cells would reset the count). */
     private int selfLeft;
     /** Diggers whose batch they couldn't get to: the settlement digs the batch for them at the next second. */
@@ -143,15 +148,19 @@ public final class DigWork extends RoomWork {
         }
         stuck.clear();
         int done = job.finishedCount();
-        still = done == seen ? still + 1 : 0;
-        seen = done;
-        if (crewHere > 0 && still >= STALL_SECONDS) {
+        // stalled: fewer than STALL_CELLS cells done in the last STALL_SECONDS s. "No cell at all" was the rule to 0.5.7, and a thin crew
+        // (one digger per 40 cells: 1 or 2 in the tail) that finishes one isolated cell between long walks never earned it
+        int before = secs >= STALL_SECONDS ? doneAt[secs % STALL_SECONDS] : -1;
+        doneAt[secs % STALL_SECONDS] = done;
+        secs++;
+        boolean slow = before >= 0 && done - before < STALL_CELLS;
+        if (crewHere > 0 && slow) {
             // the crew got nowhere: the settlement digs on for 30 s, then looks again; in the dig's tail (TAIL cells or fewer left) it digs
             // on to the end, since its own digging counts as progress and would otherwise cost a fresh 10 s wait after every 30 s (the Great
             // Hall's last cells took ~1000 ticks: the diagnosis of 55438d6's long run)
             int open = job.taskCount() - done;
             selfLeft = open <= TAIL ? (open + SELF_PER_SECOND - 1) / SELF_PER_SECOND + 1 : STALL_SECONDS * 3;
-            still = 0;
+            secs = 0;                                            // look again after a fresh STALL_SECONDS
         }
         if (crewHere == 0 && heart.reserveWorkers() <= 0 || selfLeft > 0) {
             selfLeft = Math.max(0, selfLeft - 1);
@@ -169,11 +178,23 @@ public final class DigWork extends RoomWork {
         UUID id = rat.getUUID();
         BlockPos anchor = job.claim(level, id, BATCH, level.getGameTime(), rat.blockPosition());
         if (anchor == null) {
-            return null;
+            // nothing left to hand out: a batch held by a worker far from it (or gone) is taken over by one that stands near it
+            anchor = job.takeOver(level, id, BATCH, level.getGameTime(), rat.blockPosition(), (u, p) -> {
+                net.minecraft.world.entity.Entity e = level.getEntity(u);
+                return e == null ? Double.MAX_VALUE : Math.sqrt(e.distanceToSqr(p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5));
+            });
+            if (anchor == null) {
+                return null;
+            }
         }
         int n = Math.max(1, job.heldCount(id));
         int work = Math.max(4, Math.round(TICKS_PER_BLOCK * n / rat.tempo()));
-        BlockPos stand = standFor(level, anchor);
+        BlockPos stand = standFor(level, anchor, id);
+        if (stand != null) {
+            stands.put(id, stand);
+        } else {
+            stands.remove(id);
+        }
         double reach = 2.6;
         if (stand != null) {
             double dx = stand.getX() - anchor.getX();
@@ -192,6 +213,8 @@ public final class DigWork extends RoomWork {
 
     /** How far down from the work a digger's stand is looked for: a hall's whole height. */
     static final int STAND_DOWN = 16;
+    /** Added to a stand's score when another digger has it (a cell two across, 4 points, is preferred to a shared one). */
+    static final double CROWDED_STAND = 5;
 
     /**
      * Where a digger stands to dig the cell {@code at}: the cell one can stand in nearest under it, in its column or within
@@ -201,9 +224,16 @@ public final class DigWork extends RoomWork {
      * up (the chore is lifted: CrewGoal's 3-up reach waived), as the raise side lays a tall wall from its foot. Null when there is none.
      */
     @Nullable
-    private BlockPos standFor(ServerLevel level, BlockPos at) {
+    private BlockPos standFor(ServerLevel level, BlockPos at, UUID digger) {
         BlockPos best = null;
         double bestScore = Double.MAX_VALUE;
+        // the cells other diggers stand in or are walking to: one more in the same cell shoves it out of reach, so another cell is preferred
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet taken = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        for (Map.Entry<UUID, BlockPos> e : stands.entrySet()) {
+            if (!e.getKey().equals(digger)) {
+                taken.add(e.getValue().asLong());
+            }
+        }
         BlockPos out = job.door.relative(job.facing.getOpposite());
         net.minecraft.world.level.levelgen.structure.BoundingBox before = new net.minecraft.world.level.levelgen.structure.BoundingBox(
                 out.getX() - 3, out.getY() - 2, out.getZ() - 3, out.getX() + 3, out.getY() + 2, out.getZ() + 3);
@@ -223,7 +253,8 @@ public final class DigWork extends RoomWork {
                         if (!box().isInside(p) && !before.isInside(p)) {
                             continue;                            // outside the room and the space it opens off: look lower in the column
                         }
-                        double score = Math.sqrt(across) * 2 + Math.abs(dy) * 0.25 + (dy > 0 ? 4 : 0);
+                        double score = Math.sqrt(across) * 2 + Math.abs(dy) * 0.25 + (dy > 0 ? 4 : 0)
+                                + (taken.contains(p.asLong()) ? CROWDED_STAND : 0);
                         if (score < bestScore) {
                             bestScore = score;
                             best = p.immutable();
@@ -270,6 +301,7 @@ public final class DigWork extends RoomWork {
     @Override
     public void release(@Nullable Object key) {
         if (key instanceof DigClaim c && current(c)) {
+            stands.remove(c.rat());
             job.release(c.rat());
         }
     }
@@ -278,6 +310,7 @@ public final class DigWork extends RoomWork {
     @Override
     public void shelve(@Nullable Object key, long now) {
         if (key instanceof DigClaim c && current(c)) {
+            stands.remove(c.rat());
             stuck.add(c.rat());
         }
     }
@@ -285,6 +318,7 @@ public final class DigWork extends RoomWork {
     /** A digger is gone: whatever batch it held goes back. */
     public void let(UUID id) {
         serials.remove(id);
+        stands.remove(id);
         stuck.remove(id);
         job.release(id);
     }

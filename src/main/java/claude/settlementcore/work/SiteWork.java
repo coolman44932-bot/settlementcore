@@ -266,7 +266,14 @@ public final class SiteWork extends RoomWork {
         UUID id = rat.getUUID();
         BlockPos anchor = job.claim(level, id, BATCH, level.getGameTime(), rat.blockPosition());
         if (anchor == null) {
-            return null;
+            // nothing left to hand out: a batch held by a builder far from it (or gone) is taken over by one that stands near it
+            anchor = job.takeOver(level, id, BATCH, level.getGameTime(), rat.blockPosition(), (u, p) -> {
+                net.minecraft.world.entity.Entity e = level.getEntity(u);
+                return e == null ? Double.MAX_VALUE : Math.sqrt(e.distanceToSqr(p.getX() + 0.5, p.getY() + 0.5, p.getZ() + 0.5));
+            });
+            if (anchor == null) {
+                return null;
+            }
         }
         List<DigJob.Task> batch = job.batch(id);
         List<BlockPos> cells = new ArrayList<>(batch.size());

@@ -78,6 +78,19 @@ public abstract class SettlerMob extends PathfinderMob {
     }
 
     /**
+     * A crew settler at a chore is not shoved by anyone: vanilla's push (LivingEntity#pushEntities, 0.05 a tick between two overlapping
+     * bodies) gives no mob-to-mob collision, only that nudge, and a digger at the face has the reach of its stand (CrewGoal: ~1.8 blocks
+     * from the cell) to stay inside. A crowd of broad Dawi (0.8 wide) at one face or in a 3-wide door shoved each other out of reach, so
+     * each stopped swinging, walked back, and shoved again (the user, 2026-11-09: "dwarves while mining bump into each other and stop each
+     * other from working"). Not pushable, it is not in anyone's push list ({@code EntitySelector#pushableBy}) and does not move itself;
+     * it still shoves a pushable one (a player, an idle settler) out of the way. A settler with no chore is pushable as ever.
+     */
+    @Override
+    public boolean isPushable() {
+        return super.isPushable() && !(crewDoing != null && !crewDoing.isEmpty() && isCrew());
+    }
+
+    /**
      * Sent home from a building on the surface: it walks to {@code spot} first (the building's landing, on natural ground outside its box) and sinks
      * there, never on the roof or inside a course; {@code by} (game time) is how long it has: then it sinks where it stands, and the settlement takes
      * it back all the same. CrewGoal does the walking. Told again, it keeps its first spot and its time.
