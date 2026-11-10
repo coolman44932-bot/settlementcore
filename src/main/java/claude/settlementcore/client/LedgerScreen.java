@@ -196,15 +196,22 @@ public class LedgerScreen extends AbstractContainerScreen<LedgerMenu> {
         }
         shownFlows = roads;
         List<Shown> out = new ArrayList<>();
+        // each line's name is made once a tally (the review of 3e14b9f: the sort made it in its comparator, tens of thousands of
+        // times a tally for a hold of a few thousand kinds)
+        if (names.length != menu.lines.size() || namesOf != menu.version) {
+            names = new String[menu.lines.size()];
+            namesOf = menu.version;
+        }
         for (int i = 0; i < menu.lines.size(); i++) {
             SettlementLedger.Line l = menu.lines.get(i);
-            if (matches(l.item(), q)) {
+            boolean byMod = q.startsWith("@");
+            if (q.isEmpty() || (byMod ? namespace(l.item()).contains(q.substring(1)) : nameAt(i).contains(q))) {
                 out.add(new Shown(l, i));
             }
         }
         switch (sort) {
-            case NAME -> out.sort(Comparator.comparing(s -> name(s.line().item())));
-            case MOD -> out.sort(Comparator.comparing((Shown s) -> namespace(s.line().item())).thenComparing(s -> name(s.line().item())));
+            case NAME -> out.sort(Comparator.comparing(s -> nameAt(s.index())));
+            case MOD -> out.sort(Comparator.comparing((Shown s) -> namespace(s.line().item())).thenComparing(s -> nameAt(s.index())));
             default -> {
             }                                                       // most first: as the tally came, the currency at its head
         }
@@ -216,6 +223,17 @@ public class LedgerScreen extends AbstractContainerScreen<LedgerMenu> {
 
     private static String name(ItemStack item) {
         return item.getHoverName().getString().toLowerCase(Locale.ROOT);
+    }
+
+    /** The names of this tally's lines, lower case, each made when first asked. */
+    private String[] names = new String[0];
+    private int namesOf = -1;
+
+    private String nameAt(int line) {
+        if (names[line] == null) {
+            names[line] = name(menu.lines.get(line).item());
+        }
+        return names[line];
     }
 
     private static String namespace(ItemStack item) {
@@ -560,6 +578,9 @@ public class LedgerScreen extends AbstractContainerScreen<LedgerMenu> {
         int button = event.button();
         if (cellAt(mx, my) >= 0) {
             pressed = true;
+            if (search.isFocused()) {
+                setFocused((GuiEventListener) null);            // a click on the grid leaves the search: E closes the screen again
+            }
             if (page == Page.FLOWS || button != 0 && button != 1) {
                 return true;                                        // the Flows page is to read, not to take from
             }
@@ -619,7 +640,7 @@ public class LedgerScreen extends AbstractContainerScreen<LedgerMenu> {
 
     @Override
     public boolean mouseScrolled(double mx, double my, double scrollX, double scrollY) {
-        if (scrollY != 0) {
+        if (scrollY != 0 && (cellAt(mx, my) >= 0 || onBar(mx, my))) {   // over the grid or its bar: elsewhere the wheel is the pack's (a bundle)
             row = Math.max(0, Math.min(maxRow(), row - (int) Math.signum(scrollY)));
             return true;
         }

@@ -33,7 +33,8 @@ import java.util.function.Supplier;
 /**
  * What the engine tells devbridge (block bench/devbridge, Claude's dev-game bridge) when a dev game loads both: a settler's
  * own state for {@code inspect} and its 2-minute history (mode, crew, chore, load, digging, homeward, broken, its
- * settlement), and the route {@code settlementcore/settlement} (a settlement's people, stores, rooms and works). Sent through
+ * settlement), and the routes {@code settlementcore/settlement} (a settlement's people, stores, rooms and works) and
+ * {@code settlementcore/ledger} (its Ledger opened for the camera player, to be photographed). Sent through
  * InterModComms with plain Java types, so the engine never depends on devbridge; without it this sends nothing.
  */
 public final class BridgeHooks {
@@ -48,6 +49,65 @@ public final class BridgeHooks {
         InterModComms.sendTo("devbridge", "entity", (Supplier<Function<Entity, Map<String, Object>>>) () -> BridgeHooks::settler);
         InterModComms.sendTo("devbridge", "route",
                 (Supplier<Map.Entry<String, Function<Map<String, Object>, Object>>>) () -> Map.entry("settlement", BridgeHooks::settlement));
+        InterModComms.sendTo("devbridge", "route",
+                (Supplier<Map.Entry<String, Function<Map<String, Object>, Object>>>) () -> Map.entry("ledger", BridgeHooks::ledger));
+    }
+
+    /**
+     * The Ledger opened for the camera player, so the screen can be photographed ({@code look} with {@code gui}): the settlement whose
+     * heart is at {@code pos}, else the loaded one nearest the camera. {@code claim}: the camera player is made its owner first (a dev
+     * game's settlements are set down by commands and tests, and only its owner opens a Ledger). {@code page}: the open screen is turned
+     * to that page (0 Stores, 1 Flows). {@code close}: the open screen is shut. Says what it did.
+     */
+    public static Object ledger(Map<String, Object> a) {
+        MinecraftServer server = ServerLifecycleHooks.getCurrentServer();
+        List<ServerPlayer> players = server.getPlayerList().getPlayers();
+        if (players.isEmpty()) {
+            throw new IllegalArgumentException("no player in the game to open a Ledger for");
+        }
+        ServerPlayer player = players.get(0);
+        Map<String, Object> o = new LinkedHashMap<>();
+        if (Boolean.TRUE.equals(a.get("close"))) {
+            player.closeContainer();
+            o.put("closed", true);
+            return o;
+        }
+        if (a.get("page") instanceof Number page) {
+            if (net.neoforged.fml.loading.FMLEnvironment.getDist().isClient()) {
+                claude.settlementcore.client.LedgerClient.turnTo(page.intValue());   // (a client's class: named only on a client)
+            }
+            o.put("page", page.intValue());
+            return o;
+        }
+        ServerLevel level = (ServerLevel) player.level();
+        Settlement s = null;
+        BlockPos at = pos(a.get("pos"));
+        if (at != null) {
+            if (!(level.getBlockEntity(at) instanceof Settlement st)) {
+                throw new IllegalArgumentException("no settlement's heart at " + at.toShortString());
+            }
+            s = st;
+        } else {
+            double best = Double.MAX_VALUE;
+            for (Settlement st : claude.settlementcore.settlement.SettlementSpawns.loaded(level)) {
+                double d = st.getBlockPos().distSqr(player.blockPosition());
+                if (d < best) {
+                    best = d;
+                    s = st;
+                }
+            }
+        }
+        if (s == null) {
+            throw new IllegalArgumentException("no settlement loaded in " + level.dimension().identifier());
+        }
+        if (Boolean.TRUE.equals(a.get("claim")) && s instanceof claude.settlementcore.settlement.SettlementBlockEntity sb) {
+            sb.claim(player, sb.settlementName() == null || sb.settlementName().isEmpty() ? "The Dev Settlement" : sb.settlementName());
+        }
+        o.put("settlement", s.settlementName() + " at " + s.getBlockPos().toShortString());
+        o.put("owner", String.valueOf(s.owner()));
+        o.put("opened", claude.settlementcore.ledger.LedgerMenu.open(player, s));
+        o.put("lines", claude.settlementcore.ledger.SettlementLedger.tally(level, s).lines().size());
+        return o;
     }
 
     /** A settler's own state, or null for any other entity. */

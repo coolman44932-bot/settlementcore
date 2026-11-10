@@ -69,6 +69,12 @@ public class LedgerMenu extends AbstractContainerMenu {
     private static final int UNMEASURED_LINES = 2048;
     /** The tallies the server remembers sending: a click names one, and the one on the screen may be a second or two old. */
     private static final int REMEMBERED = 4;
+    /**
+     * Ticks between two tallies at least (the review of 3e14b9f): every act made and sent one of its own, a scan of every store and up
+     * to 900 kB, so a shift-double-click over a full pack, or a client sending clicks it should not, made dozens in a tick. Acts mark
+     * the tally stale; the menu's own tick sends one, and no sooner than this after the last. A lone click is answered the next tick.
+     */
+    public static final int TALLY_GAP = 4;
 
     private static final StreamCodec<RegistryFriendlyByteBuf, Item> ITEM = ByteBufCodecs.registry(Registries.ITEM);
 
@@ -93,6 +99,7 @@ public class LedgerMenu extends AbstractContainerMenu {
     private final ResourceKey<Level> dimension;
     private final Predicate<ServerPlayer> stays;
     private int ticks;
+    private int sinceTally = TALLY_GAP;
     private boolean dirty = true;
     private int sentHash;
     private int lastSerial;
@@ -326,8 +333,7 @@ public class LedgerMenu extends AbstractContainerMenu {
                 return;
             }
         }
-        dirty = true;
-        broadcastChanges();
+        dirty = true;                                            // the menu's tick sends the new tally (TALLY_GAP)
     }
 
     /** One of what a take gives: the line's item, or for the currency's line the settlement's own currency item. */
@@ -360,9 +366,14 @@ public class LedgerMenu extends AbstractContainerMenu {
     @Override
     public void broadcastChanges() {
         super.broadcastChanges();
-        if (!(player instanceof ServerPlayer sp) || !(dirty || ++ticks % 20 == 0)) {
+        if (!(player instanceof ServerPlayer sp)) {
             return;
         }
+        boolean due = ++ticks % 20 == 0;
+        if (++sinceTally < TALLY_GAP || !(dirty || due)) {
+            return;                                              // stale stays stale: the tick the gap is over sends it
+        }
+        sinceTally = 0;
         dirty = false;
         Settlement heart = heart();
         if (heart == null || !(heart.getLevel() instanceof ServerLevel level)) {

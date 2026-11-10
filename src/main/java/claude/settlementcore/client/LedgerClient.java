@@ -21,4 +21,14 @@ public final class LedgerClient {
     static void screens(RegisterMenuScreensEvent e) {
         e.register(CoreRegistries.LEDGER_MENU.get(), LedgerScreen::new);
     }
+
+    /** The open Ledger turned to a page, from any thread (dev/BridgeHooks: a tool that photographs screens). */
+    public static void turnTo(int page) {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        mc.execute(() -> {
+            if (mc.screen instanceof LedgerScreen s) {
+                s.turnToPage(page);
+            }
+        });
+    }
 }

@@ -221,6 +221,12 @@ public class LedgerGameTests {
             h.assertTrue(!LedgerMenu.open(stranger, s.t) && stranger.containerMenu == stranger.inventoryMenu, "a stranger opened the settlement's Ledger");
             h.assertTrue(LedgerMenu.serverSide(1, stranger, s.t, ALWAYS) == null, "a menu was made for a stranger");
             h.assertTrue(!LedgerMenu.open(s.owner, s.t, p -> false) && s.owner.containerMenu == s.owner.inventoryMenu, "the Ledger opened with the race's own condition unmet");
+            // the real way in (the review of 3e14b9f: no test opened one): the owner's open goes through the player's own openMenu
+            // with its extra data, and the menu he then holds is the Ledger; shut, he holds his pack again
+            h.assertTrue(LedgerMenu.open(s.owner, s.t) && s.owner.containerMenu instanceof LedgerMenu, "the Ledger didn't open for its owner: he holds "
+                    + s.owner.containerMenu.getClass().getSimpleName());
+            s.owner.closeContainer();
+            h.assertTrue(s.owner.containerMenu == s.owner.inventoryMenu, "the Ledger shut and its owner still holds " + s.owner.containerMenu.getClass().getSimpleName());
 
             LedgerMenu m = s.menu();
             m.act(stranger, LedgerMenu.TAKE, iron, 64, LedgerMenu.FROM_STORES);
@@ -334,7 +340,13 @@ public class LedgerGameTests {
             m.click(s.owner, LedgerMenu.TAKE, first, at, 64);
             h.assertTrue(m.getCarried().is(Items.IRON_INGOT) && m.getCarried().getCount() == 64 && s.in(s.metals, Items.IRON_INGOT) == 36,
                     "a click on the iron's line: the cursor " + held(m) + ", the store " + s.in(s.metals, Items.IRON_INGOT) + ", not 64 and 36");
-            h.assertTrue(m.lastSerial() > first, "the take made no new tally: the screen would show the old count");
+            h.assertTrue(m.lastSerial() == first, "the take made a tally of its own inside the act: number " + m.lastSerial()
+                    + " (acts mark it stale, and the menu's tick sends one: LedgerMenu.TALLY_GAP)");
+            for (int i = 0; i < LedgerMenu.TALLY_GAP; i++) {
+                m.broadcastChanges();
+            }
+            h.assertTrue(m.lastSerial() == first + 1, "four clicks and " + LedgerMenu.TALLY_GAP + " ticks made " + (m.lastSerial() - first)
+                    + " new tallies, not one: the screen would show the old count, or the server tally at every click");
             m.click(s.owner, LedgerMenu.PUT_CARRIED, first, at, 64);       // a put names no line: the carried stack goes back in
             h.assertTrue(m.getCarried().isEmpty() && s.in(s.metals, Items.IRON_INGOT) == 100, "the iron put back: the cursor " + held(m) + ", the store " + s.in(s.metals, Items.IRON_INGOT));
             m.click(s.owner, LedgerMenu.TAKE, first, at, 16);            // the older tally is still held: a click made on it a moment ago counts
