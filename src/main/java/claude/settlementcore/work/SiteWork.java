@@ -303,7 +303,7 @@ public final class SiteWork extends RoomWork {
             job.complete(l, r.getUUID());                        // a cell not ready yet is left open, and handed out again
             return nextChore(l, r);                              // the next batch, near where it stands
         });
-        c.standing(stand).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction)));
+        c.standing(stand).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction))).whileHeld(() -> job.holds(id));
         return foot != null ? c.lifted() : c;
     }
 

@@ -207,8 +207,14 @@ public final class DigWork extends RoomWork {
             effects(l, job.gnawSome(l, r.getUUID(), 1f));
             job.complete(l, r.getUUID());
             return nextChore(l, r);
-        }).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction)));
+        }).swinging((l, r, fraction) -> effects(l, job.gnawSome(l, r.getUUID(), fraction))).whileHeld(() -> job.holds(id));
         return stand == null ? c : c.standing(stand).lifted();
+    }
+
+    /** Tests: where {@code digger} would be stood to dig the cell {@code at}, the other diggers' stands as they are now. */
+    @Nullable
+    public BlockPos standForTests(ServerLevel level, BlockPos at, UUID digger) {
+        return standFor(level, at, digger);
     }
 
     /** How far down from the work a digger's stand is looked for: a hall's whole height. */

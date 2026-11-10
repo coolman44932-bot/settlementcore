@@ -84,6 +84,18 @@ public final class Chore {
         return this;
     }
 
+    /**
+     * Whether the chore's work is still this settler's: false once its batch was handed to another (DigJob#takeOver: a worker nearer the
+     * cells took them). CrewGoal asks it each tick and ends the chore at once, on to the next, so the settler doesn't walk the rest of
+     * the way to cells it no longer holds. Null: the chore is its own for as long as it runs.
+     */
+    @Nullable public java.util.function.BooleanSupplier held;
+
+    public Chore whileHeld(java.util.function.BooleanSupplier s) {
+        this.held = s;
+        return this;
+    }
+
     public Chore swinging(@Nullable Swing s) {
         this.swing = s;
         return this;

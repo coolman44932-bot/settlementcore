@@ -152,6 +152,11 @@ public class CrewGoal extends Goal {
         } else if (room == null) {
             return;
         }
+        if (chore.held != null && room != null && !chore.held.getAsBoolean()) {
+            trace("taken");                                      // its batch went to a worker nearer it: on to the next, from where it stands
+            done(sl, room.nextChore(sl, rat));
+            return;
+        }
         if (chore.follow != null) {
             if (!chore.follow.isAlive()) {
                 trace("gone");

@@ -75,6 +75,8 @@ public class DigCrowdGameTests {
                     + " blocks from it, and the worker beside it (" + String.format("%.0f", Math.sqrt(near.distanceToSqr(held.at.getX() + 0.5,
                     held.at.getY() + 0.5, held.at.getZ() + 0.5))) + " blocks) is handed nothing");
             h.assertTrue(d.job().holds(near.getUUID()) && !d.job().holds(far.getUUID()), "the cell was not moved to the worker beside it");
+            h.assertTrue(held.held != null && !held.held.getAsBoolean() && got.held != null && got.held.getAsBoolean(),
+                    "the far worker's chore doesn't know its batch is gone (it would walk on to cells it no longer holds), or the new one's isn't held");
             far.discard();
             near.discard();
         }).thenSucceed();
@@ -111,6 +113,34 @@ public class DigCrowdGameTests {
     }
 
     /**
+     * The stand itself (the review of 95d4d7d: five batches may have five nearest stands anyway): one digger is handed a batch and its
+     * stand; a second digger asked where to stand for the SAME cell is given another cell, still within reach of the work, and the
+     * first digger asked again keeps its own. Without the stand's cost for a cell another digger has, both are given the one cell.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 100, batch = "settlement")
+    public static void aSecondDiggerAtOneCellStandsBesideTheFirst(GameTestHelper h) {
+        ServerLevel level = h.getLevel();
+        TestSettlement t = TestSettlement.of(h, new BlockPos(2, 2, 2));
+        DigWork d = begun(h, t, level);
+        d.job().gnawInOrder(level, d.job().taskCount() / 2, new ArrayList<>());
+        BlockPos mid = h.absolutePos(new BlockPos(3, 6, 20));
+        Fake first = settler(level, t, mid);
+        Fake second = settler(level, t, mid);
+        Chore c = d.nextChore(level, first);
+        h.assertTrue(c != null && c.standAt != null, "the first digger was handed no batch with a stand: " + (c == null ? null : c.standAt));
+        BlockPos again = d.standForTests(level, c.at, first.getUUID());
+        h.assertTrue(c.standAt.equals(again), "the first digger's own stand moved when it was asked again: " + c.standAt + " then " + again);
+        BlockPos other = d.standForTests(level, c.at, second.getUUID());
+        h.assertTrue(other != null && !other.equals(c.standAt), "a second digger at the cell " + c.at + " is stood in the first one's cell "
+                + c.standAt + " (given " + other + ")");
+        int across = Math.max(Math.abs(other.getX() - c.at.getX()), Math.abs(other.getZ() - c.at.getZ()));
+        h.assertTrue(across <= 3, "the second digger's stand " + other + " is " + across + " across from the cell " + c.at + ": out of reach");
+        first.discard();
+        second.discard();
+        h.succeed();
+    }
+
+    /**
      * Two crew settlers at a chore, standing half a block apart (bodies overlapping), do not move for 40 ticks; a pair with no chore beside
      * them, for the control, is pushed apart. Before: both pairs are, 0.05 a tick, and a digger shoved from its cell is out of reach of it.
      */
@@ -136,6 +166,8 @@ public class DigCrowdGameTests {
         h.startSequence().thenIdle(40).thenExecute(() -> {
             double sepWork = Math.hypot(work[0].getX() - work[1].getX(), work[0].getZ() - work[1].getZ());
             double sepIdle = Math.hypot(idle[0].getX() - idle[1].getX(), idle[0].getZ() - idle[1].getZ());
+            h.assertTrue(sepIdle > 0.6, "the control pair with no chore was not pushed apart (" + String.format("%.2f", sepIdle)
+                    + " from 0.40): the set-up shoves nobody, so it proves nothing");
             h.assertTrue(sepWork < 0.5, "two crew at a chore, 0.4 apart, were shoved to " + String.format("%.2f", sepWork)
                     + " apart in 40 ticks (the control pair with no chore: " + String.format("%.2f", sepIdle) + ")");
             for (Fake f : work) {
