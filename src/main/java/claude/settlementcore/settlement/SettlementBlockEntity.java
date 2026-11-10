@@ -603,6 +603,11 @@ public abstract class SettlementBlockEntity extends BlockEntity implements Settl
     }
 
     @Override
+    public List<HaulLog.Flow> hauls(long now) {
+        return haulLog.flows(now);
+    }
+
+    @Override
     public LongOpenHashSet ledgerStores() {
         return ledgerStores;
     }

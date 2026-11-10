@@ -382,6 +382,22 @@ public interface Settlement extends RoomShoring.Warren {
 
     void setLedgerStores(LongOpenHashSet stores);
 
+    /**
+     * The roads its goods and food took of late, the busiest first (core/ledger/HaulLog#flows), at game time {@code now}: what the Ledger's
+     * Flows page lists (core/ledger/LedgerMenu). None, for a settlement that keeps no log of them.
+     */
+    default List<claude.settlementcore.ledger.HaulLog.Flow> hauls(long now) {
+        return List.of();
+    }
+
+    /**
+     * The look its Ledger opens in on its owner's screen (core/client/LedgerLooks: a texture, the text's colours and the pages' words, which
+     * a race registers under an id of its own): the engine's stone and parchment, until a race says.
+     */
+    default String ledgerLook() {
+        return claude.settlementcore.ledger.LedgerMenu.DEFAULT_LOOK;
+    }
+
     // ------------------------------------------------------------------ food
 
     /** All the food the settlement has: its ration and what its larder's containers hold (core/food/Larder). */
