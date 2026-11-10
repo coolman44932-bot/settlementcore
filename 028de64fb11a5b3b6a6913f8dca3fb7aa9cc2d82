@@ -1,0 +1,1 @@
+REVIEW PASS 028de64f: coalescing keeps every act's tally (stale stays stale, serial scheme covers the 4-tick lag); names cache, wheel and focus changes are correct; the dev route is devbridge-only with no client class on a server; covers 3e14b9f plus 028de64. 028de64fb11a5b3b6a6913f8dca3fb7aa9cc2d82
