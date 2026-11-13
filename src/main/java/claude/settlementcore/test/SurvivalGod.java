@@ -98,7 +98,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * <li>He is taken off the player list when his test ends, passed, failed or timed out (a listener on the test), and at every
  * batch's end anything left; a test never clears players, and a forgotten survival player is a target for the next tests' mobs.
  * <li>What the server sends him is read off his in-memory channel each tick and dropped (it would pile up for the length of a long
- * test), all but his system chat, which {@link #chat()} keeps.
+ * test), all but his system chat and action bar, which {@link #chat()} and {@link #actionBar()} keep.
  * </ul>
  *
  * <p>Positions are the test's own (helper-relative), as GameTestHelper's are. {@link #moveTo} is a teleport, not a walk: the god
@@ -128,6 +128,7 @@ public final class SurvivalGod {
     private final EmbeddedChannel channel;
     private final List<Job> jobs = new ArrayList<>();
     private final Deque<String> chat = new ArrayDeque<>();
+    private final Deque<String> shown = new ArrayDeque<>();
     /** The client's block-change sequence: every use and break counts one. */
     private int sequence;
     private boolean left;
@@ -282,10 +283,11 @@ public final class SurvivalGod {
         channel.flush();
         Object msg;
         while ((msg = channel.readOutbound()) != null) {
-            if (msg instanceof ClientboundSystemChatPacket c && !c.overlay()) {
-                chat.addLast(c.content().getString());
-                if (chat.size() > 200) {
-                    chat.removeFirst();
+            if (msg instanceof ClientboundSystemChatPacket c) {
+                Deque<String> to = c.overlay() ? shown : chat;          // the action bar too: races say things there (Khazuk's "Valaya's Ward is over")
+                to.addLast(c.content().getString());
+                if (to.size() > 200) {
+                    to.removeFirst();
                 }
             }
             ReferenceCountUtil.release(msg);
@@ -317,6 +319,17 @@ public final class SurvivalGod {
     /** Whether any chat line he was sent contains {@code text}. */
     public boolean wasTold(String text) {
         return chat().stream().anyMatch(line -> line.contains(text));
+    }
+
+    /** What was shown on his action bar (newest last, the last 200). */
+    public List<String> actionBar() {
+        drain();
+        return List.copyOf(shown);
+    }
+
+    /** Whether any action-bar line he was shown contains {@code text}. */
+    public boolean wasShown(String text) {
+        return actionBar().stream().anyMatch(line -> line.contains(text));
     }
 
     /** Ticks he has been ticked. */
