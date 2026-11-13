@@ -83,6 +83,29 @@ public class TestRaceGameTests {
     }
 
     /**
+     * A round calls the reserve up, not only what it made: a Heart at its reserve cap (24 in all) with 16 workers and 8 guards below, no one up and
+     * food to spare, makes nobody (Brood#room is 0) and, before 2026-11-13, brought nobody up either (it brought up only what the round had made), so
+     * a settlement whose people had sunk home stayed empty for good: the hour's soak drained to 0 up and 23 below. The round must bring up 8 (the
+     * people cap), two workers to a guard (5 and 3), and leave 11 workers and 5 guards below.
+     */
+    @GameTest(template = "arena", timeoutTicks = 100, batch = "testrace")
+    public static void aRoundCallsTheReserveUpToTheCap(GameTestHelper h) {
+        HeartBlockEntity heart = heart(h);
+        heart.addToReserve(16, 8);
+        h.assertTrue(heart.peopleCount() == 0 && heart.population() == 24, "set up: " + heart.peopleCount() + " up and a population of "
+                + heart.population() + ", not 0 and 24");
+        heart.roundForTests(h.getLevel());
+        h.startSequence()
+                .thenWaitUntil(() -> h.assertTrue(near(h, Worker.class).size() == 5 && near(h, Guard.class).size() == 3, "up after the round: "
+                        + near(h, Worker.class).size() + " workers and " + near(h, Guard.class).size() + " guards, not 5 and 3 (people "
+                        + heart.peopleCount() + ", reserve " + heart.reserveWorkers() + " workers and " + heart.reserveSoldiers() + " guards)"))
+                .thenExecute(() -> h.assertTrue(heart.peopleCount() == 8 && heart.reserveWorkers() == 11 && heart.reserveSoldiers() == 5,
+                        "the roll has " + heart.peopleCount() + " and the reserve " + heart.reserveWorkers() + " workers and "
+                        + heart.reserveSoldiers() + " guards, not 8 and 11 and 5"))
+                .thenSucceed();
+    }
+
+    /**
      * A guard falls on a husk that comes near (a foe by the engine's word), hurts it, plays its attack clip, and its swing runs out after.
      * Hostiles need the Normal difficulty: the batch sets it.
      */

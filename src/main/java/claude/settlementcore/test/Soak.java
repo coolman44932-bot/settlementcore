@@ -117,6 +117,7 @@ public final class Soak {
     private final MinecraftServer server;
     private final Options options;
     private final List<Sample> samples = new ArrayList<>();
+    private final Map<String, Integer> demands = new LinkedHashMap<>();
     private long lastNanos;
     private long lastTick;
 
@@ -219,9 +220,54 @@ public final class Soak {
         return List.copyOf(samples);
     }
 
-    /** What this run's samples say is wrong ({@link #judge}). */
+    /**
+     * The soak must keep {@code key} (a count of a sample: {@code settlement/people}, {@code entity/<type>}, {@code settlement/hauls}) at
+     * {@code atLeast} or more in every sample of the run's second half ({@link #judgeAlive}). Without it a settlement that drains to nobody
+     * passes the verdict, as nothing climbs: the 2026-11-13 soak spent its second hour on an empty settlement.
+     */
+    public Soak demand(String key, int atLeast) {
+        demands.put(key, atLeast);
+        return this;
+    }
+
+    /** What this run's samples say is wrong ({@link #judge}, {@link #judgeAlive}). */
     public List<String> problems() {
-        return judge(samples, options);
+        List<String> out = new ArrayList<>(judge(samples, options));
+        out.addAll(judgeAlive(samples, demands));
+        return out;
+    }
+
+    /**
+     * The demands {@code samples} break: a key under its floor in any sample of the second half (a key a sample lacks counts as 0), saying the
+     * first such tick, how many samples it fell short in and the second half's counts. None while there are under 4 samples.
+     */
+    public static List<String> judgeAlive(List<Sample> samples, Map<String, Integer> demands) {
+        List<String> out = new ArrayList<>();
+        int n = samples.size();
+        if (n < 4) {
+            return out;
+        }
+        List<Sample> half = samples.subList(n / 2, n);
+        for (Map.Entry<String, Integer> d : demands.entrySet()) {
+            int under = 0;
+            long first = -1;
+            StringBuilder seen = new StringBuilder();
+            for (Sample s : half) {
+                int v = s.counts().getOrDefault(d.getKey(), 0);
+                seen.append(seen.isEmpty() ? "" : " ").append(v);
+                if (v < d.getValue()) {
+                    under++;
+                    if (first < 0) {
+                        first = s.tick();
+                    }
+                }
+            }
+            if (under > 0) {
+                out.add(d.getKey() + " was under " + d.getValue() + " in " + under + " of the last " + half.size() + " samples, from tick " + first
+                        + " (" + seen + "): the settlement stopped working, the soak soaked an empty one");
+            }
+        }
+        return out;
     }
 
     // ------------------------------------------------------------------ the verdict

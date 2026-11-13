@@ -71,6 +71,22 @@ public class SoakGameTests {
         h.succeed();
     }
 
+    /**
+     * A hollow soak cannot pass (2026-11-13: the test race's settlement drained from 8 people to none by sample 28 of 60 and stayed empty, and the verdict
+     * passed because nothing climbed): a demanded count under its floor anywhere in the second half is a problem, one that stays up is not, and a
+     * dip in the first half (the warm-up, the first rounds) is let be.
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "soakjudge")
+    public static void aSettlementThatDrainsToNobodyFailsTheDemand(GameTestHelper h) {
+        Map<String, Integer> need = Map.of("settlement/people", 1);
+        List<String> drained = Soak.judgeAlive(series(60, "settlement/people", i -> Math.max(0, 8 - Math.max(0, i - 20)), i -> 1.0), need);
+        h.assertTrue(drained.size() == 1 && drained.get(0).contains("from tick " + 1200L * 31), "8 people draining to 0 by sample 28 of 60 (the second half starts at sample 31) gave " + drained
+                + ", not one problem from tick " + 1200L * 31);
+        List<String> steady = Soak.judgeAlive(series(60, "settlement/people", i -> i < 3 ? 0 : 8, i -> 1.0), need);
+        h.assertTrue(steady.isEmpty(), "a settlement empty for its first 3 samples and 8 after was failed: " + steady);
+        h.succeed();
+    }
+
     /** Every engine field the sampler reads by name is still there, and a sample of this server reads them and the settlements. */
     @GameTest(template = "digsite", timeoutTicks = 20, batch = "soakjudge")
     public static void theSoakSamplerReadsEveryEngineRegistry(GameTestHelper h) {

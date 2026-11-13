@@ -64,10 +64,37 @@ public class HeartBlockEntity extends SettlementBlockEntity {
             rounds++;
             int workers = brood.add(false, 2, WORKER_COST);
             int guards = brood.add(true, 1, GUARD_COST);
-            for (int i = 0; i < workers + guards; i++) {
-                brood.bringUp(i >= workers, getBlockPos().above());
-            }
+            callUp(brood);
         };
+    }
+
+    /**
+     * Brings people up out of the reserve (the ones this round made and any that sank home or were bred while the settlement stood at its cap)
+     * until {@value #UP_AT_ONCE} are up or the reserve is empty, two workers to a guard. Before 2026-11-13 a round brought up only the ones it
+     * had just made: births past the cap and everyone sent home stayed in the reserve for good, and a settlement at its reserve cap (people up +
+     * crews + reserve = {@value #RESERVE_CAP}) made nobody and brought nobody up, so the soak's settlement drained to none up and 23 below.
+     */
+    private void callUp(Brood brood) {
+        int workers = 0;
+        int guards = 0;
+        for (SettlerMob up : loadedPeople()) {
+            if (up.getType() == soldierType()) {
+                guards++;
+            } else {
+                workers++;
+            }
+        }
+        for (int i = 0; i < UP_AT_ONCE && reserve() > 0 && peopleCount() < peopleCap(); i++) {
+            boolean guard = reserveWorkers() <= 0 || reserveSoldiers() > 0 && guards * 2 < workers;
+            if (brood.bringUp(guard, getBlockPos().above()) == null) {
+                return;                                          // at its cap, or no cell to come up in: asked again next round
+            }
+            if (guard) {
+                guards++;
+            } else {
+                workers++;
+            }
+        }
     }
 
     @Override

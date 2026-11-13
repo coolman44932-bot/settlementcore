@@ -26,7 +26,8 @@ import java.util.List;
  * The soak (2026-11-13): a test race settlement left to live for an hour of game time, sampled every minute ({@link Soak}), must not keep
  * growing anything or slow down. Its Heart is fed, its Hoard is kept, its people rise round by round, and every few minutes one walks home and
  * sinks back into the reserve and a guard dies, so the rounds, the roll, the reserve, the crews and the haul log keep turning over the whole
- * hour, as in a world left running.
+ * hour, as in a world left running. A round of the Heart calls the reserve back up ({@code HeartBlockEntity#callUp}), so the population holds
+ * steady, and the verdict demands that people, workers and hauls stay up in the second half ({@link Soak#demand}).
  *
  * <p>Off unless asked: {@code ./gradlew runGameTestServer -Ponly=soak -Psoak} (an hour of game time; {@code -Psoak=<ticks>} for another
  * length), or {@code python tools/soak.py run}. Without it the test passes at once, so a full run costs nothing.
@@ -70,7 +71,12 @@ public class TestRaceSoakGameTests {
         heart.addBuilding(new Building(room.id(), b, pl.door(), Direction.EAST), true);
 
         AABB plot = new AABB(h.absolutePos(BlockPos.ZERO)).expandTowards(SIZE, 10, SIZE).inflate(2);
-        Soak soak = Soak.start(h, "testrace");
+        // a working settlement the whole hour: people up, workers about and the haul log turning (the 2026-11-13 soak drained to none by its middle
+        // and passed, as nothing climbed); the verdict fails the run if any of these is under its floor in the second half
+        Soak soak = Soak.start(h, "testrace")
+                .demand("settlement/people", 1)
+                .demand("entity/" + TestRace.MODID + ":worker", 1)
+                .demand("settlement/hauls", 1);
         soak.run(h, total, Soak.DEFAULT_EVERY, n -> {
             if (heart.isRemoved()) {
                 throw h.assertionException("the Heart is gone at sample " + n);

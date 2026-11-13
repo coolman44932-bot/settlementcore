@@ -113,6 +113,12 @@ least half of them up, by more than 8 and 5%; the heap 64 MB) or slow (each thir
 the margin over the first), and a tick that more than doubles from its early median (and is over 2 ms). A count that rises to a cap and
 stays, or rises and falls, passes. It needs a warm-up of 2 samples and two windows: 22 samples at least.
 
+A soak can also **demand** a floor (`soak.demand("settlement/people", 1)`, `Soak.judgeAlive`): the key must be at or over it in every sample of
+the run's second half, or the verdict fails. Nothing climbs in an empty settlement, so the judge alone passed the first soak (2026-11-13) while
+its people drained from 8 to 0 by the middle and its reserve sat at 23: the test race's round brought up only the people it had just made, and
+at its reserve cap (people + crews + reserve = 24) it made nobody. A Heart's round now calls the reserve up to the people cap
+(`HeartBlockEntity#callUp`), and the race's soak demands people, workers and hauls. A race's own soak should demand its people too.
+
 ### A race's own soak
 
 A race reuses the sampler in its own GameTest (its jar depends on the engine, so `claude.settlementcore.test.Soak` is there wherever its
