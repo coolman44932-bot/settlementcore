@@ -1,0 +1,1 @@
+REVIEW PASS WITH NOTES d21007c: the shoring change only touches carved jobs, saves are compatible and the test fails without the change; notes are the 4-high door cut (upper 5 of the 9 door rows walled), the tunnel-mouth rule off for every wall, and a boundary the test never exercises. d21007cc7623c372a2320f79eb5fa693b96c28d8
