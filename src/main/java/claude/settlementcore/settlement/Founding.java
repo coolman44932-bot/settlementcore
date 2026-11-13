@@ -305,6 +305,19 @@ public final class Founding extends SavedData {
         return false;
     }
 
+    /**
+     * Whether {@code pos} is the heart spot of {@code owner}'s founding hall that is still being raised: the right place, too early. A race
+     * says so rather than "found the hold first" (the laptop's Khazuk! playthrough set the Shrine on the dais while the gate was still cut).
+     */
+    public boolean stillRising(BlockPos pos, UUID owner) {
+        for (Hall h : halls) {
+            if (h.known() && h.job().isPresent() && h.owner().equals(owner) && heartSpot(h.placement()).equals(pos)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** A heart set down at {@code pos} by {@code owner} on a risen hall's spot takes the hall: it's returned (to add) and forgotten here. */
     @Nullable
     public Building claim(BlockPos pos, UUID owner) {
