@@ -341,14 +341,16 @@ public class SurvivalHarnessGameTests {
     // ---- survivalchunks
 
     /**
-     * Released chunks tick only near the god: with the plot's chunks let go of and the god 300 blocks off (simulation distance 2 in
+     * Released chunks tick only near the god: with the plot's chunks let go of and the god 160 blocks off (simulation distance 2 in
      * this batch), a furnace and a pig on the plot stand still, while the same furnace and pig beside him go on: the furnace smelts its
      * raw iron, the pig ages.
      */
-    @GameTest(template = "digsite", timeoutTicks = 600, batch = "survivalchunks")
+    @GameTest(template = "digsite", timeoutTicks = 2400, batch = "survivalchunks")
     public static void aReleasedChunkFarFromTheGodStopsTicking(GameTestHelper h) {
-        BlockPos farFurnace = new BlockPos(20, 21, 20), nearFurnace = new BlockPos(302, 25, 0), there = new BlockPos(300, 25, 0);
-        for (BlockPos p : BlockPos.betweenClosed(new BlockPos(297, 24, -3), new BlockPos(303, 24, 3))) {
+        BlockPos farFurnace = new BlockPos(20, 21, 20), nearFurnace = new BlockPos(162, 25, 0), there = new BlockPos(160, 25, 0);
+        // 160 blocks off (10 chunks: past simulation distance 2 and the plot's own chunks), not 300: his chunks there are made and
+        // promoted to entity-ticking first, and at 300 one of the laptop's three runs of 8afe04b never got there in 600 ticks
+        for (BlockPos p : BlockPos.betweenClosed(new BlockPos(157, 24, -3), new BlockPos(163, 24, 3))) {
             h.setBlock(p, Blocks.STONE);                                      // somewhere for him to stand, far off
         }
         for (BlockPos f : List.of(farFurnace, nearFurnace)) {
@@ -360,7 +362,7 @@ public class SurvivalHarnessGameTests {
         Pig farPig = h.spawn(EntityType.PIG, new BlockPos(22, 21, 20));
         farPig.setNoAi(true);
         farPig.setPersistenceRequired();
-        BlockPos nearPigAt = new BlockPos(300, 25, 2);
+        BlockPos nearPigAt = new BlockPos(160, 25, 2);
         Pig[] nearPig = new Pig[1];
         SurvivalGod god = SurvivalGod.join(h, there);
         PlayerLoadedChunks.Released released = PlayerLoadedChunks.release(h, god, -1);
