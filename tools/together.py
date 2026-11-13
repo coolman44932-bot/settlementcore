@@ -374,6 +374,12 @@ def run(a):
 
 # ------------------------------------------------------------------ report
 
+# Log lines a test sets out to cause, matched on the message: reported, never counted as the run's errors. Each names its test.
+# Add one only with the test that provokes it; any other ERROR still fails the run.
+PROVOKED = [
+    (r"missing room template .*no_such_room_for_a_server_read\.nbt", "AuditFixGameTests asks for a room that doesn't exist"),
+]
+
 LINE = re.compile(r"^\[(?P<time>[^\]]+)\] \[(?P<thread>[^\]]+)/(?P<level>[A-Z]+)\] \[(?P<logger>[^\]/]*)/?[^\]]*\]: (?P<msg>.*)$")
 
 
@@ -460,8 +466,9 @@ def report(a, lock=None):
         print("log lines naming our mods:")
     for who in sorted(by):
         for (level, _), (n, first) in sorted(by[who].items(), key=lambda kv: (kv[0][0] != "ERROR", -kv[1][0])):
-            print(f"  {who:<16} {level:<5} x{n:<4} {first}")
-            errors += n if level == "ERROR" else 0
+            known = next((why for pat, why in PROVOKED if re.search(pat, first)), None)
+            print(f"  {who:<16} {level:<5} x{n:<4} {first}" + (f"   [provoked by a test: {known}]" if known else ""))
+            errors += n if level == "ERROR" and not known else 0
     if other_count:
         print(f"  ({other_count} WARN/ERROR lines name the pack's other mods: not ours, not counted)")
     if errors and not a.errors_ok:
