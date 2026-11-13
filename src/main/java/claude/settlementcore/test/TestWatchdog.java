@@ -116,6 +116,8 @@ public final class TestWatchdog {
     private static final Long2ObjectMap<Unforced> UNFORCED = new Long2ObjectOpenHashMap<>();
     private static final Long2LongOpenHashMap FORCED_AT = new Long2LongOpenHashMap();
     private static final Long2ObjectMap<String> FORCED_BY = new Long2ObjectOpenHashMap<>();
+    /** Chunks a test lets go of on purpose ({@link PlayerLoadedChunks}): their un-forcing is not warned of. Cleared as each batch ends. */
+    private static final LongOpenHashSet DELIBERATE = new LongOpenHashSet();
 
     private static long longestTicks = -1;
     private static long longestMs;
@@ -202,6 +204,21 @@ public final class TestWatchdog {
         return c == null ? List.of() : List.copyOf(c);
     }
 
+    /** The tests not done: those the ticker ticks, and the running batch's (its tests join the ticker after its listeners hear of it). */
+    static List<GameTestInfo> liveTests() {
+        Map<GameTestInfo, Boolean> live = new IdentityHashMap<>();
+        ticking().forEach(t -> live.put(t, true));
+        if (batch != null) {
+            batch.gameTestInfos().forEach(t -> live.put(t, true));
+        }
+        return live.keySet().stream().filter(t -> !t.isDone()).toList();
+    }
+
+    /** A test's structure box (what the GameTest runner forces), or null when its test block is gone. */
+    static BoundingBox structureBox(GameTestInfo t) {
+        return box(t);
+    }
+
     /** A batch starts (its structures placed, its tests about to tick): GameTests' batch listener, from the batch's first tick on. */
     static void batchStarting(ServerLevel level, GameTestBatch b) {
         server = level.getServer();
@@ -211,6 +228,7 @@ public final class TestWatchdog {
 
     /** A batch's last test is done, before the runner un-forces every forced chunk: the after-batch hooks. */
     static void batchFinished(ServerLevel level, GameTestBatch b) {
+        DELIBERATE.clear();
         for (Consumer<ServerLevel> hook : AFTER_EACH_BATCH) {
             try {
                 hook.accept(level);
@@ -567,12 +585,28 @@ public final class TestWatchdog {
         return caller.substring(0, end);
     }
 
+    /**
+     * Says a test un-forces chunk {@code k} on purpose (true) or no longer (false): {@link PlayerLoadedChunks} lets go of a running
+     * test's own chunks so only those near its player tick, and that is neither a foreign un-force nor one under a live test.
+     */
+    static void deliberate(long k, boolean on) {
+        if (on) {
+            DELIBERATE.add(k);
+        } else {
+            DELIBERATE.remove(k);
+        }
+    }
+
     private static void unforced(long k) {
         String by = caller();
         long tick = server == null ? -1 : server.getTickCount();
         String b = batch == null ? "?" : name(batch);
         UNFORCED.put(k, new Unforced(tick, b, by));
         ChunkPos c = ChunkPos.unpack(k);
+        if (DELIBERATE.contains(k)) {
+            FORCED_BY.remove(k);
+            return;
+        }
         // whoever forced a chunk lets go of it, or the runner, which lets go of every forced chunk as a batch ends
         String forcer = FORCED_BY.remove(k);
         if (forcer != null && !forcer.startsWith("?") && !owner(forcer).equals(owner(by)) && !owner(by).equals("GameTestRunner")) {

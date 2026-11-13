@@ -40,4 +40,10 @@ public @interface GameTest {
      * ask for the sky, and the engine's tests were written in the open (daylight, rain, what canSeeSky says).
      */
     boolean skyAccess() default true;
+
+    /**
+     * Mod ids that must all be loaded for the test to be registered at all (a cross-mod test, run only in an all-mods run). With
+     * one missing the test is not registered, so it neither runs nor fails; {@link GameTests#register} logs it at debug.
+     */
+    String[] requires() default {};
 }

@@ -61,6 +61,14 @@ public final class MockPlayers {
     private static java.util.Set<Identifier> others;
 
     /**
+     * NeoForge's config-file payload is never a mock's: with it, NeoForge's ConfigSync (every server tick) looks the player's
+     * connection up in its config table and throws, crashing the server tick, for a player whose class is exactly ServerPlayer.
+     * The mocks made in tests are subclasses, which it skips, but PlayerList#respawn makes a plain ServerPlayer on the same
+     * connection: a {@link SurvivalGod} who dies and respawns would crash the run.
+     */
+    static final Identifier CONFIG_FILE = net.neoforged.neoforge.network.payload.ConfigFilePayload.TYPE.id();
+
+    /**
      * Every play payload the other mods registered: Moonlight alone sends a mock at least two as it joins
      * (s2c_finalize_fluids, then s2c_sync_world_data), so they are not listed one by one as they turn up. Never the engine's
      * own ({@link Core#MODID}) or a race mod's built on it ({@link #own()}). Read from NeoForge's registry
@@ -78,7 +86,7 @@ public final class MockPlayers {
                 var play = byProtocol.get(net.minecraft.network.ConnectionProtocol.PLAY);
                 if (play != null) {
                     for (Identifier id : play.keySet()) {
-                        if (!own.contains(id.getNamespace())) {
+                        if (!own.contains(id.getNamespace()) && !id.equals(CONFIG_FILE)) {
                             out.add(id);
                         }
                     }

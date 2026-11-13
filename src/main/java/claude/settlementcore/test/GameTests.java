@@ -20,9 +20,11 @@ import net.minecraft.util.Unit;
 import net.minecraft.world.level.block.Rotation;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.ModContainer;
+import net.neoforged.fml.ModList;
 import net.neoforged.neoforge.event.RegisterGameTestsEvent;
 import net.neoforged.neoforge.gametest.GameTestHooks;
 import net.neoforged.neoforge.registries.DeferredRegister;
+import org.jetbrains.annotations.Nullable;
 import org.objectweb.asm.Type;
 import org.slf4j.Logger;
 
@@ -58,6 +60,9 @@ import java.util.stream.Collectors;
  * starts and its {@link AfterBatch} hooks the moment its last test is done.
  * <li>{@code -Ponly=a,b} (settlementcore.only): only the tests whose batch, method, snake-case name or class is named are
  * registered at all, to run a flaky one again and again; {@code -Ptestns=a,b} (settlementcore.testns): only those mods' tests.
+ * <li>{@link BatchWorld} on a holder or a method sets a batch's world (time, weather, spawning, difficulty...) as it starts and puts
+ * it back as it ends; {@link GameTest#requires} registers a test only when every mod it names is loaded (cross-mod tests in an
+ * all-mods run).
  * </ul>
  *
  * Only where GameTests are on (a dev run or the GameTest server): a player's game registers none of it.
@@ -76,6 +81,8 @@ public final class GameTests {
     /** Each batch's hooks, by its environment's id. */
     private static final Map<Identifier, List<Method>> BEFORE = new LinkedHashMap<>();
     private static final Map<Identifier, List<Method>> AFTER = new LinkedHashMap<>();
+    /** Each batch's world ({@link BatchWorld}), by its environment's id. */
+    private static final Map<Identifier, WorldConditions> WORLDS = new LinkedHashMap<>();
     /** The runners already told about batches ending. */
     private static final Set<GameTestRunner> HOOKED = Collections.newSetFromMap(new WeakHashMap<>());
     private static final Field TICKER_RUNNER = runnerField();
@@ -110,16 +117,23 @@ public final class GameTests {
         for (Class<?> holder : holders) {
             String ns = holder.getAnnotation(GameTestHolder.class).value();
             DeferredRegister<Consumer<GameTestHelper>> fns = functions.computeIfAbsent(ns, n -> DeferredRegister.create(Registries.TEST_FUNCTION, n));
+            world(holder.getAnnotationsByType(BatchWorld.class), ns, holder.getName());
             List<Method> methods = new ArrayList<>(Arrays.asList(holder.getDeclaredMethods()));
             methods.sort(Comparator.comparing(Method::getName));
             for (Method m : methods) {
                 hook(m, ns);
+                world(m.getAnnotationsByType(BatchWorld.class), ns, holder.getName() + "#" + m.getName());
                 GameTest t = m.getAnnotation(GameTest.class);
                 if (t == null) {
                     continue;
                 }
                 if (!Modifier.isStatic(m.getModifiers()) || m.getParameterCount() != 1 || m.getParameterTypes()[0] != GameTestHelper.class) {
                     throw new IllegalStateException("a @GameTest must be static and take one GameTestHelper: " + holder.getName() + "#" + m.getName());
+                }
+                String missing = Arrays.stream(t.requires()).filter(id -> !ModList.get().isLoaded(id)).collect(Collectors.joining(", "));
+                if (!missing.isEmpty()) {
+                    LOG.debug("{}#{} not registered: it requires {}, not loaded", holder.getSimpleName(), m.getName(), missing);
+                    continue;
                 }
                 String path = snake(holder.getSimpleName()) + "/" + snake(m.getName());
                 if (!only.isEmpty() && !only.contains(t.batch().toLowerCase(Locale.ROOT)) && !only.contains(m.getName().toLowerCase(Locale.ROOT))
@@ -174,6 +188,23 @@ public final class GameTests {
                     }
                 });
         return out;
+    }
+
+    /** Records the batch worlds declared on a holder or a method; two different ones for one batch fail the registration. */
+    private static void world(BatchWorld[] declared, String ns, String where) {
+        for (BatchWorld w : declared) {
+            Identifier batch = Identifier.fromNamespaceAndPath(ns, w.batch());
+            WorldConditions c = WorldConditions.of(w);
+            WorldConditions had = WORLDS.putIfAbsent(batch, c);
+            if (had != null && !had.equals(c)) {
+                throw new IllegalStateException("two @BatchWorld for batch '" + batch + "' disagree (" + had + " / " + c + "), the second on " + where);
+            }
+        }
+    }
+
+    /** The world batch {@code batch} declared ({@link BatchWorld}); {@link WorldConditions#NONE} when it declared none. */
+    public static WorldConditions world(Identifier batch) {
+        return WORLDS.getOrDefault(batch, WorldConditions.NONE);
     }
 
     private static void hook(Method m, String ns) {
@@ -266,9 +297,10 @@ public final class GameTests {
 
         public static final MapCodec<BatchEnvironment> CODEC = Identifier.CODEC.fieldOf("batch").xmap(BatchEnvironment::new, BatchEnvironment::batch);
 
-        /** One run of the batch: whether its after-hooks have run. */
+        /** One run of the batch: whether its after-hooks have run, and the world its {@link BatchWorld} replaced. */
         public static final class Run {
             boolean ended;
+            WorldConditions.@Nullable Saved world;
         }
 
         @Override
@@ -279,16 +311,18 @@ public final class GameTests {
                 runner.addListener(new Ends(level));
             }
             CURRENT.put(level, new Current(batch, run));
+            WorldConditions world = world(batch);
+            if (!world.isEmpty()) {
+                run.world = world.apply(level);
+                LOG.info("batch '{}': its world is {} (was {})", batch, world, run.world.before());
+            }
             runHooks(BEFORE, batch, level);
             return run;
         }
 
         @Override
         public void teardown(ServerLevel level, Run run) {
-            if (!run.ended) {
-                run.ended = true;
-                runHooks(AFTER, batch, level);
-            }
+            end(batch, run, level);
         }
 
         @Override
@@ -298,6 +332,24 @@ public final class GameTests {
     }
 
     private record Current(Identifier batch, BatchEnvironment.Run run) {
+    }
+
+    /** A batch ends, once: its after-hooks, then its world put back (so the hooks still see the batch's world). */
+    private static void end(Identifier batch, BatchEnvironment.Run run, ServerLevel level) {
+        if (run.ended) {
+            return;
+        }
+        run.ended = true;
+        runHooks(AFTER, batch, level);
+        if (run.world != null) {
+            List<String> wrong = run.world.restore(level);
+            if (wrong.isEmpty()) {
+                LOG.info("batch '{}': world put back ({})", batch, run.world.before());
+            } else {
+                LOG.error("batch '{}': its world did not come back: {}", batch, wrong);
+            }
+            run.world = null;
+        }
     }
 
     private static final Map<ServerLevel, Current> CURRENT = new WeakHashMap<>();
@@ -312,9 +364,8 @@ public final class GameTests {
         @Override
         public void testBatchFinished(GameTestBatch batch) {
             Current c = CURRENT.get(level);
-            if (c != null && !c.run.ended && batch.environment().unwrapKey().map(k -> k.identifier().equals(c.batch)).orElse(false)) {
-                c.run.ended = true;
-                runHooks(AFTER, c.batch, level);
+            if (c != null && batch.environment().unwrapKey().map(k -> k.identifier().equals(c.batch)).orElse(false)) {
+                end(c.batch, c.run, level);
             }
             TestWatchdog.batchFinished(level, batch);
         }
