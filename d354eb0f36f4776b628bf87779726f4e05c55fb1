@@ -1,0 +1,1 @@
+REVIEW PASS WITH NOTES 74d01b9: no blocking finding (covers bb01ec7..74d01b9). stillRising is correct and complementary to spot(); TestPos is correct (its self-test covers NONE rotation only). d354eb0f36f4776b628bf87779726f4e05c55fb1
