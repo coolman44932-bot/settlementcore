@@ -100,15 +100,22 @@ public final class RoomShoring {
     private final BlockState[][] palette = new BlockState[3][];
     private final Warren warren;
     private final boolean retrofit;
+    /**
+     * A room carved out of the rock ({@link #of(ServerLevel, PlanPlacement, List, LongSet, Warren, boolean)}): only its doorway
+     * opening is left as the world has it ({@link #doorways(PlanPlacement, LongSet, boolean)}), and no tunnel mouth is let in
+     * ({@link #passage}): every other cave touching it is walled.
+     */
+    private final boolean carved;
     /** Blocks put in. */
     public int placed;
     /** Whether some hole was beside a chunk not loaded, and left: the room is walled up again later. */
     public boolean deferred;
 
-    private RoomShoring(Warren warren, LongSet others, boolean retrofit) {
+    private RoomShoring(Warren warren, LongSet others, boolean retrofit, boolean carved) {
         this.warren = warren;
         this.others = others;
         this.retrofit = retrofit;
+        this.carved = carved;
     }
 
     /** A template cell a rat (or the world) can see through: anything but a whole solid block. */
@@ -136,19 +143,29 @@ public final class RoomShoring {
      * cells it leaves to the rooms it opens into (DigJob's keep-out): theirs, not its.
      */
     public static RoomShoring of(ServerLevel level, PlanPlacement pl, List<RoomTemplates.Entry> entries, LongSet shared, Warren warren) {
-        return of(level, pl, entries, shared, warren, false);
+        return of(level, pl, entries, shared, warren, false, false);
+    }
+
+    /**
+     * {@link #of(ServerLevel, PlanPlacement, List, LongSet, Warren)} for a room {@code carved} out of the rock (Founding#beginCarved): a
+     * hall whose front face is open terrace is not open to every cave it touches, so only the opening of its door is left as the world has
+     * it, and what is open beside the rest of the face (a cave, however small its mouth) is walled as the rest of its shell is.
+     */
+    public static RoomShoring of(ServerLevel level, PlanPlacement pl, List<RoomTemplates.Entry> entries, LongSet shared, Warren warren,
+                                 boolean carved) {
+        return of(level, pl, entries, shared, warren, false, carved);
     }
 
     private static RoomShoring of(ServerLevel level, PlanPlacement pl, List<RoomTemplates.Entry> entries, LongSet shared, Warren warren,
-                                  boolean retrofit) {
-        RoomShoring s = new RoomShoring(warren, warren.roomCells(level, pl.box().inflatedBy(1), pl.box()), retrofit);
+                                  boolean retrofit, boolean carved) {
+        RoomShoring s = new RoomShoring(warren, warren.roomCells(level, pl.box().inflatedBy(1), pl.box()), retrofit, carved);
         LongOpenHashSet openLocal = new LongOpenHashSet();
         for (RoomTemplates.Entry e : entries) {
             if (open(e.state())) {
                 openLocal.add(e.local().asLong());
             }
         }
-        LongOpenHashSet doors = doorways(pl, openLocal);
+        LongOpenHashSet doors = doorways(pl, openLocal, carved);
         for (RoomTemplates.Entry e : entries) {
             long w = pl.world(e.local()).asLong();
             s.room.add(w);
@@ -179,6 +196,20 @@ public final class RoomShoring {
      * doorway's opening is the open cells in its face joined to the doorway cell.
      */
     public static LongOpenHashSet doorways(PlanPlacement pl, LongSet openLocal) {
+        return doorways(pl, openLocal, false);
+    }
+
+    /** A carved room's doorway opening: this many cells either side of its door's middle... */
+    public static final int DOORWAY_HALF_WIDTH = 2;
+    /** ...and this many cells high, from the door cell up (the god's way in is a tunnel, not the whole terrace). */
+    public static final int DOORWAY_HEIGHT = 4;
+
+    /**
+     * {@link #doorways(PlanPlacement, LongSet)}; {@code narrow} (a carved room): the opening is only the open cells of the face within
+     * {@link #DOORWAY_HALF_WIDTH} of the door's middle and {@link #DOORWAY_HEIGHT} high, not the 64 nearest (a gate's front is open
+     * terrace across and up, and a cave beside the door was taken for part of it).
+     */
+    public static LongOpenHashSet doorways(PlanPlacement pl, LongSet openLocal, boolean narrow) {
         LongOpenHashSet out = new LongOpenHashSet();
         Rooms.Room r = pl.room();
         List<Rooms.Spot> spots = new ArrayList<>(r.exits());
@@ -198,6 +229,10 @@ public final class RoomShoring {
                         continue;                                // stay in the doorway's face
                     }
                     BlockPos m = c.relative(d);
+                    if (narrow && (Math.abs(f.getAxis() == Direction.Axis.X ? m.getZ() - sp.z() : m.getX() - sp.x()) > DOORWAY_HALF_WIDTH
+                            || m.getY() < sp.y() || m.getY() >= sp.y() + DOORWAY_HEIGHT)) {
+                        continue;
+                    }
                     if (openLocal.contains(m.asLong()) && seen.add(m.asLong())) {
                         q.add(m);
                     }
@@ -294,7 +329,7 @@ public final class RoomShoring {
                 wall(level, n, face >= 0 ? face : d == Direction.DOWN ? FLOOR : d == Direction.UP ? CEILING : WALL);
                 continue;
             }
-            if (face < 0 || !wild(s) || face == WALL && passage(level, n)) {
+            if (face < 0 || !wild(s) || face == WALL && !carved && passage(level, n)) {
                 continue;
             }
             wall(level, n, face);
@@ -441,7 +476,7 @@ public final class RoomShoring {
         if (!level.hasChunksAt(around.minX(), around.minZ(), around.maxX(), around.maxZ())) {
             return -1;
         }
-        RoomShoring s = of(level, pl, RoomTemplates.get(level, b.room()), new LongOpenHashSet(), warren, true);
+        RoomShoring s = of(level, pl, RoomTemplates.get(level, b.room()), new LongOpenHashSet(), warren, true, false);
         for (BlockPos p : s.open) {
             if (open(level.getBlockState(p))) {
                 s.around(level, p);

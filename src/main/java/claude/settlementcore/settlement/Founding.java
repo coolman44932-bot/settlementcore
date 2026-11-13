@@ -218,7 +218,7 @@ public final class Founding extends SavedData {
                 }
             }
         }
-        DigJob job = new DigJob(pl.room().id(), pl.door(), pl.facing());
+        DigJob job = new DigJob(pl.room().id(), pl.door(), pl.facing()).carved();   // only its door's opening is left open to the rock's caves
         job.ensureLoaded(level);
         jobs.put(pl.door(), job);
         halls.add(new Hall(pl.room().id(), pl.door(), pl.facing(), owner, Optional.of(saved(job)), Optional.empty()));
@@ -238,7 +238,11 @@ public final class Founding extends SavedData {
     /** A rising hall's job back: carved (a dig) or raised. Null if it can't be read. */
     @Nullable
     private static DigJob loadJob(CompoundTag t) {
-        return t.getBooleanOr(CARVED, false) ? DigJob.load(t) : RaiseJob.load(t);
+        if (!t.getBooleanOr(CARVED, false)) {
+            return RaiseJob.load(t);
+        }
+        DigJob job = DigJob.load(t);
+        return job == null ? null : job.carved();               // one saved before the shoring knew it: carved all the same
     }
 
     /** Whether the hall at {@code door} is being carved (the tests). */

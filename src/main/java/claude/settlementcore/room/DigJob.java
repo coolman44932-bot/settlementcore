@@ -66,6 +66,14 @@ public class DigJob {
      *  beside a chunk that was not loaded, is walled up once the room is finished: RoomShoring#wallUp). */
     private boolean walled = true;
     private boolean shores = true;
+    /** Whether the room is carved out of the rock (Founding#beginCarved): its shoring leaves only its door's opening ({@link RoomShoring#of(ServerLevel, PlanPlacement, List, LongSet, RoomShoring.Warren, boolean)}). */
+    private boolean carved;
+
+    /** The room is carved out of the rock: call before the dig begins. Saved with the dig. */
+    public DigJob carved() {
+        this.carved = true;
+        return this;
+    }
 
     public void walls(RoomShoring.Warren w) {
         this.warren = w;
@@ -264,7 +272,7 @@ public class DigJob {
         }
         // what is open beside the room (a cave, a drop, the sky; water and loose gravel) is walled up as it is dug
         // (a job left open, an open-air pit or a raised building, walls nothing up: its shoring is never worked out)
-        shoring = shores ? RoomShoring.of(level, pl, RoomTemplates.get(level, roomId), keep, warren()) : null;
+        shoring = shores ? RoomShoring.of(level, pl, RoomTemplates.get(level, roomId), keep, warren(), carved) : null;
         // the room was changed since this dig began (a new version of the mod: the rooms' warpstone lamps,
         // 2026-09-25): its tasks are not the ones the saved progress counted, so what is done is read off the world
         int print = RoomTemplates.print(level, roomId);
@@ -875,6 +883,9 @@ public class DigJob {
         if (!shores) {
             t.putBoolean("unshored", true);
         }
+        if (carved) {
+            t.putBoolean("carved_room", true);
+        }
         if (keepOut != null) {
             t.putLongArray("keep_out", keepOut);
         }
@@ -925,6 +936,9 @@ public class DigJob {
         }
         if (t.getBooleanOr("unshored", false)) {
             unshored();
+        }
+        if (t.getBooleanOr("carved_room", false)) {
+            carved();
         }
         if (t.getBooleanOr("natural_only", false)) {
             int[] b = t.getIntArray("also_cut").orElse(new int[0]);
