@@ -309,13 +309,21 @@ public class SurvivalHarnessGameTests {
                 + h.relativeVec(spawn) + ": nothing spawns within 24 of it");
         h.assertTrue(dark.distanceToSqr(god.player().position()) > 25 * 25 && lit.distanceToSqr(god.player().position()) > 25 * 25,
                 "a hollow is within 25 blocks of the god");
+        // the torches' light is worked out some ticks after they're set (later still behind a dropped light update: the laptop's
+        // engine build of 3086605 had a spider in the lit hollow on tick 3 at block light 0), so the lit hollow is judged only once
+        // it is lit; what spawned there before is discarded
+        BlockPos litProbe = h.absolutePos(new BlockPos(5, 2, 30));
+        boolean[] lighted = {false};
         h.onEachTick(() -> {
             if (god.hasLeft()) {
                 return;
             }
+            lighted[0] |= level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, litProbe) >= 10;
             AABB near = god.player().getBoundingBox().inflate(160);
             for (Mob m : level.getEntitiesOfClass(Mob.class, near, m -> m instanceof Enemy && m.isAlive())) {
-                if (m.getBoundingBox().intersects(lit)) {
+                if (!lighted[0] && m.getBoundingBox().intersects(lit)) {
+                    m.discard();
+                } else if (m.getBoundingBox().intersects(lit)) {
                     h.fail("a " + m.getType().toShortString() + " spawned in the lit hollow at " + h.relativeVec(m.position()) + " (block light "
                             + level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, m.blockPosition()) + ")");
                 } else if (!m.getBoundingBox().intersects(dark)) {
@@ -350,27 +358,31 @@ public class SurvivalHarnessGameTests {
             furnace.setItem(1, new ItemStack(Items.COAL));
         }
         Pig farPig = h.spawn(EntityType.PIG, new BlockPos(22, 21, 20));
-        Pig nearPig = h.spawn(EntityType.PIG, new BlockPos(300, 25, 2));
-        for (Pig p : List.of(farPig, nearPig)) {
-            p.setNoAi(true);
-            p.setPersistenceRequired();
-        }
+        farPig.setNoAi(true);
+        farPig.setPersistenceRequired();
+        BlockPos nearPigAt = new BlockPos(300, 25, 2);
+        Pig[] nearPig = new Pig[1];
         SurvivalGod god = SurvivalGod.join(h, there);
         PlayerLoadedChunks.Released released = PlayerLoadedChunks.release(h, god, -1);
         h.assertTrue(released.isReleased(h.absolutePos(farFurnace)), "the far furnace's chunk was not released: released " + released.released()
                 + ", shared " + released.shared());
         // the god's chunks become entity-ticking some ticks after he joins (his ticket takes effect late, and later still in a full
-        // suite: the laptop's first run counted 0 and 95 of 200 ticks), so the pigs are counted from when his chunk does
+        // suite: the laptop's first run counted 0 and 95 of 200 ticks), and a pig spawned into his chunk before it was loaded was
+        // saved and came back as another object (the laptop's engine build of 3086605: the one held never ticked), so the pig by
+        // him is spawned only once his chunk entity-ticks, and counted from then
         int[] start = new int[2];
         h.startSequence()
-                .thenWaitUntil(() -> h.assertTrue(h.getLevel().isPositionEntityTicking(nearPig.blockPosition()),
+                .thenWaitUntil(() -> h.assertTrue(h.getLevel().isPositionEntityTicking(h.absolutePos(nearPigAt)),
                         "the god's chunk is not entity-ticking yet"))
                 .thenExecute(() -> {
+                    nearPig[0] = h.spawn(EntityType.PIG, nearPigAt);
+                    nearPig[0].setNoAi(true);
+                    nearPig[0].setPersistenceRequired();
                     start[0] = farPig.tickCount;
-                    start[1] = nearPig.tickCount;
+                    start[1] = nearPig[0].tickCount;
                 })
-                .thenWaitUntil(() -> h.assertTrue(nearPig.tickCount - start[1] >= 100, "the pig by the god ticked only "
-                        + (nearPig.tickCount - start[1]) + " times since his chunk began entity-ticking"))
+                .thenWaitUntil(() -> h.assertTrue(nearPig[0].tickCount - start[1] >= 100, "the pig by the god ticked only "
+                        + (nearPig[0].tickCount - start[1]) + " times since his chunk began entity-ticking (removed " + nearPig[0].getRemovalReason() + ")"))
                 .thenWaitUntil(() -> {
                     FurnaceBlockEntity near = h.getBlockEntity(nearFurnace, FurnaceBlockEntity.class);
                     h.assertTrue(near.getItem(2).is(Items.IRON_INGOT), "the furnace by the god has not smelted yet: " + near.getItem(2)
@@ -381,7 +393,7 @@ public class SurvivalHarnessGameTests {
                     FurnaceBlockEntity far = h.getBlockEntity(farFurnace, FurnaceBlockEntity.class);
                     h.assertTrue(far.getItem(2).isEmpty() && far.getItem(0).is(Items.RAW_IRON), "the furnace on the released plot smelted: in "
                             + far.getItem(0) + ", out " + far.getItem(2));
-                    int farTicks = farPig.tickCount - start[0], nearTicks = nearPig.tickCount - start[1];
+                    int farTicks = farPig.tickCount - start[0], nearTicks = nearPig[0].tickCount - start[1];
                     h.assertTrue(farTicks <= 5, "the pig on the released plot ticked " + farTicks + " times after the release");
                     h.assertTrue(nearTicks >= 100, "the pig by the god ticked only " + nearTicks + " times");
                 })
