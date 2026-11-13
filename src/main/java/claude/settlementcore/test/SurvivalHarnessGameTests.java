@@ -231,7 +231,7 @@ public class SurvivalHarnessGameTests {
         god.useOn(foot, Direction.UP);
         ServerPlayer.RespawnConfig spawn = god.player().getRespawnConfig();
         h.assertTrue(spawn != null && spawn.respawnData().pos().equals(h.absolutePos(head)), "lying down in the bed by day did not set the god's spawn there: "
-                + (spawn == null ? "none" : h.relativePos(spawn.respawnData().pos())) + " (told: " + god.chat() + ")");
+                + (spawn == null ? "none" : TestPos.relative(h, spawn.respawnData().pos())) + " (told: " + god.chat() + ")");
         god.moveTo(new BlockPos(4, 2, 4));
         god.give(Items.COBBLESTONE, 5).give(Items.WOODEN_PICKAXE, 1);
         ServerPlayer before = god.player();
@@ -306,7 +306,7 @@ public class SurvivalHarnessGameTests {
         SurvivalGod god = SurvivalGod.join(h, new BlockPos(40, 21, 40));
         Vec3 spawn = Vec3.atCenterOf(level.getRespawnData().pos());
         h.assertTrue(dark.distanceToSqr(spawn) > 24.5 * 24.5 && lit.distanceToSqr(spawn) > 24.5 * 24.5, "a hollow is within 24.5 blocks of the world spawn "
-                + h.relativeVec(spawn) + ": nothing spawns within 24 of it");
+                + TestPos.relative(h, spawn) + ": nothing spawns within 24 of it");
         h.assertTrue(dark.distanceToSqr(god.player().position()) > 25 * 25 && lit.distanceToSqr(god.player().position()) > 25 * 25,
                 "a hollow is within 25 blocks of the god");
         // the torches' light is worked out some ticks after they're set (later still behind a dropped light update: the laptop's
@@ -324,7 +324,7 @@ public class SurvivalHarnessGameTests {
                 if (!lighted[0] && m.getBoundingBox().intersects(lit)) {
                     m.discard();
                 } else if (m.getBoundingBox().intersects(lit)) {
-                    h.fail("a " + m.getType().toShortString() + " spawned in the lit hollow at " + h.relativeVec(m.position()) + " (block light "
+                    h.fail("a " + m.getType().toShortString() + " spawned in the lit hollow at " + TestPos.relative(h, m.position()) + " (block light "
                             + level.getBrightness(net.minecraft.world.level.LightLayer.BLOCK, m.blockPosition()) + ")");
                 } else if (!m.getBoundingBox().intersects(dark)) {
                     m.discard();
@@ -400,6 +400,24 @@ public class SurvivalHarnessGameTests {
                     h.assertTrue(nearTicks >= 100, "the pig by the god ticked only " + nearTicks + " times");
                 })
                 .thenSucceed();
+    }
+
+    // ---- positions
+
+    /**
+     * TestPos gives back exactly the position absolutePos took, at whatever rotation the test stands (26.1.2's own relativePos mirrors
+     * x and z at no rotation: the laptop's runs of khazuk c8abbdf).
+     */
+    @GameTest(template = "digsite", timeoutTicks = 20, batch = "survivalworld")
+    public static void testPosUndoesAbsolutePosExactly(GameTestHelper h) {
+        for (BlockPos p : List.of(new BlockPos(32, 5, 44), new BlockPos(0, 0, 0), new BlockPos(-7, 3, 11), new BlockPos(43, 19, 2))) {
+            BlockPos back = TestPos.relative(h, h.absolutePos(p));
+            h.assertTrue(back.equals(p), p + " came back as " + back + " (rotation " + h.getTestRotation() + ")");
+            Vec3 v = Vec3.atLowerCornerOf(p).add(0.25, 0.5, 0.75);
+            Vec3 vb = TestPos.relative(h, h.absoluteVec(v));
+            h.assertTrue(vb.distanceToSqr(v) < 1.0E-9, v + " came back as " + vb + " (rotation " + h.getTestRotation() + ")");
+        }
+        h.succeed();
     }
 
     // ---- survivalworld

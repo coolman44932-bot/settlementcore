@@ -307,7 +307,7 @@ public final class SurvivalGod {
 
     /** Where his feet are, test-relative. */
     public BlockPos at() {
-        return h.relativePos(connection.player.blockPosition());
+        return TestPos.relative(h, connection.player.blockPosition());
     }
 
     /** The system chat he was sent (newest last, the last 200). */
@@ -370,7 +370,7 @@ public final class SurvivalGod {
     }
 
     private void lookAtAbs(Vec3 abs) {
-        lookAt(h.relativeVec(abs));
+        lookAt(TestPos.relative(h, abs));
     }
 
     private void answerTeleport() {
@@ -529,8 +529,8 @@ public final class SurvivalGod {
 
     private void reach(BlockPos abs, String what) {
         ServerPlayer p = connection.player;
-        h.assertTrue(p.isWithinBlockInteractionRange(abs, 1.0), "SurvivalGod at " + h.relativeVec(p.position()) + " cannot reach "
-                + h.relativePos(abs) + " to " + what + " it (reach " + p.blockInteractionRange() + "): move him closer");
+        h.assertTrue(p.isWithinBlockInteractionRange(abs, 1.0), "SurvivalGod at " + TestPos.relative(h, p.position()) + " cannot reach "
+                + TestPos.relative(h, abs) + " to " + what + " it (reach " + p.blockInteractionRange() + "): move him closer");
     }
 
     // ---- mining
@@ -665,7 +665,7 @@ public final class SurvivalGod {
             void tick() {
                 super.tick();
                 if (target != null && target.isAlive() && ++since > 100) {
-                    fail(target.getItem() + " at " + h.relativeVec(target.position()) + " was not picked up in 100 ticks (pickup delay "
+                    fail(target.getItem() + " at " + TestPos.relative(h, target.position()) + " was not picked up in 100 ticks (pickup delay "
                             + target.hasPickUpDelay() + ", inventory " + contents() + ")");
                     return;
                 }
@@ -677,7 +677,7 @@ public final class SurvivalGod {
                     }
                     target = items.removeFirst();
                     since = 0;
-                    moveTo(h.relativeVec(target.position()));
+                    moveTo(TestPos.relative(h, target.position()));
                     status = "going for " + target.getItem();
                 }
             }
