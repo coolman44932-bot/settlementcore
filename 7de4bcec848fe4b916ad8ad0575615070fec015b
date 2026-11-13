@@ -1,0 +1,1 @@
+REVIEW PASS WITH NOTES 2056b38,a4837b3,16e0082,a4634cb,7de4bce,c4732e3,c33a5b0: all test-only and inert in a player's game, with the restore reliable apart from a minor apply-throws gap (fixed in 3086605); notes: checkCoreNamespace lacked the newer races (fixed in 3086605), savecheck relies on stdlib zip sanitising. 7de4bcec848fe4b916ad8ad0575615070fec015b
