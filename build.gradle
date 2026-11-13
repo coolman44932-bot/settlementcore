@@ -40,6 +40,18 @@ dependencies {
     implementation "com.geckolib:geckolib-neoforge-${minecraft_version}:${geckolib_version}"
 }
 
+// The GameTest runs' long checks, off unless asked (docs/testing-beyond-gametests.md):
+// -Psoak[=<ticks>] -Ponly=soak : the soak tests run (test/Soak; an hour of game time unless a length is given), else they pass at once
+// (tools/soak.py). -Psavecheck=runs/savecheck/<name>[;...] -Ponly=savecheck : load and save copies of old worlds with this build
+// (test/SaveCheckGameTests, tools/savecheck.py; each folder made absolute here, as a GameTest server works in its game directory);
+// -Psavecheckallow=<path>,... : save keys a block entity may drop on purpose.
+def soakAndSavecheck = [
+        'settlementcore.soak'                    : project.hasProperty('soak') ? (project.findProperty('soak') ?: 'true') : '',
+        'settlementcore.savecheck'               : ((project.findProperty('savecheck') ?: '') as String).split(';')
+                .findAll { !it.trim().isEmpty() }.collect { project.file(it.trim()).absolutePath }.join(';'),
+        'settlementcore.savecheck.allowdropped'  : project.findProperty('savecheckallow') ?: '',
+]
+
 neoForge {
     version = project.neo_version
     addModdingDependenciesTo sourceSets.testrace
@@ -96,6 +108,27 @@ neoForge {
             if (project.hasProperty('perf')) {
                 systemProperty 'settlementcore.perf', 'true'
                 systemProperty 'settlementcore.perfflags', project.findProperty('perfflags') ?: ''
+            }
+            soakAndSavecheck.each { k, v -> systemProperty k, v }
+        }
+        // ./gradlew runGameTestServerTogether : every 26.1 mod's GameTests in one server, the user's mods loaded together with this
+        // engine (tools/together.py prepare fills runs/together/mods with the deployed jars, and writes runs/together/run.properties:
+        // the list test/TogetherGameTests checks, and each mod's -Ponly). FML loads a dev run's <game dir>/mods like a game's
+        // (its ModsFolderLocator, FMLPaths.MODSDIR). The JUnit-style report.xml lists every test of every mod, for tools/together.py report.
+        gameTestServerTogether {
+            type = 'gameTestServer'
+            gameDirectory = project.file('runs/together')
+            programArguments.addAll('--report', 'report.xml')
+            systemProperty 'settlementcore.only', project.findProperty('only') ?: ''
+            systemProperty 'settlementcore.watchdog.selftest', ''
+            systemProperty 'settlementcore.crewtrace', 'false'
+            systemProperty 'settlementcore.deterministic', 'true'
+            soakAndSavecheck.each { k, v -> systemProperty k, v }
+            def together = project.file('runs/together/run.properties')
+            if (together.isFile()) {
+                def p = new Properties()
+                together.withInputStream { p.load(it) }
+                p.each { k, v -> systemProperty k.toString(), v.toString() }
             }
         }
     }
