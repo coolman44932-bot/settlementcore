@@ -679,6 +679,10 @@ public final class SurvivalGod {
                     since = 0;
                     moveTo(TestPos.relative(h, target.position()));
                     status = "going for " + target.getItem();
+                } else if (connection.player.distanceToSqr(target) > 0.25) {
+                    // a stack still flying (a death's drops are thrown up to ~0.5 blocks/tick and land several blocks off) or pushed: go
+                    // to where it is NOW, as a walking player follows an item, or he stands where it was and it lands out of his reach
+                    moveTo(TestPos.relative(h, target.position()));
                 }
             }
         };
