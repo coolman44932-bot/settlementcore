@@ -205,7 +205,7 @@ tasks.register('writeCompileClasspath') {
 tasks.register('checkCoreNamespace') {
     group = 'verification'
     description = "Fails if Settlement Core's data or code names a race mod's namespace."
-    def races = ['underempire', 'greatplan']
+    def races = ['underempire', 'greatplan', 'khazuk', 'waaagh', 'bloodlines']
     def res = file('src/main/resources')
     def src = file('src/main/java')
     inputs.dir(res)

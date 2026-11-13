@@ -110,8 +110,14 @@ public record WorldConditions(@Nullable Long time, @Nullable Boolean daylightCyc
     public Saved apply(ServerLevel level) {
         WorldConditions before = read(level);
         boolean monstersBefore = level.getGameRules().get(GameRules.SPAWN_MONSTERS);
-        set(level, this, Boolean.TRUE.equals(mobSpawning) ? Boolean.TRUE : null);
-        return new Saved(this, before, monstersBefore);
+        Saved saved = new Saved(this, before, monstersBefore);
+        try {
+            set(level, this, Boolean.TRUE.equals(mobSpawning) ? Boolean.TRUE : null);
+        } catch (RuntimeException ex) {
+            saved.restore(level);                                    // a set that throws part-way leaves nothing changed behind it (the review of c33a5b0)
+            throw ex;
+        }
+        return saved;
     }
 
     /** What {@link #apply} replaced. */
