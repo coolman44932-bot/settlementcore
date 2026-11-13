@@ -47,6 +47,9 @@ LOCK = os.path.join(RUN, "together.lock.json")
 PROPS = os.path.join(RUN, "run.properties")
 REPORT = os.path.join(RUN, "report.xml")
 LOG = os.path.join(RUN, "logs", "latest.log")
+# a together run's own copies: savecheck --together runs in the same game dir and rewrites report.xml and latest.log after it
+# (the laptop, 2026-11-13: a re-report read the save check's 2 tests as the all-mods run's verdict)
+LAST = os.path.join(RUN, "last-together")
 # what the dev run already loads from its classpath: a jar with any of these mod ids is never copied
 DEV = {"minecraft", "neoforge", "settlementcore", "testrace", "geckolib"}
 OURS_DEV = ["settlementcore", "testrace"]
@@ -369,6 +372,12 @@ def run(a):
             p.wait()
             print(f"STOPPED: the run passed {TIMEOUT // 60} minutes and was ended with everything it started (gradle log {out})")
     print(f"gradle log: {out}")
+    if os.path.isdir(LAST):
+        shutil.rmtree(LAST)
+    os.makedirs(LAST)
+    for f in (REPORT, LOG):
+        if os.path.isfile(f):
+            shutil.copy2(f, LAST)
     sys.exit(report(a, lock))
 
 
@@ -393,6 +402,7 @@ def owner_of(logger, msg, ids):
 
 def report(a, lock=None):
     lock = lock or load_lock()
+    REPORT, LOG = os.path.join(LAST, "report.xml"), os.path.join(LAST, "latest.log")   # this tool's last run, never savecheck's
     ours = OURS_DEV + [i for e in lock["mods"] if e["ours"] for i in e["ids"]]
     others = [i for e in lock["mods"] if not e["ours"] for i in e["ids"]]
     print(f"together mods: {lock['fingerprint']}")
