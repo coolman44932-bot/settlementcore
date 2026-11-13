@@ -62,8 +62,20 @@ public class HeartBlockEntity extends SettlementBlockEntity {
     protected Spawning spawning() {
         return (level, settlement, brood) -> {
             rounds++;
-            int workers = brood.add(false, 2, WORKER_COST);
-            int guards = brood.add(true, 1, GUARD_COST);
+            // short of guards (under a third of all, up and below), the guard is bred first: with room for only one (a guard just
+            // killed, the reserve at its cap) the workers always took it, and the laptop's soak bred its guards out to none by sample 41
+            int guardsAll = reserveSoldiers(), all = reserve();
+            for (SettlerMob up : loadedPeople()) {
+                all++;
+                guardsAll += up.getType() == soldierType() ? 1 : 0;
+            }
+            if (guardsAll * 3 < all) {
+                brood.add(true, 1, GUARD_COST);
+                brood.add(false, 2, WORKER_COST);
+            } else {
+                brood.add(false, 2, WORKER_COST);
+                brood.add(true, 1, GUARD_COST);
+            }
             callUp(brood);
         };
     }
