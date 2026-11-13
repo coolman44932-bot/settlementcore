@@ -359,8 +359,18 @@ public class SurvivalHarnessGameTests {
         PlayerLoadedChunks.Released released = PlayerLoadedChunks.release(h, god, -1);
         h.assertTrue(released.isReleased(h.absolutePos(farFurnace)), "the far furnace's chunk was not released: released " + released.released()
                 + ", shared " + released.shared());
-        int[] start = {farPig.tickCount, nearPig.tickCount};
+        // the god's chunks become entity-ticking some ticks after he joins (his ticket takes effect late, and later still in a full
+        // suite: the laptop's first run counted 0 and 95 of 200 ticks), so the pigs are counted from when his chunk does
+        int[] start = new int[2];
         h.startSequence()
+                .thenWaitUntil(() -> h.assertTrue(h.getLevel().isPositionEntityTicking(nearPig.blockPosition()),
+                        "the god's chunk is not entity-ticking yet"))
+                .thenExecute(() -> {
+                    start[0] = farPig.tickCount;
+                    start[1] = nearPig.tickCount;
+                })
+                .thenWaitUntil(() -> h.assertTrue(nearPig.tickCount - start[1] >= 100, "the pig by the god ticked only "
+                        + (nearPig.tickCount - start[1]) + " times since his chunk began entity-ticking"))
                 .thenWaitUntil(() -> {
                     FurnaceBlockEntity near = h.getBlockEntity(nearFurnace, FurnaceBlockEntity.class);
                     h.assertTrue(near.getItem(2).is(Items.IRON_INGOT), "the furnace by the god has not smelted yet: " + near.getItem(2)
